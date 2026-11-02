@@ -17,6 +17,11 @@ export type Delivery = (
   message: string,
   url: string,
 ) => Promise<DeliveryResult>;
+export function notificationUrl(eventType: string, entityId: string) {
+  const route = eventType === "OWNER_ISSUE" ? "/staff/issues" :
+    ["OWNER_ORDER_REQUEST", "SHIPMENT_REQUEST"].includes(eventType) ? `/staff/orders/${entityId}` : `/orders/${entityId}`;
+  return `${config.origin.replace(/\/$/, "")}/#${route}`;
+}
 export async function telegramDelivery(
   chatId: string,
   message: string,
@@ -433,7 +438,7 @@ export async function processOutbox(deliver: Delivery = telegramDelivery) {
     const result = await deliver(
       String(row.telegram_id),
       row.message,
-      row.event_type === "OWNER_ISSUE" ? `${config.origin}/#staff/issues` : ["OWNER_ORDER_REQUEST", "SHIPMENT_REQUEST"].includes(row.event_type) ? `${config.origin}/#staff/orders/${row.entity_id}` : `${config.origin}/#orders/${row.entity_id}`,
+      notificationUrl(row.event_type, row.entity_id),
     );
     await tx(async (c) => {
       const current = (

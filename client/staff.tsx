@@ -41,11 +41,11 @@ export default function Staff() {
   if (path === "/staff/search") return <Search />;
   if (path === "/staff/returns") return <Returns />;
   if (path === "/staff/counter") return <Counter />;
-  return <Queue />;
+  return <Queue key={path} />;
 }
 function Queue() {
-  const { go } = useApp();
-  const [filter, setFilter] = useState("checking");
+  const { go, path } = useApp();
+  const [filter, setFilter] = useState(path === "/staff/issues" ? "problems" : "checking");
   const { data, error, loading, reload } = useLoad<{
     orders: Order[];
     issues: Issue[];

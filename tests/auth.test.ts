@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { validateInitData, totp, verifyTotp } from "../server/auth.js";
+import { notificationUrl } from "../server/jobs.js";
 import { loadConfig } from "../server/config.js";
 const token = "123:local-test-secret",
   now = Date.now();
@@ -51,4 +52,13 @@ test("TOTP RFC6238 vector and window", () => {
   assert.equal(totp(secret, 59000, 8), "94287082");
   assert.ok(verifyTotp(secret, totp(secret, now), now));
   assert.equal(verifyTotp(secret, "invalid", now), false);
+});
+
+
+test("notification links match buyer, staff order and problems routes",()=>{
+  const id="11111111-1111-4111-8111-111111111111";
+  assert.equal(new URL(notificationUrl("ORDER_CREATED",id)).hash,`#/orders/${id}`);
+  for(const type of ["SHIPMENT_REQUEST","OWNER_ORDER_REQUEST"])
+    assert.equal(new URL(notificationUrl(type,id)).hash,`#/staff/orders/${id}`);
+  assert.equal(new URL(notificationUrl("OWNER_ISSUE",id)).hash,"#/staff/issues");
 });
