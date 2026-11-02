@@ -1,8 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { pool, tx } from "./db.js";
+import { pool } from "./db.js";
 import { assert } from "./errors.js";
-import { encrypt, decrypt } from "./crypto.js";
 import { lockItems, setPhysical, audit, idem } from "./inventory.js";
 import { readCategories, assertActiveCategory } from "./categories.js";
 const ids = z.array(z.uuid()).max(10000);
@@ -205,47 +204,6 @@ export async function registerCatalog(app: FastifyInstance) {
       [req.actor.id, distinct],
     );
     return { itemIds: distinct, items: await readItems(distinct) };
-  });
-  app.get("/me/checkout-draft", async (req) => {
-    const r = (
-      await pool.query(
-        "SELECT value_enc FROM checkout_drafts WHERE user_id=$1",
-        [req.actor.id],
-      )
-    ).rows[0];
-    return r ? decrypt(r.value_enc) : {};
-  });
-  app.patch("/me/checkout-draft", async (req) => {
-    const b = z
-      .object({
-        method: z.enum(["PICKUP", "BELPOST", "EUROPOST"]).optional(),
-        phone: z.string().max(40).optional(),
-        fullName: z.string().max(200).optional(),
-        city: z.string().max(200).optional(),
-        office: z.string().max(500).optional(),
-        officeAddress: z.string().max(500).optional(),
-        postalCode: z.string().max(20).optional(),
-        comment: z.string().max(1000).optional(),
-      })
-      .strict()
-      .parse(req.body);
-    return tx(async (c) => {
-      await c.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [
-        req.actor.id,
-      ]);
-      const old = (
-        await c.query(
-          "SELECT value_enc FROM checkout_drafts WHERE user_id=$1",
-          [req.actor.id],
-        )
-      ).rows[0];
-      const next = { ...(old ? decrypt(old.value_enc) : {}), ...b };
-      await c.query(
-        "INSERT INTO checkout_drafts(user_id,value_enc) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET value_enc=excluded.value_enc,updated_at=now()",
-        [req.actor.id, encrypt(next)],
-      );
-      return next;
-    });
   });
   app.get("/me/events", async (req) => {
     const { rows } = await pool.query(

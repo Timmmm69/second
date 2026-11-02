@@ -6,12 +6,13 @@ import { fixtureSvg } from '../shared/fixture-art.ts';
 const dir = 'dist-preview';
 const data = JSON.parse(await readFile('preview/catalog.json','utf8'));
 data.settings.buyerGuide = defaultBuyerGuide;
-data.settings.acceptingOrders = false;
+data.settings.acceptingOrders = true; // Only the local adapter accepts synthetic demo commands.
 data.settings.phone = '';
 data.settings.phoneIsTest = true;
 data.settings.telegramUsername = '';
 data.settings.seller = '';
 data.settings.documentStatus = 'DRAFT';
+data.settings.about = 'Лучок — магазин вещей в Минске. В основном у нас новые вещи: одежда, детские находки, сумки и аксессуары. Если у вещи есть дефект, мы отдельно показываем и описываем его в карточке.';
 data.settings.documents = {privacy:'',reservation:'',shipping:'',returns:''};
 data.settings.carriers = {EUROPOST:{enabled:true,terms:defaultBuyerGuide.shipping},BELPOST:{enabled:false,terms:''}};
 await writeFile(dir+'/preview-data.json',JSON.stringify(data));

@@ -1,3 +1,4 @@
+import { invalidateCheckout, recipientProfile, saveRecipientProfile } from "./checkout-data.js";
 import { publicSettings } from "./public-settings.js";
 import { defaultBuyerGuide } from "../shared/buyer-guide.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -212,7 +213,16 @@ export async function readOrder(c: PoolClient, id: string, actor: Actor) {
           note: decrypt(r.note_enc),
           createdAt: r.created_at,
         }));
+  const buyerRow = actor.role !== "BUYER"
+    ? (await c.query("SELECT telegram_id,display_name,username FROM users WHERE id=$1", [o.user_id])).rows[0]
+    : null;
   return {
+    ...(buyerRow ? { buyer: {
+      telegramId: String(buyerRow.telegram_id),
+      displayName: buyerRow.display_name,
+      username: buyerRow.username || undefined,
+      atCheckout: o.buyer_snapshot_enc ? decrypt(o.buyer_snapshot_enc) : undefined,
+    } } : {}),
     id: o.id,
     number: String(o.number),
     method: o.method,
@@ -330,6 +340,9 @@ export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
       method: z.enum(["PICKUP", "BELPOST", "EUROPOST"]),
       termsAccepted: z.literal(true),
       settingsVersion: z.number().int().positive().optional(),
+      draftToken: z.uuid().optional(),
+      saveRecipient: z.boolean().optional(),
+      recipientVersion: z.number().int().min(0).optional(),
     })
     .parse(raw);
   if (body.method !== "PICKUP")
@@ -342,7 +355,10 @@ export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
       );
   if (body.method === "EUROPOST") assert(body.officeAddress?.trim(), 422, "OFFICE_ADDRESS_REQUIRED", "Укажите адрес пункта выдачи Европочты, не домашний адрес");
   return idem(actor, key, "orders.create", body, async (c) => {
-    await c.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [actor.id]);
+    const buyer = (await c.query("SELECT * FROM users WHERE id=$1 FOR UPDATE", [actor.id])).rows[0];
+    if (body.draftToken) assert(body.draftToken === buyer.checkout_token, 409, "DRAFT_CLOSED", "Это оформление завершено или данные очищены. Откройте новую форму");
+    const profile = await recipientProfile(c, actor.id);
+    if (body.saveRecipient !== undefined) assert(body.draftToken && body.recipientVersion === profile.version, 409, "PROFILE_CHANGED", "Сохранённые данные изменились. Обновите форму перед подтверждением");
     const lease = (
       await c.query("SELECT * FROM leases WHERE id=$1 FOR UPDATE", [
         body.leaseId,
@@ -433,7 +449,7 @@ export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
       cancelBy = addOpenHours(at, 8, settings.calendar);
     const o = (
       await c.query(
-        "INSERT INTO orders(id,user_id,method,total_minor,recipient_enc,rule_snapshot,verify_by,cancel_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
+        "INSERT INTO orders(id,user_id,method,total_minor,recipient_enc,rule_snapshot,verify_by,cancel_by,buyer_snapshot_enc) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
         [
           id,
           actor.id,
@@ -443,6 +459,7 @@ export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
           JSON.stringify(settings),
           verifyBy,
           cancelBy,
+          encrypt({ telegramId: String(buyer.telegram_id), displayName: buyer.display_name, username: buyer.username || undefined }),
         ],
       )
     ).rows[0];
@@ -479,7 +496,11 @@ export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
     await c.query("UPDATE leases SET state='CONVERTED' WHERE id=$1", [
       lease.id,
     ]);
-    await c.query("DELETE FROM checkout_drafts WHERE user_id=$1", [actor.id]);
+    if (body.saveRecipient !== undefined) {
+      const reusable = { method: body.method, phone: body.phone, fullName: body.fullName ?? "", city: body.city ?? "", office: body.office ?? "", officeAddress: body.officeAddress ?? "", postalCode: body.postalCode ?? "" };
+      await saveRecipientProfile(c, actor.id, profile.version, reusable, body.saveRecipient);
+    }
+    await invalidateCheckout(c, actor.id);
     await c.query(
       "UPDATE selections SET item_ids=array(SELECT unnest(item_ids) EXCEPT SELECT unnest($2::uuid[])),updated_at=now() WHERE user_id=$1",
       [actor.id, items.map((i) => i.id)],

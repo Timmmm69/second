@@ -96,8 +96,10 @@ function OwnerSecurity({
   code: string;
   onChange: (v: string) => void;
 }) {
+  const { demo } = useApp();
   const [error, setError] = useState<unknown>(null),
     [done, setDone] = useState(false);
+  if (demo) return <p className="small-text">Здесь изменения сохраняются только в вашем браузере. Управление доступом, утверждение документов и внешние сервисы доступны в рабочем приложении.</p>;
   return (
     <section className="security-box">
       <h3>Подтверждение владельца</h3>
@@ -134,7 +136,7 @@ function OwnerSecurity({
   );
 }
 function StoreSettings() {
-  const { toast, ownerCode, setOwnerCode, refreshSettings } = useApp();
+  const { toast, ownerCode, setOwnerCode, refreshSettings, go, demo } = useApp();
   const { data, error, loading, reload } = useLoad<Settings>("/owner/settings");
   const [form, setForm] = useState<Settings | null>(null),
     [busy, setBusy] = useState(false),
@@ -191,6 +193,8 @@ function StoreSettings() {
       }}
     >
       <ErrorBox error={error || saveError} />
+      <Button secondary onClick={() => go("/about")}>Посмотреть страницу магазина</Button>
+      {demo && <p className="small-text">Контакты поддержки в демо не публикуются. Редактируйте описание, график и покупательские условия, затем сохраните изменения.</p>}
       <section>
         <h2>Магазин и продавец</h2>
         <div className="form-stack">

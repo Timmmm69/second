@@ -18,6 +18,7 @@ import { registerCategories } from "./categories.js";
 import { registerSettings } from "./settings.js";
 import { registerMedia, serveMedia } from "./media.js";
 import { registerOrders } from "./orders.js";
+import { registerCheckoutData } from "./checkout-data.js";
 export async function buildApp({ staticFiles = true } = {}) {
   const app = Fastify({
     logger: false,
@@ -181,6 +182,7 @@ export async function buildApp({ staticFiles = true } = {}) {
       await registerAuth(api);
       await registerCategories(api);
       await registerCatalog(api);
+      await registerCheckoutData(api);
       await registerSettings(api);
       await registerMedia(api);
       await registerOrders(api);

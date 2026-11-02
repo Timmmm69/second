@@ -44,7 +44,7 @@ ${defaultBuyerGuide.privacy}
 };
 export const initialStore = {
   name: "Лучок", address: "Минск, ул. Жореса Алфёрова, 9", phone: "+375337777777", phoneIsTest: true,
-  telegramUsername: "", about: "Лучок — магазин вещей в Минске. Выбирайте находки в каталоге, собирайте подборку и бронируйте для примерки в магазине. Для вещей с дефектами мы отдельно указываем, что именно нужно учесть. По вопросам получения и отправки можно связаться с магазином.",
+  telegramUsername: "", about: "Лучок — магазин вещей в Минске. В основном у нас новые вещи: одежда, детские находки, сумки и аксессуары. Если у вещи есть дефект, отдельно показываем и описываем его в карточке.",
   buyerGuide: defaultBuyerGuide,
   documentStatus: "DRAFT", documents: draftDocuments, acceptingOrders: false,
   calendar: { week: Object.fromEntries(Array.from({length:7},(_,i)=>[String(i),["10:00","20:00"]])), exceptions: {} },

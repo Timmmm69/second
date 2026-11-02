@@ -286,7 +286,9 @@ test("B07/B10 server draft encryption, selection persistence, phone request webh
     ).json().itemIds[0],
     i.id,
   );
+  const meta = (await app.inject({ url: "/api/me/checkout-draft", headers: { cookie: buyer } })).json();
   const draft = {
+    draftToken: meta.draftToken, draftRevision: meta.draftRevision + 1,
     phone: "+375291234567",
     fullName: "Тестовые Данные",
     method: "PICKUP",

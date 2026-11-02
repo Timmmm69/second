@@ -1,3 +1,4 @@
+import { invalidateCheckout } from "./checkout-data.js";
 import { sweepOrphanMedia } from "./media-maintenance.js";
 import type { PoolClient } from "pg";
 import { tx } from "./db.js";
@@ -226,9 +227,13 @@ async function processOrders(c: PoolClient) {
     );
 }
 async function retention(c: PoolClient) {
-  await c.query(
-    "DELETE FROM checkout_drafts WHERE updated_at<clock_timestamp()-interval '7 days'",
-  );
+  const expiredDrafts = (await c.query("SELECT user_id FROM checkout_drafts WHERE updated_at<clock_timestamp()-interval '7 days' ORDER BY user_id")).rows;
+  for (const draft of expiredDrafts) {
+    await c.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [draft.user_id]);
+    const stillExpired = (await c.query("SELECT 1 FROM checkout_drafts WHERE user_id=$1 AND updated_at<clock_timestamp()-interval '7 days'", [draft.user_id])).rowCount;
+    if (stillExpired) await invalidateCheckout(c, draft.user_id);
+  }
+  await c.query("UPDATE users SET contact_phone_enc=NULL,contact_phone_at=NULL WHERE contact_phone_at<clock_timestamp()-interval '10 minutes'");
   await c.query(
     "DELETE FROM selections WHERE updated_at<clock_timestamp()-interval '30 days'",
   );
@@ -238,7 +243,7 @@ async function retention(c: PoolClient) {
     )
   ).rows;
   for (const o of rows) {
-    await c.query("UPDATE orders SET recipient_enc=NULL WHERE id=$1", [o.id]);
+    await c.query("UPDATE orders SET recipient_enc=NULL,buyer_snapshot_enc=NULL WHERE id=$1", [o.id]);
     await c.query("DELETE FROM recipient_history WHERE order_id=$1", [o.id]);
     await c.query("DELETE FROM contact_notes WHERE order_id=$1", [o.id]);
     await scrubOperationContacts(c, [o.id]);
@@ -253,15 +258,17 @@ async function retention(c: PoolClient) {
     )
   ).rows;
   for (const request of requests) {
+    await c.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [request.user_id]);
     const hasOpen = (
       await c.query(
         "SELECT 1 FROM orders o WHERE user_id=$1 AND (o.status NOT IN ('CLOSED','FULFILLED','CANCELLED','EXPIRED','RETURNED') OR EXISTS(SELECT 1 FROM return_cases r WHERE r.order_id=o.id AND r.status NOT IN ('CLOSED','REJECTED'))) LIMIT 1",
         [request.user_id],
       )
     ).rowCount;
-    await c.query("DELETE FROM checkout_drafts WHERE user_id=$1", [
-      request.user_id,
-    ]);
+    await invalidateCheckout(c, request.user_id);
+    // Retain a versioned empty marker: delayed profile/order saves cannot undo erasure.
+    await c.query("INSERT INTO recipient_profiles(user_id,value_enc,enabled) VALUES($1,NULL,false) ON CONFLICT(user_id) DO UPDATE SET value_enc=NULL,enabled=false,version=recipient_profiles.version+1,updated_at=now()", [request.user_id]);
+    await c.query("UPDATE users SET contact_phone_enc=NULL,contact_phone_at=NULL WHERE id=$1", [request.user_id]);
     await c.query("DELETE FROM selections WHERE user_id=$1", [request.user_id]);
     if (hasOpen) {
       await c.query(
@@ -275,7 +282,7 @@ async function retention(c: PoolClient) {
         request.user_id,
       ])
     ).rows;
-    await c.query("UPDATE orders SET recipient_enc=NULL WHERE user_id=$1", [
+    await c.query("UPDATE orders SET recipient_enc=NULL,buyer_snapshot_enc=NULL WHERE user_id=$1", [
       request.user_id,
     ]);
     await c.query(
@@ -316,6 +323,9 @@ function redactContacts(value: any): any {
       [
         "recipient",
         "recipientEnc",
+        "buyer",
+        "buyerSnapshot",
+        "officeAddress",
         "pickupCode",
         "phone",
         "fullName",

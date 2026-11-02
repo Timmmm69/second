@@ -33,7 +33,7 @@ declare global {
     __veshiCloseSheet?: () => void;
   }
 }
-export const tg = () => window.Telegram?.WebApp;
+export const tg = () => import.meta.env.VITE_PUBLIC_DEMO === "1" ? undefined : window.Telegram?.WebApp;
 export function openTelegram(username: string) {
   const safe = username.replace(/^@/, "");
   if (!/^[a-zA-Z0-9_]{5,32}$/.test(safe)) return false;

@@ -345,13 +345,8 @@ export async function registerAuth(app: FastifyInstance) {
     return { ok: true };
   });
   app.get("/me/contact", async (req) => {
-    const d = (
-      await pool.query(
-        "SELECT value_enc FROM checkout_drafts WHERE user_id=$1",
-        [req.actor.id],
-      )
-    ).rows[0];
-    return d ? decrypt(d.value_enc) : {};
+    const row = (await pool.query("SELECT contact_phone_enc FROM users WHERE id=$1 AND contact_phone_at>clock_timestamp()-interval '10 minutes'", [req.actor.id])).rows[0];
+    return row?.contact_phone_enc ? { phone: decrypt<string>(row.contact_phone_enc) } : {};
   });
   app.post("/me/deletion-request", async (req) => {
     const row = (
@@ -398,23 +393,9 @@ export async function registerAuth(app: FastifyInstance) {
           ])
         ).rows[0];
         if (u) {
-          const old = (
-            await c.query(
-              "SELECT value_enc FROM checkout_drafts WHERE user_id=$1 FOR UPDATE",
-              [u.id],
-            )
-          ).rows[0];
-          const data = old ? decrypt(old.value_enc) : {};
           await c.query(
-            "INSERT INTO checkout_drafts(user_id,value_enc) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET value_enc=excluded.value_enc,updated_at=now()",
-            [
-              u.id,
-              encrypt({
-                ...data,
-                phone: m.contact.phone_number,
-                phoneSource: "TELEGRAM",
-              }),
-            ],
+            "UPDATE users SET contact_phone_enc=$2,contact_phone_at=clock_timestamp() WHERE id=$1",
+            [u.id, encrypt(m.contact.phone_number)],
           );
         }
       }
