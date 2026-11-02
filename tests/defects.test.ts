@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import { buildApp } from "../server/app.js";
 import { migrate } from "../server/migrate.js";
 import { pool, tx } from "../server/db.js";
+import { config } from "../server/config.js";
+import { initialStore } from "../server/store-initial.js";
 import { itemSnapshot } from "../server/inventory.js";
 
 let app: Awaited<ReturnType<typeof buildApp>>, cookie: string;
@@ -69,4 +71,22 @@ test("Europost requires a pickup point address, stores it in encrypted server dr
  assert.equal(invalid.statusCode,422,invalid.body);assert.equal(invalid.json().code,"OFFICE_ADDRESS_REQUIRED");
  const patch=await app.inject({method:"PATCH",url:"/api/me/checkout-draft",headers:h,payload:{method:"EUROPOST",office:"Пункт 1",officeAddress:"Синтетическая улица, 2"}});assert.equal(patch.statusCode,200,patch.body);
  const restored=await app.inject({url:"/api/me/checkout-draft",headers:h});assert.equal(restored.json().officeAddress,"Синтетическая улица, 2");
+});
+
+
+test("production rejects drafts/test contacts when a legacy acceptingOrders flag is still true",async()=>{
+ const login=await app.inject({method:"POST",url:"/api/auth/dev",payload:{role:"BUYER"}});
+ const buyerCookie=String(login.headers["set-cookie"]).split(";")[0];
+ const item=(await send("POST","/staff/items",data)).json();
+ await pool.query("UPDATE items SET publication='PUBLISHED',physical='AVAILABLE' WHERE id=$1",[item.id]);
+ const old=(await pool.query("SELECT value FROM store_settings WHERE id=true")).rows[0].value;
+ const ready={...old,...initialStore,acceptingOrders:true,phone:"+375291234567",phoneIsTest:false,seller:"Синтетические реквизиты",telegramUsername:"test_support",documentStatus:"APPROVED"};
+ config.production=true;
+ try {
+  for(const patch of [{documentStatus:"DRAFT"},{phoneIsTest:true},{phone:"+375337777777"},{documents:{...ready.documents,privacy:""}}]) {
+   await pool.query("UPDATE store_settings SET value=$1 WHERE id=true",[{...ready,...patch}]);
+   const r=await app.inject({method:"POST",url:"/api/checkout/leases",headers:{cookie:buyerCookie,origin:config.origin,"idempotency-key":randomUUID()},payload:{itemIds:[item.id]}});
+   assert.equal(r.statusCode,503,r.body);assert.equal(r.json().code,"LAUNCH_SETTINGS");
+  }
+ }finally{config.production=false;await pool.query("UPDATE store_settings SET value=$1 WHERE id=true",[old]);}
 });

@@ -270,6 +270,16 @@ export async function readOrder(c: PoolClient, id: string, actor: Actor) {
       : undefined,
   };
 }
+function assertLaunchSettings(settings: any) {
+  if (!config.production) return;
+  assert(
+    settings.documentStatus === "APPROVED" && settings.phoneIsTest === false &&
+    settings.phone?.trim() && settings.phone.replace(/\D/g, "") !== "375337777777" &&
+    settings.address?.trim() && settings.seller?.trim() && settings.telegramUsername?.trim() &&
+    ["privacy", "reservation", "shipping", "returns"].every(key => (settings.documents?.[key] ?? "").trim().length >= 20),
+    503, "LAUNCH_SETTINGS", "Рабочие контакты и утверждённые документы ещё не подготовлены",
+  );
+}
 export async function createLease(
   actor: Actor,
   key: unknown,
@@ -279,7 +289,7 @@ export async function createLease(
   return idem(actor, key, "checkout.lease", body, async (c) => {
     await c.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [actor.id]);
     const settings = await getSettings(c);
-    if (config.production) assert(settings.documentStatus === "APPROVED" && settings.phoneIsTest === false && settings.phone?.replace(/\D/g, "") !== "375337777777" && settings.seller?.trim() && settings.telegramUsername?.trim(), 503, "LAUNCH_SETTINGS", "Рабочие контакты и утверждённые документы ещё не подготовлены");
+    assertLaunchSettings(settings);
     assert(
       settings.acceptingOrders,
       503,
@@ -388,7 +398,7 @@ export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
       "Описание вещи изменилось. Перепроверьте состав",
     );
     const settings = await getSettings(c);
-    if (config.production) assert(settings.documentStatus === "APPROVED" && settings.phoneIsTest === false && settings.phone?.replace(/\D/g, "") !== "375337777777" && settings.seller?.trim() && settings.telegramUsername?.trim(), 503, "LAUNCH_SETTINGS", "Рабочие контакты и утверждённые документы ещё не подготовлены");
+    assertLaunchSettings(settings);
     assert(
       settings.acceptingOrders,
       503,
@@ -1817,7 +1827,6 @@ export async function registerOrders(app: FastifyInstance) {
         );
         if (returning.length) {
           const settings = await getSettings(c);
-    if (config.production) assert(settings.documentStatus === "APPROVED" && settings.phoneIsTest === false && settings.phone?.replace(/\D/g, "") !== "375337777777" && settings.seller?.trim() && settings.telegramUsername?.trim(), 503, "LAUNCH_SETTINGS", "Рабочие контакты и утверждённые документы ещё не подготовлены");
           assert(
             settings.carriers?.[o.method]?.partialDelivery === true,
             422,
