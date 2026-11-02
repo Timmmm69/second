@@ -145,7 +145,7 @@
   "items": [
     {
       "id": "2b58b467-27f3-449f-aae9-f2d291445753",
-      "sku": "TEST-0008",
+      "sku": "ЛЧ-0008",
       "title": "Платье свободного кроя",
       "category": "dresses",
       "priceMinor": 6200,
@@ -185,7 +185,7 @@
     },
     {
       "id": "3cd050a3-1760-4974-984e-4368b8428c7c",
-      "sku": "TEST-0007",
+      "sku": "ЛЧ-0007",
       "title": "Шарф шалфейного цвета",
       "category": "accessories",
       "priceMinor": 1900,
@@ -224,7 +224,7 @@
     },
     {
       "id": "213cb2f3-e217-467c-94a3-af819670e060",
-      "sku": "TEST-0006",
+      "sku": "ЛЧ-0006",
       "title": "Сумка на плечо",
       "category": "bags",
       "priceMinor": 6900,
@@ -265,7 +265,7 @@
     },
     {
       "id": "f9d0792a-58c2-43fb-8674-47c79a750924",
-      "sku": "TEST-0005",
+      "sku": "ЛЧ-0005",
       "title": "Детская кофта",
       "category": "children",
       "priceMinor": 2800,
@@ -305,7 +305,7 @@
     },
     {
       "id": "823e51a7-d208-4cfe-bc51-49441e73e678",
-      "sku": "TEST-0004",
+      "sku": "ЛЧ-0004",
       "title": "Голубая рубашка",
       "category": "shirts",
       "priceMinor": 4200,
@@ -345,7 +345,7 @@
     },
     {
       "id": "89ec72ed-85aa-4b2c-abfb-7052139c4741",
-      "sku": "TEST-0003",
+      "sku": "ЛЧ-0003",
       "title": "Джемпер песочного цвета",
       "category": "knit",
       "priceMinor": 5200,
@@ -385,7 +385,7 @@
     },
     {
       "id": "86b4a487-5eda-472e-a11e-33a02ae00b22",
-      "sku": "TEST-0002",
+      "sku": "ЛЧ-0002",
       "title": "Прямые джинсы",
       "category": "trousers",
       "priceMinor": 3500,
@@ -426,7 +426,7 @@
     },
     {
       "id": "fe50a860-e986-4a93-8b0c-12fe21ad433a",
-      "sku": "TEST-0001",
+      "sku": "ЛЧ-0001",
       "title": "Бомбер карамельного цвета",
       "category": "outerwear",
       "priceMinor": 4500,

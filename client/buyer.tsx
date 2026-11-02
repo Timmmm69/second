@@ -1014,6 +1014,8 @@ function Checkout() {
     [pending, setPending] = useState(() =>
       Boolean(readLocal("checkout-operation", null)),
     );
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { if (loaded) { window.scrollTo({top:0,behavior:"instant"}); heading.current?.focus({preventScroll:true}); } }, [step,loaded]);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftFinished = useRef(false);
   const latestDraft = useRef(draft); latestDraft.current = draft;
@@ -1028,6 +1030,11 @@ function Checkout() {
     let active = true;
     (async () => {
       const data = cleanDraft(await api<Partial<Draft>>("/me/checkout-draft"));
+      if (lease && !lease.rules && !pending) {
+        await api(`/checkout/leases/${lease.id}`, {method:"DELETE"});
+        if (!active) return;
+        setLease(null); saveLocal("checkout-lease", null); setStep(1);
+      }
       if (requestedMethod && !pending) {
         if (lease && data.method !== requestedMethod) {
           await api(`/checkout/leases/${lease.id}`, {method:"DELETE"});
@@ -1237,7 +1244,7 @@ function Checkout() {
   return (
     <div className="page narrow checkout-page">
       <ol className="checkout-progress" aria-label="Этапы оформления">{["Получение", "Данные", "Подтверждение"].map((label, i) => <li key={label} aria-current={i === step ? "step" : undefined} className={i <= step ? "reached" : ""}><span>{i+1}</span>{label}</li>)}</ol>
-      <h1>
+      <h1 ref={heading} tabIndex={-1}>
         {["Как получить вещи?", "Данные для получения", "Всё верно?"][step]}
       </h1>
       <ErrorBox error={error} />
@@ -1447,7 +1454,7 @@ function Checkout() {
               setSelection(availableIds).then(() => acquire(availableIds))
             }
           >
-            Продолжить с {availableIds.length} вещами
+            Оформить доступные: {itemCount(availableIds.length)}
           </Button>
           <Button secondary onClick={() => go("/selection")}>
             Вернуться к подборке

@@ -21,6 +21,7 @@ import {
 } from "./ui";
 import {
   date,
+  itemCount,
   measurementNames,
   methodNames,
   money,
@@ -1029,7 +1030,7 @@ function StaffOrder({ id }: { id: string }) {
         Взять обращение в работу
       </Button>
       <section className="detail-section">
-        <h2>Состав · {order.lines.length} вещей</h2>
+        <h2>Состав · {itemCount(order.lines.length)}</h2>
         <div className="item-list">
           {order.lines.map((line) => (
             <div className="item-row" key={line.id}>
@@ -1800,7 +1801,7 @@ function Counter() {
               ))}
             </div>
           )}
-          <Summary label={`Выбрано ${chosen.length} вещей`}>
+          <Summary label={`Выбрано: ${itemCount(chosen.length)}`}>
             {money(chosen.reduce((s, i) => s + i.priceMinor, 0))}
           </Summary>
           <Button

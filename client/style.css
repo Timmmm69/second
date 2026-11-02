@@ -1746,3 +1746,14 @@ button > svg, .button > svg { flex-shrink: 0; display: block; }
 .receiving-actions > .button:not(.secondary) small { color: #222; }
 
 .service-shell .chips > button { max-width:100%; }
+
+.app-shell { padding-bottom: calc(var(--measured-nav-height, var(--nav-height)) + 16px); }
+.toast { bottom: calc(var(--measured-nav-height, var(--nav-height)) + 20px); }
+.selection-page .item-row { display: grid; grid-template-columns: 76px minmax(0,1fr); align-items:start; }
+.selection-page .row-photo { grid-row: 1/3; }
+.selection-page .row-content { grid-column: 2; }
+.selection-page .remove-button { grid-column:2; justify-self:start; margin:0; align-self:start; padding-top:0; font-size:.8125rem; }
+@media (max-width:350px) { .selection-page .item-row { grid-template-columns:60px minmax(0,1fr); } }
+@media (orientation:landscape) and (max-height:500px) { .app-shell { padding-bottom:0; } }
+
+.keyboard-open .app-shell { padding-bottom: calc(var(--measured-nav-height, var(--nav-height)) + 16px); }

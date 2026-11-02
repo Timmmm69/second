@@ -3,6 +3,7 @@ import {
   Suspense,
   lazy,
   useCallback,
+  useRef,
   useEffect,
   useState,
 } from "react";
@@ -31,6 +32,13 @@ function miniAppRouteHint() {
     : null;
 }
 function App() {
+  const navRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const nav = navRef.current; if (!nav) return;
+    const measure = () => { const height = nav.getBoundingClientRect().height; if (height > 0) document.documentElement.style.setProperty("--measured-nav-height", `${height}px`); };
+    const observer = new ResizeObserver(measure); observer.observe(nav); measure();
+    return () => observer.disconnect();
+  }, []);
   const [path, setPath] = useState(
       location.hash.slice(1) || miniAppRouteHint() || "/catalog",
     ),
@@ -212,7 +220,7 @@ function App() {
       const isInput = ["INPUT", "TEXTAREA", "SELECT"].includes(
         document.activeElement?.tagName || "",
       );
-      document.body.classList.toggle("keyboard-open", isInput);
+      document.body.classList.toggle("keyboard-open", isInput && (Boolean(tg()?.initData) || window.matchMedia("(pointer: coarse)").matches));
     };
     document.addEventListener("focusin", focus);
     document.addEventListener("focusout", focus);
@@ -395,6 +403,7 @@ function App() {
           </main>
         )}
         <nav
+          ref={navRef}
           className="bottom-nav"
           aria-label={staff ? "Навигация сотрудника" : "Навигация покупателя"}
         >
