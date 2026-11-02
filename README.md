@@ -14,7 +14,7 @@
 
 [PR №2](https://github.com/Timmmm69/second/pull/2) продолжает PR №1: дефекты и неизменяемая история, сведения магазина/карта, документы DRAFT/APPROVED, персональные факторы двух владельцев, уведомления каждому и отдельный адрес пункта Европочты. Исходный стек и бизнес-инварианты сохранены. Новые базы настраиваются явно: `npm run store:init -- --confirm-new-store`; существующие настройки не перезаписываются.
 
-Свежий [CI](https://github.com/Timmmm69/second/actions/runs/41476672394): **74 успешно +1 ожидаемый skip из 75** на PostgreSQL 16/17, typecheck/lint/build; production Docker прошёл smoke (миграции, API, отсутствие dev-входа, worker). Локально — те же статические проверки и 10 unit-тестов; PostgreSQL/Docker в среде не запускались. Реальные Android/iPhone и VPS пока не приняты. Подробности — docs/verification.md; персональная авторизация — ADR-002 и раздел 9 launch.md.
+Свежий [CI](https://github.com/Timmmm69/second/actions/runs/41478989773): **76 успешно +1 ожидаемый skip из 77** на PostgreSQL 16/17, typecheck/lint/build; production Docker прошёл smoke (миграции, API, отсутствие dev-входа, worker). Локально — те же статические проверки и 11 unit-тестов; PostgreSQL/Docker в среде не запускались. Реальные Android/iPhone и VPS пока не приняты. Подробности — docs/verification.md; персональная авторизация — ADR-002 и раздел 9 launch.md.
 
 [Публичный просмотр](https://luchok-phone-preview.antoniobonuci37.chatgpt.site/) — только синтетический каталог и подборка, без реальных оформлений/админки/ПД. Это отдельная демонстрация покупательского интерфейса. Реальные услуги не куплены, бот не переключён.
 
