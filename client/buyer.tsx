@@ -935,6 +935,19 @@ function Selection() {
         </Empty>
       ) : (
         <>
+          <section className="selection-checkout" aria-label="Оформление подборки">
+            <Summary label="Стоимость вещей">{money(selection.reduce((s, i) => s + i.priceMinor, 0))}</Summary>
+            <div className="receiving-actions">
+              <Button disabled={!selection.length || offline} onClick={() => { if (demo || authenticated()) go("/checkout/pickup"); }}>
+                <Icon name="pin" /><span><strong>Забронировать в магазине</strong><small>{settings?.buyerGuide?.pickupSummary || defaultBuyerGuide.pickupSummary}</small></span><Icon name="next" size={18} />
+              </Button>
+              <Button secondary disabled={!selection.length || offline || (!demo && !settings?.carriers.EUROPOST.enabled)} onClick={() => { if (demo || authenticated()) go("/checkout/delivery"); }}>
+                <Icon name="box" /><span><strong>Оформить доставку</strong><small>{demo || settings?.carriers.EUROPOST.enabled ? settings?.buyerGuide?.shippingSummary || defaultBuyerGuide.shippingSummary : "Отправка пока недоступна"}</small></span><Icon name="next" size={18} />
+              </Button>
+            </div>
+            <p className="small-text">{settings?.buyerGuide?.selection || defaultBuyerGuide.selection}</p>
+          </section>
+          <h2 className="selection-items-heading">Выбранные вещи</h2>
           <div className="item-list">
             {selection.map((item) => (
               <div
@@ -976,18 +989,7 @@ function Selection() {
               </div>
             ))}
           </div>
-          <section className="selection-checkout" aria-label="Оформление подборки">
-            <Summary label="Стоимость вещей">{money(selection.reduce((s, i) => s + i.priceMinor, 0))}</Summary>
-            <div className="receiving-actions">
-              <Button disabled={!selection.length || offline} onClick={() => { if (demo || authenticated()) go("/checkout/pickup"); }}>
-                <Icon name="pin" /><span><strong>Забронировать в магазине</strong><small>{settings?.buyerGuide?.pickupSummary || defaultBuyerGuide.pickupSummary}</small></span><Icon name="next" size={18} />
-              </Button>
-              <Button secondary disabled={!selection.length || offline || (!demo && !settings?.carriers.EUROPOST.enabled)} onClick={() => { if (demo || authenticated()) go("/checkout/delivery"); }}>
-                <Icon name="box" /><span><strong>Оформить доставку</strong><small>{demo || settings?.carriers.EUROPOST.enabled ? settings?.buyerGuide?.shippingSummary || defaultBuyerGuide.shippingSummary : "Отправка пока недоступна"}</small></span><Icon name="next" size={18} />
-              </Button>
-            </div>
-            <p className="small-text">{settings?.buyerGuide?.selection || defaultBuyerGuide.selection}</p>
-          </section>
+
           <Button ghost onClick={() => go("/catalog")}>Продолжить выбирать</Button>
         </>
       )}

@@ -1757,3 +1757,5 @@ button > svg, .button > svg { flex-shrink: 0; display: block; }
 @media (orientation:landscape) and (max-height:500px) { .app-shell { padding-bottom:0; } }
 
 .keyboard-open .app-shell { padding-bottom: calc(var(--measured-nav-height, var(--nav-height)) + 16px); }
+
+.selection-items-heading { margin: 28px 0 4px; }
