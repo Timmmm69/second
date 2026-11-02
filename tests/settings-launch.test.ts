@@ -42,3 +42,17 @@ test("drafts and test phone cannot open ordering; editing documents resets appro
  const saved=await save({...changed,documentStatus:"DRAFT",acceptingOrders:false,about:"Текст владельца",address:"Адрес владельца"});assert.equal(saved.statusCode,200,saved.body);
  const next=(await app.inject("/api/settings")).json();assert.equal(next.about,"Текст владельца");assert.equal(next.address,"Адрес владельца");assert.equal(next.documentStatus,"DRAFT");
 });
+
+
+test("buyer guidance is editable, versioned and cannot inherit document approval", async () => {
+ const original = await read();
+ const nextGuide = {...original.buyerGuide, pickup: "Дождитесь уведомления о готовности и приезжайте на примерку в часы магазина."};
+ const rejected = await save({...original, buyerGuide:nextGuide, documentStatus:"APPROVED"});
+ assert.equal(rejected.statusCode,422,rejected.body);
+ const saved = await save({...original, buyerGuide:nextGuide, documentStatus:"DRAFT", acceptingOrders:false});
+ assert.equal(saved.statusCode,200,saved.body);
+ assert.equal((await app.inject("/api/settings")).json().buyerGuide.pickup,nextGuide.pickup);
+ assert.ok((await pool.query("SELECT 1 FROM rule_versions WHERE settings_version=$1",[original.version])).rowCount);
+ assert.equal((await save({...saved.json(), documentStatus:"APPROVED"})).statusCode,200,"separate approval keeps JSONB key order irrelevant");
+ assert.equal((await save({...saved.json(), buyerGuide:{...nextGuide,pickup:""}})).statusCode,422);
+});

@@ -1,3 +1,4 @@
+import { fixtureSvg } from "../shared/fixture-art.js";
 import { randomUUID, createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -36,7 +37,7 @@ export async function seedDemo(env = process.env) {
   }
   const fixtures = [
     {
-      title: "Тестовый бомбер",
+      title: "Бомбер карамельного цвета",
       category: "outerwear",
       price: 4500,
       color: "#b8794f",
@@ -44,7 +45,7 @@ export async function seedDemo(env = process.env) {
       measurements: { chest: 560, length: 650, sleeve: 610 },
     },
     {
-      title: "Тестовые джинсы",
+      title: "Прямые джинсы",
       category: "trousers",
       price: 3500,
       color: "#536b86",
@@ -52,7 +53,7 @@ export async function seedDemo(env = process.env) {
       measurements: { waist: 380, rise: 280, length: 1030, inseam: 760 },
     },
     {
-      title: "Тестовый джемпер",
+      title: "Джемпер песочного цвета",
       category: "knit",
       price: 5200,
       color: "#d7c5a9",
@@ -60,7 +61,7 @@ export async function seedDemo(env = process.env) {
       measurements: { chest: 540, length: 630, sleeve: 600 },
     },
     {
-      title: "Тестовая рубашка",
+      title: "Голубая рубашка",
       category: "shirts",
       price: 4200,
       color: "#c5d3d9",
@@ -68,7 +69,7 @@ export async function seedDemo(env = process.env) {
       measurements: { chest: 520, length: 690, sleeve: 620 },
     },
     {
-      title: "Тестовая детская кофта",
+      title: "Детская кофта",
       category: "children",
       price: 2800,
       color: "#d2b6b5",
@@ -76,7 +77,7 @@ export async function seedDemo(env = process.env) {
       measurements: { chest: 350, length: 430 },
     },
     {
-      title: "Тестовая сумка",
+      title: "Сумка на плечо",
       category: "bags",
       price: 6900,
       color: "#97715a",
@@ -84,7 +85,7 @@ export async function seedDemo(env = process.env) {
       measurements: { width: 310, height: 240, depth: 120, strap: 980 },
     },
     {
-      title: "Тестовый шарф",
+      title: "Шарф шалфейного цвета",
       category: "accessories",
       price: 1900,
       color: "#a9b6a1",
@@ -92,7 +93,7 @@ export async function seedDemo(env = process.env) {
       measurements: { length: 1600, width: 300 },
     },
     {
-      title: "Тестовое платье",
+      title: "Платье свободного кроя",
       category: "dresses",
       price: 6200,
       color: "#b4ad99",
@@ -129,14 +130,14 @@ export async function seedDemo(env = process.env) {
       variants[String(width)] = `/media/${mediaId}/${width}`;
     }
     const attributes = {
-      brand: "Тестовый образец",
+      brand: "",
       color: f.color,
-      material: "Тестовые сведения: хлопок",
-      care: "Тестовые сведения: по бирке",
-      manufacturer: "Тестовый изготовитель",
-      importer: "Тестовый импортёр",
-      origin: "Тестовая страна",
-      documents: ["ТЕСТ — не документ товара"],
+      material: "",
+      care: "",
+      manufacturer: "",
+      importer: "",
+      origin: "",
+      documents: [""],
       season: "Всесезон",
       audience: f.category === "children" ? "Детское" : "Унисекс",
       sizeSystem: "INT",
@@ -157,7 +158,7 @@ export async function seedDemo(env = process.env) {
           "Тестовая стойка " + (index + 1),
         ],
       );
-      if (index === 0) await c.query("UPDATE items SET has_defect=true,defect_description=$2 WHERE id=$1", [itemId, "ТЕСТ: небольшая затяжка на рукаве; пример раскрытия дефекта, не реальный товар"]);
+      if (index === 0) await c.query("UPDATE items SET has_defect=true,defect_description=$2 WHERE id=$1", [itemId, "Небольшая затяжка на правом рукаве."]);
       await c.query(
         "INSERT INTO media_assets(id,item_id,original_key,checksum,mime,width,height,variants,position,role,state) VALUES($1,$2,$3,$4,$5,960,1280,$6,0,'FRONT','READY')",
         [
@@ -182,7 +183,7 @@ export async function seedDemo(env = process.env) {
           itemId,
           {
             hasDefect: index === 0,
-            defectDescription: index === 0 ? "ТЕСТ: небольшая затяжка на рукаве; пример раскрытия дефекта, не реальный товар" : "",
+            defectDescription: index === 0 ? "Небольшая затяжка на правом рукаве." : "",
             title: f.title,
             priceMinor: f.price,
             attributes,
@@ -200,25 +201,20 @@ export async function seedDemo(env = process.env) {
     const value = {
       ...row.value,
       ...initialStore,
-      name: "Лучок · тестовая среда",
+      name: "Лучок",
       address: initialStore.address,
       phone: initialStore.phone,
       telegramUsername: "",
       seller: "Тестовые реквизиты, не для публикации",
       acceptingOrders: true,
-      documents: {
-        privacy: "Тестовый документ. Реальные ПД не вводить.",
-        reservation: "Тестовые условия: бесплатная бронь.",
-        shipping: "Тестовые условия: ручная отправка, все расходы покупателя.",
-        returns: "Тестовый документ. Не является правовой политикой.",
-      },
+      documents: initialStore.documents,
       carriers: {
         BELPOST: {
           enabled: false,
           codConfirmed: false,
           returnsConfirmed: false,
           terms:
-            "ТЕСТ: оплата при получении через почту; доставка, упаковка и комиссии за счёт получателя; суммы подтвердит сотрудник.",
+            "Стоимость доставки, упаковки, комиссии и порядок оплаты согласуются до отправки.",
           contract: "",
           verifiedAt: "",
           paymentScheme:
@@ -232,7 +228,7 @@ export async function seedDemo(env = process.env) {
           codConfirmed: false,
           returnsConfirmed: false,
           terms:
-            "ТЕСТ: оплата при получении через почту; доставка, упаковка и комиссии за счёт получателя; суммы подтвердит сотрудник.",
+            "Стоимость доставки, упаковки, комиссии и порядок оплаты согласуются до отправки.",
           contract: "",
           verifiedAt: "",
           paymentScheme:
@@ -253,21 +249,7 @@ export async function seedDemo(env = process.env) {
   );
 }
 
-function fixtureSvg(shape: string, color: string) {
-  const silhouettes: Record<string, string> = {
-    jacket:
-      "M360 270L280 300L170 550L275 590L340 440L340 1010Q480 1070 620 1010L620 440L685 590L790 550L680 300L600 270Q480 350 360 270Z",
-    shirt:
-      "M370 270L280 310L165 590L270 630L345 460L345 1010L615 1010L615 460L690 630L795 590L680 310L590 270L480 350Z",
-    pants: "M315 270L645 270L670 1050L520 1050L480 590L440 1050L290 1050Z",
-    bag: "M250 490Q240 450 290 430L670 430Q720 450 710 490L735 920Q480 1020 225 920ZM355 435L360 310Q480 170 600 310L605 435L565 435L560 330Q480 245 400 330L395 435Z",
-    scarf:
-      "M340 250L535 265L620 1040L430 1070ZM340 250L535 265L470 530L320 490Z",
-    dress:
-      "M390 250L570 250L610 420L565 590L700 1040Q480 1130 260 1040L395 590L350 420Z",
-  };
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1280" viewBox="0 0 960 1280"><defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#f0efed"/><stop offset="1" stop-color="#dedcd7"/></linearGradient><linearGradient id="cloth" x2="1"><stop stop-color="${color}"/><stop offset=".48" stop-color="${color}"/><stop offset=".52" stop-color="#ffffff" stop-opacity=".15"/><stop offset="1" stop-color="${color}"/></linearGradient><filter id="s"><feDropShadow dx="0" dy="16" stdDeviation="16" flood-opacity=".12"/></filter></defs><rect width="960" height="1280" fill="url(#bg)"/><path d="M480 180q-25-40 0-55q35-15 40 10q0 20-40 40v50M310 270L480 210L650 270" stroke="#9c9b95" stroke-width="8" fill="none" stroke-linejoin="round"/><path d="${silhouettes[shape] ?? silhouettes.jacket}" fill="url(#cloth)" stroke="#222222" stroke-opacity=".12" stroke-width="3" filter="url(#s)"/><path d="M480 350V1010" stroke="#222" stroke-opacity=".12" stroke-width="3"/><rect x="40" y="1155" width="880" height="75" rx="16" fill="#fff" fill-opacity=".85"/><text x="480" y="1203" text-anchor="middle" font-family="sans-serif" font-size="28" font-weight="700" fill="#222">ТЕСТОВОЕ ИЗОБРАЖЕНИЕ · НЕ ТОВАР</text></svg>`;
-}
+
 if (process.argv[1] && /(?:^|\/)seed\.(?:ts|js)$/.test(process.argv[1]))
   seedDemo()
     .catch((error) => {

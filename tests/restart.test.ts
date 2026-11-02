@@ -44,6 +44,8 @@ test(
       termsAccepted: true,
     };
     const order = await confirmOrder(actor, operation, body);
+    const notificationsBefore = (await pool.query("SELECT id,event_type,recipient_id FROM outbox_events WHERE entity_id=$1 ORDER BY id", [order.id])).rows;
+    assert.ok(notificationsBefore.length >= 1);
     const token = randomUUID();
     await pool.query(
       "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour')",
@@ -97,14 +99,9 @@ test(
         ).rows[0].owner_id,
         order.id,
       );
-      assert.equal(
-        (
-          await pool.query(
-            "SELECT count(*)::int n FROM outbox_events WHERE entity_id=$1",
-            [order.id],
-          )
-        ).rows[0].n,
-        1,
+      assert.deepEqual(
+        (await pool.query("SELECT id,event_type,recipient_id FROM outbox_events WHERE entity_id=$1 ORDER BY id", [order.id])).rows,
+        notificationsBefore,
       );
       await tick({ skipOutbox: true });
       assert.equal((await app.inject("/health/ready")).statusCode, 200);

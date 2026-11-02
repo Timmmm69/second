@@ -1,3 +1,4 @@
+import { publicSettings } from "./public-settings.js";
 import { randomBytes } from "node:crypto";
 import { statfs } from "node:fs/promises";
 import type { FastifyInstance } from "fastify";
@@ -9,6 +10,7 @@ import { config } from "./config.js";
 import { audit } from "./inventory.js";
 import { reflowCalendar, readOrder } from "./orders.js";
 import { readItems } from "./catalog.js";
+import { defaultBuyerGuide } from "../shared/buyer-guide.js";
 const times = z
   .tuple([
     z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
@@ -37,6 +39,7 @@ const carrier = z.object({
   partialDelivery: z.boolean().optional(),
 });
 const settingsSchema = z.object({
+  buyerGuide: z.object(Object.fromEntries(Object.keys(defaultBuyerGuide).map(key => [key, z.string().trim().min(10).max(6000)])) as Record<keyof typeof defaultBuyerGuide, z.ZodString>).default(defaultBuyerGuide),
   version: z.number().int(),
   name: z.string().trim().min(1).max(100),
   address: z.string().max(1000),
@@ -60,20 +63,12 @@ export async function settings() {
   const r = (
     await pool.query("SELECT value,version FROM store_settings WHERE id=true")
   ).rows[0];
-  return { about: "", phoneIsTest: true, documentStatus: "DRAFT", ...r.value, version: r.version };
+  return { about: "", phoneIsTest: true, documentStatus: "DRAFT", ...r.value, buyerGuide: { ...defaultBuyerGuide, ...r.value.buyerGuide }, version: r.version };
 }
 export async function registerSettings(app: FastifyInstance) {
   app.get("/settings", async () => {
     const s = await settings();
-    return {
-      ...s,
-      carriers: Object.fromEntries(
-        Object.entries(s.carriers as Record<string, any>).map(([k, v]) => [
-          k,
-          { enabled: v.enabled, terms: v.terms },
-        ]),
-      ),
-    };
+    return publicSettings(s);
   });
   app.get("/delivery/options", async () => {
     const s = await settings();
@@ -136,6 +131,8 @@ export async function registerSettings(app: FastifyInstance) {
         "Настройки изменены. Обновите страницу",
       );
       const documentsChanged = (Object.keys(next.documents) as (keyof typeof next.documents)[]).some(key => old.value.documents?.[key] !== next.documents[key]);
+      const guideChanged = (Object.keys(defaultBuyerGuide) as (keyof typeof defaultBuyerGuide)[]).some(key => (old.value.buyerGuide?.[key] ?? defaultBuyerGuide[key]) !== next.buyerGuide[key]);
+      assert(!guideChanged || next.documentStatus === "DRAFT", 422, "DOCUMENT_REVIEW", "Изменённые условия сначала сохраните как черновик и проверьте перед утверждением");
       assert(!documentsChanged || next.documentStatus === "DRAFT", 422, "DOCUMENT_REVIEW", "Сначала сохраните новый текст как черновик, затем проверьте и утвердите отдельным сохранением");
       const value = { ...next };
       delete (value as any).version;

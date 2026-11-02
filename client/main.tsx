@@ -3,6 +3,7 @@ import {
   Suspense,
   lazy,
   useCallback,
+  useRef,
   useEffect,
   useState,
 } from "react";
@@ -31,6 +32,13 @@ function miniAppRouteHint() {
     : null;
 }
 function App() {
+  const navRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const nav = navRef.current; if (!nav) return;
+    const measure = () => { const height = nav.getBoundingClientRect().height; if (height > 0) document.documentElement.style.setProperty("--measured-nav-height", `${height}px`); };
+    const observer = new ResizeObserver(measure); observer.observe(nav); measure();
+    return () => observer.disconnect();
+  }, []);
   const [path, setPath] = useState(
       location.hash.slice(1) || miniAppRouteHint() || "/catalog",
     ),
@@ -212,7 +220,7 @@ function App() {
       const isInput = ["INPUT", "TEXTAREA", "SELECT"].includes(
         document.activeElement?.tagName || "",
       );
-      document.body.classList.toggle("keyboard-open", isInput);
+      document.body.classList.toggle("keyboard-open", isInput && (Boolean(tg()?.initData) || window.matchMedia("(pointer: coarse)").matches));
     };
     document.addEventListener("focusin", focus);
     document.addEventListener("focusout", focus);
@@ -302,6 +310,7 @@ function App() {
       value={{
         user,
         dev,
+        demo: import.meta.env.VITE_PUBLIC_DEMO === "1",
         settings,
         categories,
         refreshCategories,
@@ -320,7 +329,7 @@ function App() {
         setOwnerCode,
       }}
     >
-      <div className="app-shell">
+      <div className={`app-shell ${staff ? "service-shell" : ""}`}>
         <header className="app-header">
           <div className="header-start">
             {!rootPath && (
@@ -351,6 +360,7 @@ function App() {
             <Icon name="menu" />
           </button>
         </header>
+        {(dev || import.meta.env.VITE_PUBLIC_DEMO === "1") && <aside className="preview-note" role="note">Просмотр с демонстрационным ассортиментом · реальные оформления отключены</aside>}
         {offline && (
           <div className="network-bar" role="status">
             Нет соединения. Оформление и выдача временно недоступны.
@@ -393,6 +403,7 @@ function App() {
           </main>
         )}
         <nav
+          ref={navRef}
           className="bottom-nav"
           aria-label={staff ? "Навигация сотрудника" : "Навигация покупателя"}
         >
@@ -414,12 +425,12 @@ function App() {
             <button
               key={to}
               className={
-                path === to || (to === "/orders" && path.startsWith("/orders/"))
+                path === to || (to === "/owner" && path.startsWith("/owner/")) || (to === "/orders" && path.startsWith("/orders/"))
                   ? "active"
                   : ""
               }
               onClick={() => go(to)}
-              aria-current={path === to ? "page" : undefined}
+              aria-current={path === to || (to === "/owner" && path.startsWith("/owner/")) ? "page" : undefined}
             >
               <span className="nav-icon">
                 <Icon name={icon} />

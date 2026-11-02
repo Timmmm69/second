@@ -21,6 +21,7 @@ import {
 } from "./ui";
 import {
   date,
+  itemCount,
   measurementNames,
   methodNames,
   money,
@@ -67,7 +68,7 @@ function Queue() {
           <Icon name="refresh" />
         </button>
       </div>
-      <p className="muted">Следующее действие — всегда под рукой</p>
+      <p className="muted">Проверьте вещи, подготовьте выдачу или передайте посылку.</p>
       <div className="chips">
         {[
           ["checking", "Проверить"],
@@ -94,6 +95,7 @@ function Queue() {
           Возвраты
         </Button>
       </div>
+      <div className="workspace-intro"><Icon name={filter === "shipping" ? "box" : filter === "pickup" ? "pin" : "check"} /><div><h2>{{checking:"Найти и проверить",pickup:"Примерка и выдача",shipping:"Подготовка отправлений",deadlines:"Обращения со сроками",problems:"Нужна помощь"}[filter]}</h2><p>{{checking:"Отметьте найденные вещи, сохраните проверку и подтвердите готовность.",pickup:"Начните выдачу по коду покупателя, затем отметьте принятые вещи.",shipping:"Согласуйте условия, оформите трек и отдельно подтвердите фактическую сдачу.",deadlines:"Сверьте ближайшие сроки проверки, самовывоза и отправки.",problems:"Откройте связанную вещь или обращение и зафиксируйте решение."}[filter]}</p></div></div>
       <ErrorBox error={error} retry={reload} />
       {mutation.recovery}
       {loading && !data ? (
@@ -523,6 +525,7 @@ function ItemEditor({ id }: { id: string }) {
   return (
     <div className="page narrow item-editor">
       <h1>{id === "new" ? "Новая вещь" : "Карточка вещи"}</h1>
+      <nav className="editor-shortcuts" aria-label="Разделы карточки"><a href="#editor-basic" onClick={e => { e.preventDefault(); document.getElementById("editor-basic")?.scrollIntoView(); }}>Данные</a><a href="#editor-measurements" onClick={e => { e.preventDefault(); document.getElementById("editor-measurements")?.scrollIntoView(); }}>Замеры</a><a href="#editor-photos" onClick={e => { e.preventDefault(); document.getElementById("editor-photos")?.scrollIntoView(); }}>Фото</a></nav>
       <p className="muted">Одна карточка — один физический экземпляр</p>
       <ErrorBox error={error} retry={reload} />
       {mutation.recovery}
@@ -534,12 +537,13 @@ function ItemEditor({ id }: { id: string }) {
         </div>
       )}
       <form
-        className="form-stack"
+        className="form-stack editor-form"
         onSubmit={(e) => {
           e.preventDefault();
           save();
         }}
       >
+        <fieldset id="editor-basic"><legend>Основное</legend>
         <Field
           label="Название"
           value={form.title}
@@ -615,6 +619,8 @@ function ItemEditor({ id }: { id: string }) {
             <option key={s}>{s}</option>
           ))}
         </Select>
+        </fieldset>
+        <fieldset id="editor-measurements"><legend>Замеры и особенности</legend>
         <h2>Замеры, см</h2>
         <p className="small-text">
           Введите фактические размеры. Грудь, талия и бёдра — полуобхват.
@@ -647,7 +653,9 @@ function ItemEditor({ id }: { id: string }) {
           <textarea required maxLength={4000} value={form.defectDescription} onChange={e => set("defectDescription", e.target.value)} />
           <small>Укажите конкретную особенность. Добавьте фото дефекта ниже. При выключении флага текст удалится после сохранения.</small>
         </label>}
-        <h2>Сведения о вещи</h2>
+        </fieldset>
+        <fieldset><legend>Сведения с бирки</legend>
+        <p className="small-text">Указывайте только известные сведения. Не заменяйте отсутствующую маркировку предположениями.</p>
         {[
           ["brand", "Бренд"],
           ["color", "Цвет"],
@@ -666,6 +674,7 @@ function ItemEditor({ id }: { id: string }) {
             onChange={(e) => attr(key, e.target.value)}
           />
         ))}
+        </fieldset>
         <Button type="submit" disabled={mutation.busy}>
           {mutation.busy ? "Сохраняем…" : "Сохранить карточку"}
         </Button>
@@ -677,7 +686,7 @@ function ItemEditor({ id }: { id: string }) {
       </form>
       <section className="detail-section">
         <div className="section-heading">
-          <h2>Фотографии</h2>
+          <h2 id="editor-photos">Фотографии</h2>
           <Button
             secondary
             disabled={!item || Boolean(uploadFiles.length)}
@@ -989,6 +998,7 @@ function StaffOrder({ id }: { id: string }) {
       <p className="muted">
         {methodNames[order.method]} · {date(order.createdAt)}
       </p>
+      <div className="workspace-intro"><Icon name={order.method === "PICKUP" ? "pin" : "box"} /><div><h2>{statusNames[order.status] || order.status}</h2><p>{{CHECKING:"Найдите каждую вещь и сохраните результат проверки перед готовностью.",READY_FOR_PICKUP:"Сверьте код покупателя и начните примерку.",PREPARING:"Согласуйте расчёты и пункт выдачи. Только затем оформляйте посылку.",DISPATCH_READY:"Трек оформлен. Подтвердите сдачу, когда перевозчик фактически примет посылку.",HANDOVER:"Отметьте выбранные покупателем вещи и завершите выдачу.",AWAITING_CUSTOMER:"Дождитесь ответа покупателя на предложенное изменение.",IN_FULFILLMENT:"Обновляйте движение только по подтверждению перевозчика."}[order.status] || "Сверьте историю и фактическое состояние вещей перед следующей операцией."}</p></div></div>
       <div className="status-strip">
         <strong>{statusNames[order.status] || order.status}</strong>
         <span>Версия {order.version}</span>
@@ -1020,7 +1030,7 @@ function StaffOrder({ id }: { id: string }) {
         Взять обращение в работу
       </Button>
       <section className="detail-section">
-        <h2>Состав · {order.lines.length} вещей</h2>
+        <h2>Состав · {itemCount(order.lines.length)}</h2>
         <div className="item-list">
           {order.lines.map((line) => (
             <div className="item-row" key={line.id}>
@@ -1038,6 +1048,7 @@ function StaffOrder({ id }: { id: string }) {
                 <p className="small-text">
                   {line.storageLocation || "Место хранения — в карточке вещи"}
                 </p>
+                {line.hasDefect && <details className="defect-notice"><summary>Раскрытый дефект</summary><p>{line.defectDescription}</p></details>}
                 <strong>{money(line.priceMinor)}</strong>
                 <p className="small-text">
                   {statusNames[line.outcome] || line.outcome}
@@ -1790,7 +1801,7 @@ function Counter() {
               ))}
             </div>
           )}
-          <Summary label={`Выбрано ${chosen.length} вещей`}>
+          <Summary label={`Выбрано: ${itemCount(chosen.length)}`}>
             {money(chosen.reduce((s, i) => s + i.priceMinor, 0))}
           </Summary>
           <Button

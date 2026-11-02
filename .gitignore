@@ -6,3 +6,5 @@ dist-server/
 !.env.example
 var/
 *.log
+
+dist-preview/

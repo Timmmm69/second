@@ -25,6 +25,8 @@ import {
 } from "./ui";
 import {
   date,
+  itemCount,
+  type Settings,
   measurementNames,
   methodNames,
   money,
@@ -36,6 +38,7 @@ import {
   type Method,
   type Order,
 } from "./types";
+import { defaultBuyerGuide } from "../shared/buyer-guide";
 import { openTelegram, tg } from "./telegram";
 const draftDefault: Draft = {
   method: "PICKUP",
@@ -66,7 +69,7 @@ export default function Buyer() {
   const { path } = useApp();
   if (path.startsWith("/items/")) return <ItemPage id={path.split("/")[2]} />;
   if (path === "/selection") return <Selection />;
-  if (path === "/checkout") return <Checkout />;
+  if (path === "/checkout" || path.startsWith("/checkout/")) return <Checkout key={path} />;
   if (path.startsWith("/orders/")) return <OrderPage id={path.split("/")[2]} />;
   if (path === "/orders") return <Orders />;
   if (path === "/about") return <About />;
@@ -904,17 +907,17 @@ function Selection() {
     setSelection,
     go,
     refreshSelection,
-    authenticated,
+    authenticated, settings, offline, demo,
   } = useApp();
   const [error, setError] = useState<unknown>(null);
   useEffect(() => {
     refreshSelection().catch(setError);
   }, [refreshSelection]);
   return (
-    <div className="page narrow">
+    <div className="page narrow selection-page">
       <h1>Ваша подборка</h1>
       <p className="muted">
-        {selectionIds.length} вещей ·{" "}
+        {itemCount(selectionIds.length)} ·{" "}
         {money(selection.reduce((s, i) => s + i.priceMinor, 0))}
       </p>
       <ErrorBox
@@ -932,6 +935,19 @@ function Selection() {
         </Empty>
       ) : (
         <>
+          <section className="selection-checkout" aria-label="Оформление подборки">
+            <Summary label="Стоимость вещей">{money(selection.reduce((s, i) => s + i.priceMinor, 0))}</Summary>
+            <div className="receiving-actions">
+              <Button disabled={!selection.length || offline} onClick={() => { if (demo || authenticated()) go("/checkout/pickup"); }}>
+                <Icon name="pin" /><span><strong>Забронировать в магазине</strong><small>{settings?.buyerGuide?.pickupSummary || defaultBuyerGuide.pickupSummary}</small></span><Icon name="next" size={18} />
+              </Button>
+              <Button secondary disabled={!selection.length || offline || (!demo && !settings?.carriers.EUROPOST.enabled)} onClick={() => { if (demo || authenticated()) go("/checkout/delivery"); }}>
+                <Icon name="box" /><span><strong>Оформить доставку</strong><small>{demo || settings?.carriers.EUROPOST.enabled ? settings?.buyerGuide?.shippingSummary || defaultBuyerGuide.shippingSummary : "Отправка пока недоступна"}</small></span><Icon name="next" size={18} />
+              </Button>
+            </div>
+            <p className="small-text">{settings?.buyerGuide?.selection || defaultBuyerGuide.selection}</p>
+          </section>
+          <h2 className="selection-items-heading">Выбранные вещи</h2>
           <div className="item-list">
             {selection.map((item) => (
               <div
@@ -973,43 +989,25 @@ function Selection() {
               </div>
             ))}
           </div>
-          <section className="detail-section">
-            <h2>Вещи пока доступны другим</h2>
-            <p className="muted">
-              Мы закрепим их при оформлении. Если вещь уже выбрали, сообщим об
-              этом перед подтверждением.
-            </p>
-          </section>
-          <Summary label="Стоимость вещей">
-            {money(selection.reduce((s, i) => s + i.priceMinor, 0))}
-          </Summary>
-          <p className="muted">Доставка рассчитывается отдельно</p>
-          <div className="bottom-action">
-            <Button
-              disabled={!selection.length}
-              onClick={() => {
-                if (authenticated()) go("/checkout");
-              }}
-            >
-              Выбрать получение
-            </Button>
-          </div>
+
+          <Button ghost onClick={() => go("/catalog")}>Продолжить выбирать</Button>
         </>
       )}
     </div>
   );
 }
 function Checkout() {
-  const { user, settings, selection, selectionIds, setSelection, go, toast } =
-    useApp();
+  const { user, settings, selection, selectionIds, setSelection, go, toast, path, offline, demo } = useApp();
+  const requestedMethod = path.endsWith("/pickup") ? "PICKUP" : path.endsWith("/delivery") ? "EUROPOST" : null;
+
   const [draft, setDraft] = useState<Draft>(draftDefault),
     [loaded, setLoaded] = useState(false),
     [step, setStep] = useState(() =>
-      readLocal("checkout-lease", null) ? 2 : 0,
+      readLocal("checkout-lease", null) ? 2 : requestedMethod ? 1 : 0,
     ),
     [error, setError] = useState<unknown>(null),
     [busy, setBusy] = useState(false),
-    [lease, setLease] = useState<{ id: string; expiresAt: string; items?: Item[] } | null>(() =>
+    [lease, setLease] = useState<{ id: string; expiresAt: string; items?: Item[]; rules?: Settings } | null>(() =>
       readLocal("checkout-lease", null),
     ),
     [conflicts, setConflicts] = useState<{ itemId: string; reason: string }[]>(
@@ -1018,31 +1016,51 @@ function Checkout() {
     [pending, setPending] = useState(() =>
       Boolean(readLocal("checkout-operation", null)),
     );
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { if (loaded) { window.scrollTo({top:0,behavior:"instant"}); heading.current?.focus({preventScroll:true}); } }, [step,loaded]);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftFinished = useRef(false);
+  const latestDraft = useRef(draft); latestDraft.current = draft;
+  const draftReady = useRef(false); draftReady.current = loaded;
+  useEffect(() => () => { if (!demo && draftReady.current && !draftFinished.current) api("/me/checkout-draft", {method:"PATCH", body:latestDraft.current, keepalive:true}).catch(() => {}); }, [demo]);
   const key = useRef(
     readLocal<string | null>("checkout-operation", null) || operationKey(),
   );
   useEffect(() => {
+    if (demo) { setDraft({ ...draftDefault, method: requestedMethod || "PICKUP" }); setStep(requestedMethod ? 1 : 0); setLoaded(true); return; }
     if (!user) return;
-    api<Partial<Draft>>("/me/checkout-draft")
-      .then((data) => {
-        setDraft(cleanDraft(data));
-        setLoaded(true);
-      })
-      .catch(setError);
-  }, [user]);
+    let active = true;
+    (async () => {
+      const data = cleanDraft(await api<Partial<Draft>>("/me/checkout-draft"));
+      if (lease && !lease.rules && !pending) {
+        await api(`/checkout/leases/${lease.id}`, {method:"DELETE"});
+        if (!active) return;
+        setLease(null); saveLocal("checkout-lease", null); setStep(1);
+      }
+      if (requestedMethod && !pending) {
+        if (lease && data.method !== requestedMethod) {
+          await api(`/checkout/leases/${lease.id}`, {method:"DELETE"});
+          if (!active) return;
+          setLease(null); saveLocal("checkout-lease", null); setStep(1);
+        }
+        data.method = requestedMethod;
+      }
+      if (active) { setDraft(data); setLoaded(true); }
+    })().catch(e => { if (active) setError(e); });
+    return () => { active = false; };
+  }, [user, demo, requestedMethod]);
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || demo) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      command("/me/checkout-draft", draft, "PATCH").catch(setError);
+      if (!draftFinished.current) command("/me/checkout-draft", draft, "PATCH").catch(setError);
     }, 500);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [draft, loaded]);
+  }, [draft, loaded, demo]);
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || demo) return;
     const flush = () => {
       if (document.visibilityState === "hidden")
         api("/me/checkout-draft", {
@@ -1053,7 +1071,11 @@ function Checkout() {
     };
     document.addEventListener("visibilitychange", flush);
     return () => document.removeEventListener("visibilitychange", flush);
-  }, [draft, loaded]);
+  }, [draft, loaded, demo]);
+  const changeReceiving = async () => {
+    if (demo) { go("/checkout"); return; }
+    try { if (saveTimer.current) clearTimeout(saveTimer.current); await command("/me/checkout-draft", latestDraft.current, "PATCH"); go("/checkout"); } catch(e) { setError(e); }
+  };
   const set = (key: keyof Draft, value: string) =>
     setDraft((d) => ({ ...d, [key]: value }));
   const contact = () => {
@@ -1079,13 +1101,14 @@ function Checkout() {
   };
   const acquire = async (ids = selectionIds) => {
     if (pending) return;
+    if (demo) { setLease({ id: "preview", expiresAt: new Date(Date.now()+600000).toISOString(), items: selection }); setStep(2); return; }
     setBusy(true);
     setError(null);
     setConflicts([]);
     try {
       if (saveTimer.current) clearTimeout(saveTimer.current);
       await command("/me/checkout-draft", draft, "PATCH");
-      const response = await command<{ id: string; expiresAt: string }>(
+      const response = await command<{ id: string; expiresAt: string; items: Item[]; rules: Settings }>(
         "/checkout/leases",
         { itemIds: ids },
       );
@@ -1107,6 +1130,7 @@ function Checkout() {
       );
       const order = "result" in op ? op.result : op;
       if (order.id) {
+        draftFinished.current = true;
         saveLocal("checkout-operation", null);
         saveLocal("checkout-lease", null);
         await setSelection([]).catch(() => {});
@@ -1119,17 +1143,19 @@ function Checkout() {
     }
   };
   const submit = async () => {
-    if (!lease) return;
+    if (!lease || demo) return;
     setBusy(true);
     setError(null);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
     saveLocal("checkout-operation", key.current);
     try {
       const order = await command<Order>(
         "/orders",
-        { ...draft, leaseId: lease.id, termsAccepted: true },
+        { ...draft, leaseId: lease.id, termsAccepted: true, settingsVersion: lease.rules?.version },
         "POST",
         key.current,
       );
+      draftFinished.current = true;
       saveLocal("checkout-operation", null);
       saveLocal("checkout-lease", null);
       await setSelection([]).catch(() => {});
@@ -1144,6 +1170,7 @@ function Checkout() {
           );
           const order = "result" in op ? op.result : op;
           if (order.id) {
+            draftFinished.current = true;
             saveLocal("checkout-operation", null);
             saveLocal("checkout-lease", null);
             await setSelection([]).catch(() => {});
@@ -1154,8 +1181,9 @@ function Checkout() {
         }
       } else if (
         e instanceof ApiError &&
-        (e.status === 410 || e.code === "LEASE_EXPIRED")
+        (e.status === 410 || e.code === "LEASE_EXPIRED" || e.code === "RULES_CHANGED")
       ) {
+        if (e.code === "RULES_CHANGED") await api(`/checkout/leases/${lease.id}`, { method:"DELETE" }).catch(() => {});
         setLease(null);
         saveLocal("checkout-lease", null);
         setStep(1);
@@ -1169,7 +1197,9 @@ function Checkout() {
   useEffect(() => {
     if (loaded && pending) recover();
   }, [loaded]);
-  if (!user)
+  const displayedSettings = lease?.rules || settings;
+  const guide = { ...defaultBuyerGuide, ...displayedSettings?.buyerGuide };
+  if (!user && !demo)
     return (
       <div className="page">
         <Empty title="Откройте магазин через Telegram">
@@ -1211,22 +1241,21 @@ function Checkout() {
         (draft.method !== "EUROPOST" || draft.officeAddress?.trim()) &&
         (draft.method !== "BELPOST" || /^\d{6}$/.test(draft.postalCode)),
     );
+  const methodEnabled = draft.method === "PICKUP" || Boolean(settings?.carriers[draft.method]?.enabled);
   const total = (lease?.items || selection).reduce((s, i) => s + i.priceMinor, 0);
   return (
     <div className="page narrow checkout-page">
-      <div className="step-label">
-        {step + 1} из 3 · {["Получение", "Контактные данные", "Проверка"][step]}
-      </div>
-      <h1>
+      <ol className="checkout-progress" aria-label="Этапы оформления">{["Получение", "Данные", "Подтверждение"].map((label, i) => <li key={label} aria-current={i === step ? "step" : undefined} className={i <= step ? "reached" : ""}><span>{i+1}</span>{label}</li>)}</ol>
+      <h1 ref={heading} tabIndex={-1}>
         {["Как получить вещи?", "Данные для получения", "Всё верно?"][step]}
       </h1>
       <ErrorBox error={error} />
+      {!methodEnabled && !demo && <div className="notice" role="status"><h2>Этот способ сейчас недоступен</h2><p>Выберите самовывоз или другой доступный способ. Введённые данные сохранятся.</p><Button secondary onClick={changeReceiving}>Изменить получение</Button></div>}
       {pending && (
         <div className="notice">
           <h2>Проверяем результат оформления</h2>
           <p>
-            Ответ сервера потерян. Повтор проверит эту же операцию и не создаст
-            вторую бронь.
+            Не удалось получить подтверждение. Проверьте результат перед новым оформлением — повторная проверка не создаст вторую бронь.
           </p>
           <Button onClick={recover} disabled={busy}>
             Проверить результат
@@ -1237,7 +1266,7 @@ function Checkout() {
         <>
           <p className="muted">Выберите удобный способ</p>
           <div className="delivery-options">
-            {(["PICKUP", "BELPOST", "EUROPOST"] as Method[]).map((method) => {
+            {(["PICKUP", "EUROPOST", "BELPOST"] as Method[]).map((method) => {
               const enabled =
                 method === "PICKUP" || settings?.carriers[method]?.enabled;
               return (
@@ -1247,7 +1276,7 @@ function Checkout() {
                 >
                   <div>
                     <Icon name={method === "PICKUP" ? "pin" : "box"} />
-                    <strong>{methodNames[method]}</strong>
+                    <strong>{method === "PICKUP" ? "Забронировать в магазине" : method === "EUROPOST" ? "Оформить доставку" : methodNames[method]}</strong>
                     <input
                       type="radio"
                       name="method"
@@ -1258,9 +1287,9 @@ function Checkout() {
                   </div>
                   <p>
                     {method === "PICKUP"
-                      ? "Примерка и расчёт в магазине"
+                      ? guide.pickupSummary
                       : enabled
-                        ? "Оплата при получении · только в отделение"
+                        ? method === "EUROPOST" ? guide.shippingSummary : "В отделение · условия до отправки"
                         : "Способ пока не подключён магазином"}
                   </p>
                 </label>
@@ -1271,17 +1300,16 @@ function Checkout() {
             <h2>
               {draft.method === "PICKUP"
                 ? "Бесплатная бронь"
-                : "Оплата при получении"}
+                : "Отправка в пункт выдачи"}
             </h2>
             <p>
               {draft.method === "PICKUP"
-                ? "Вещи закрепятся при оформлении. Пригласим забирать после проверки сотрудником. Храним до закрытия следующего календарного дня после готовности; если магазин закрыт — до ближайшего рабочего дня."
-                : "Оставьте данные получателя. Владелец оформит и отправит посылку вручную. Вещи оплачиваются через перевозчика."}
+                ? guide.pickup : guide.shipping}
             </p>
             <p className="muted">
               {draft.method === "PICKUP"
                 ? settings?.address
-                : "Доставка, упаковка и почтовые комиссии — за ваш счёт. Неизвестную сумму уточнит владелец до сдачи."}
+                : guide.dispatch}
             </p>
           </section>
           <Summary label="Вещи">{money(total)}</Summary>
@@ -1290,7 +1318,14 @@ function Checkout() {
           </div>
         </>
       )}
-      {step === 1 && (
+      {step === 1 && demo && <section className="form-stack">
+        <div className="receiving-summary"><Icon name={draft.method === "PICKUP" ? "pin" : "box"} /><div><strong>{draft.method === "PICKUP" ? "Бронь с примеркой" : guide.shippingSummary}</strong><p className="small-text">{draft.method === "PICKUP" ? settings?.address : "ФИО, телефон, населённый пункт и пункт выдачи"}</p></div></div>
+        <p>{draft.method === "PICKUP" ? guide.pickup : guide.shipping}</p>
+        <p className="muted">В этом просмотре поля контактов закрыты. Можно посмотреть состав и следующий шаг без ввода личных данных.</p>
+        <Button disabled={!selection.length} onClick={() => acquire()}>Посмотреть подтверждение</Button>
+        <Button secondary onClick={changeReceiving}>Изменить получение</Button>
+      </section>}
+      {step === 1 && !demo && (
         <form
           className="form-stack"
           onSubmit={(e: FormEvent) => {
@@ -1298,6 +1333,7 @@ function Checkout() {
             if (validPhone && validRecipient) acquire();
           }}
         >
+          <div className="receiving-summary"><Icon name={draft.method === "PICKUP" ? "pin" : "box"} /><div><strong>{draft.method === "PICKUP" ? "Бронь с примеркой" : methodNames[draft.method]}</strong><p className="small-text">{draft.method === "PICKUP" ? settings?.address : guide.shippingSummary}</p></div></div>
           <p className="muted">
             Номер нужен для связи по вашему обращению. Мы не получаем его
             автоматически из Telegram.
@@ -1336,11 +1372,11 @@ function Checkout() {
                 onChange={(e) => set("city", e.target.value)}
               />
               <Field
-                label="Номер/название и адрес пункта выдачи"
+                label={draft.method === "EUROPOST" ? "Номер или название пункта выдачи" : "Номер и адрес отделения"}
                 required
                 value={draft.office}
                 onChange={(e) => set("office", e.target.value)}
-                hint="Адрес пункта, не домашний адрес. Укажите номер/название и полный адрес; сотрудник сверит их с перевозчиком."
+                hint="Сотрудник проверит пункт выдачи перед отправкой."
               />
               {draft.method === "EUROPOST" && <Field label="Адрес пункта выдачи" required value={draft.officeAddress || ""} onChange={e => set("officeAddress", e.target.value)} hint="Улица и дом пункта выдачи, не домашний адрес покупателя." />}
               <Field
@@ -1390,6 +1426,7 @@ function Checkout() {
               disabled={
                 busy ||
                 pending ||
+                !methodEnabled || offline ||
                 !validPhone ||
                 !validRecipient ||
                 !selectionIds.length
@@ -1397,7 +1434,7 @@ function Checkout() {
             >
               {busy ? "Проверяем наличие…" : "Проверить и продолжить"}
             </Button>
-            <Button secondary onClick={() => setStep(0)}>
+            <Button secondary onClick={changeReceiving}>
               Изменить получение
             </Button>
           </div>
@@ -1419,7 +1456,7 @@ function Checkout() {
               setSelection(availableIds).then(() => acquire(availableIds))
             }
           >
-            Продолжить с {availableIds.length} вещами
+            Оформить доступные: {itemCount(availableIds.length)}
           </Button>
           <Button secondary onClick={() => go("/selection")}>
             Вернуться к подборке
@@ -1431,8 +1468,7 @@ function Checkout() {
           <div className="notice">
             <Icon name="clock" />
             <p>
-              Удерживаем вещи до {date(lease?.expiresAt)}. После истечения
-              перепроверим наличие.
+              {demo ? "Перед оформлением вы проверите актуальный состав, цены и особенности вещей." : <>Удерживаем вещи до {date(lease?.expiresAt)}. После истечения перепроверим наличие.</>}
             </p>
           </div>
           <div className="compact-lines">
@@ -1452,16 +1488,16 @@ function Checkout() {
           </div>
           <section className="detail-section">
             <h2>{methodNames[draft.method]}</h2>
-            <p>{draft.phone}</p>
+            {!demo && <p>{draft.phone}</p>}
             {draft.method === "PICKUP" ? (
-              <p>{settings?.address}<MapLink address={settings?.address} /></p>
+              <p>{displayedSettings?.address}<MapLink address={displayedSettings?.address} /></p>
             ) : (
               <>
-                <p>{draft.fullName}</p>
-                <p>
+                <p>{demo ? "Пункт выдачи выбирается при оформлении в магазине" : draft.fullName}</p>
+                {!demo && <p>
                   {draft.city}, {draft.office}{draft.officeAddress ? `, ${draft.officeAddress}` : ""}
                   {draft.postalCode ? `, ${draft.postalCode}` : ""}
-                </p>
+                </p>}
               </>
             )}
           </section>
@@ -1469,11 +1505,10 @@ function Checkout() {
             <h2>Бронь и заявка бесплатны</h2>
             <p>
               {draft.method === "PICKUP"
-                ? "Пригласим забирать после проверки вещей. Стоимость принимаемых вещей оплачивается в магазине."
-                : "Вещи — оплата при получении через перевозчика. Пересылку, упаковку и комиссии оплачиваете вы. Если условия изменятся, владелец согласует их с вами до сдачи."}
+                ? guide.pickup : guide.shipping}
             </p>
-            {draft.method !== "PICKUP" && (
-              <p className="muted">{settings?.carriers[draft.method]?.terms}</p>
+            {draft.method !== "PICKUP" && displayedSettings?.carriers[draft.method]?.terms !== guide.shipping && (
+              <p className="muted">{displayedSettings?.carriers[draft.method]?.terms}</p>
             )}
             <button className="text-link" onClick={() => go("/about")}>
               Правила магазина и обработки данных
@@ -1482,20 +1517,20 @@ function Checkout() {
           <Summary label="Стоимость вещей">{money(total)}</Summary>
           <div className="bottom-action button-stack">
             <Button
-              disabled={busy || !settings?.acceptingOrders}
+              disabled={busy || pending || demo || offline || !methodEnabled || !settings?.acceptingOrders}
               onClick={submit}
             >
               {busy
                 ? "Сохраняем…"
-                : draft.method === "PICKUP"
-                  ? "Забронировать бесплатно"
+                : demo ? "Оформление недоступно в просмотре" : draft.method === "PICKUP"
+                  ? "Подтвердить бесплатную бронь"
                   : "Оформить заявку на отправку"}
             </Button>
             <Button
               secondary
               disabled={busy}
               onClick={async () => {
-                if (lease)
+                if (lease && !demo)
                   await api(`/checkout/leases/${lease.id}`, {
                     method: "DELETE",
                   }).catch(setError);
@@ -1506,7 +1541,7 @@ function Checkout() {
             >
               Изменить данные
             </Button>
-            {!settings?.acceptingOrders && (
+            {!demo && !settings?.acceptingOrders && (
               <p>Магазин временно не принимает новые обращения.</p>
             )}
           </div>
@@ -1532,12 +1567,7 @@ export function OrderCard({
       </div>
       <p className="muted">
         {methodNames[order.method]} ·{" "}
-        {
-          order.lines.filter(
-            (l) => activeLine(l) || ["HANDED_OVER", "SOLD"].includes(l.outcome),
-          ).length
-        }{" "}
-        вещей
+        {itemCount(order.lines.filter((l) => activeLine(l) || ["HANDED_OVER", "SOLD"].includes(l.outcome)).length)}
       </p>
       <div className="order-card-content">
         <div className="mini-photos">
@@ -1692,13 +1722,12 @@ function OrderPage({ id }: { id: string }) {
     order.method !== "PICKUP" &&
     ["CHECKING", "PREPARING", "DISPATCH_READY"].includes(order.status);
   const next: Record<string, string> = {
-    CHECKING:
-      "Вещи закреплены за вами. Пригласим забирать после физической проверки.",
+    CHECKING: order.method === "PICKUP" ? "Вещи закреплены за вами. Дождитесь уведомления о готовности, прежде чем приезжать." : "Вещи закреплены за заявкой. Проверим их и свяжемся для согласования условий отправки.",
     READY_FOR_PICKUP:
       "Приходите в магазин и покажите сотруднику номер и код выдачи.",
     PREPARING: "Заявка передана владельцу. Он оформит и сдаст посылку вручную.",
     DISPATCH_READY:
-      "Посылка оформлена. Трек появится в движении после фактической сдачи.",
+      "Номер отслеживания получен. Посылка ещё в магазине; сообщим, когда передадим её перевозчику.",
     IN_FULFILLMENT: "Следите за посылкой на официальном сайте перевозчика.",
     AWAITING_CUSTOMER:
       "Магазин предложил изменение. Ознакомьтесь и примите решение до указанного срока.",
@@ -1887,11 +1916,12 @@ function OrderPage({ id }: { id: string }) {
           ))}
         </div>
       </section>
+      <details className="document"><summary>Условия этого обращения</summary><p className="pre-wrap">{order.ruleSnapshot?.buyerGuide?.[order.method === "PICKUP" ? "pickup" : "shipping"] || "Состав и условия зафиксированы при оформлении. Подробности уточняйте в магазине по номеру обращения."}</p>{order.ruleSnapshot?.documents && order.ruleSnapshot.documentStatus === "APPROVED" && <p className="pre-wrap">{order.ruleSnapshot.documents[order.method === "PICKUP" ? "reservation" : "shipping"]}</p>}</details>
       <Summary label="Стоимость вещей">{money(order.totalMinor)}</Summary>
       <p className="muted">
         {order.method === "PICKUP"
           ? "Бронь бесплатна · расчёт в магазине"
-          : "Вещи — при получении через перевозчика. Доставка, упаковка и почтовые комиссии за ваш счёт."}
+          : settings?.buyerGuide?.shipping || defaultBuyerGuide.shipping}
       </p>
       <div className="button-stack section-space">
         {order.status === "READY_FOR_PICKUP" && order.pickupCode && (
@@ -2036,7 +2066,7 @@ function OrderPage({ id }: { id: string }) {
               }
             />
             <Field
-              label="Номер/название и адрес пункта выдачи"
+              label={order.method === "EUROPOST" ? "Номер или название пункта выдачи" : "Номер и адрес отделения"}
               required
               value={recipient.office}
               onChange={(e) =>
@@ -2084,9 +2114,9 @@ function About() {
         <h2>Где нас найти</h2>
         <p>{settings.address || "Адрес ещё не заполнен владельцем"}</p>
         <MapLink address={settings.address} />
-        {settings.phone && (
+        {settings.phone && settings.phoneIsTest === false && settings.phone.replace(/\D/g, "") !== "375337777777" && (
           <a className="text-link" href={`tel:${settings.phone}`}>
-            {settings.phone}{settings.phoneIsTest !== false ? " · тестовый номер" : ""}
+            {settings.phone}
           </a>
         )}
         <dl className="details-list">
@@ -2116,23 +2146,12 @@ function About() {
           {settings.seller || "Реквизиты заполняются перед запуском магазина."}
         </p>
       </section>
-      {settings.documentStatus !== "APPROVED" && <p className="notice">Черновики документов — не утверждены для публикации. Реальные оформления закрыты.</p>}
-      {Object.entries(settings.documents).map(([key, text]) => (
-        <details className="document" key={key}>
-          <summary>
-            {{
-              privacy: "Обработка персональных данных",
-              reservation: "Бронирование и получение",
-              shipping: "Условия почтовой отправки",
-              returns: "Возвраты товаров",
-            }[key] || key}
-          </summary>
-          <p className="pre-wrap">
-            {text ||
-              "Документ готовится владельцем. Оформление возможно после публикации условий."}
-          </p>
-        </details>
-      ))}
+      <section className="detail-section"><h2>Как всё устроено</h2>
+        {([ ["pickup", "Бронь и самовывоз"], ["shipping", "Доставка в пункт выдачи"], ["dispatch", "Когда отправят посылку"], ["cancellation", "Если планы изменились"], ["returns", "Возвраты и обращения"], ["privacy", "Данные для получения"] ] as const).map(([key, title]) => <details className="document" key={key}><summary>{title}</summary><p className="pre-wrap">{settings.buyerGuide?.[key] || defaultBuyerGuide[key]}</p></details>)}
+      </section>
+      <section className="detail-section"><h2>Документы продавца</h2>
+      {settings.documentStatus === "APPROVED" ? Object.entries(settings.documents).map(([key, text]) => <details className="document" key={key}><summary>{{privacy:"Обработка персональных данных", reservation:"Бронирование и получение", shipping:"Условия отправки", returns:"Возвраты товаров"}[key] || key}</summary><p className="pre-wrap">{text}</p></details>) : <p className="muted">Документы готовятся к публикации. Приём новых обращений откроется после проверки сведений магазина и условий.</p>}
+      </section>
       <p className="small-text">
         Время магазина — Europe/Minsk. Все цены в белорусских рублях.
       </p>
@@ -2143,7 +2162,7 @@ function About() {
   );
 }
 function Support() {
-  const { settings, go } = useApp();
+  const { settings, go, demo } = useApp();
   const [orderNumber, setOrderNumber] = useState("");
   return (
     <div className="page narrow">
@@ -2168,15 +2187,16 @@ function Support() {
           <p>Контакт поддержки уточняется.</p>
         )}
       </section>
-      <Field
+      {!demo && <Field
         label="Номер обращения, если есть"
         value={orderNumber}
         onChange={(e) => setOrderNumber(e.target.value)}
       />
+      }
       {orderNumber && <Copy value={orderNumber} label="Скопировать номер" />}
-      {settings?.phone && (
+      {settings?.phone && settings.phoneIsTest === false && settings.phone.replace(/\D/g, "") !== "375337777777" && (
         <a className="button secondary" href={`tel:${settings.phone}`}>
-          Позвонить {settings.phone}{settings.phoneIsTest !== false ? " · тестовый номер" : ""}
+          Позвонить {settings.phone}
         </a>
       )}
       <section className="detail-section">
@@ -2317,10 +2337,11 @@ function Events() {
   );
 }
 function Invite() {
-  const { user, refreshUser, toast, go } = useApp();
+  const { user, refreshUser, toast, go, demo } = useApp();
   const [token, setToken] = useState(""),
     [error, setError] = useState<unknown>(null),
     [busy, setBusy] = useState(false);
+  if (demo) return <div className="page narrow"><Empty title="Вход сотрудников">Доступ команды открывается в приложении магазина после приглашения владельца.</Empty></div>;
   return (
     <div className="page narrow">
       <h1>Приглашение сотрудника</h1>

@@ -1,0 +1,468 @@
+{
+  "settings": {
+    "name": "Лучок",
+    "phone": "",
+    "seller": "",
+    "address": "Минск, ул. Жореса Алфёрова, 9",
+    "calendar": {
+      "week": {
+        "0": [
+          "10:00",
+          "20:00"
+        ],
+        "1": [
+          "10:00",
+          "20:00"
+        ],
+        "2": [
+          "10:00",
+          "20:00"
+        ],
+        "3": [
+          "10:00",
+          "20:00"
+        ],
+        "4": [
+          "10:00",
+          "20:00"
+        ],
+        "5": [
+          "10:00",
+          "20:00"
+        ],
+        "6": [
+          "10:00",
+          "20:00"
+        ]
+      },
+      "exceptions": {}
+    },
+    "carriers": {
+      "BELPOST": {
+        "enabled": false,
+        "terms": ""
+      },
+      "EUROPOST": {
+        "enabled": true,
+        "terms": ""
+      }
+    },
+    "documents": {
+      "privacy": "",
+      "shipping": "",
+      "reservation": "",
+      "returns": ""
+    },
+    "acceptingOrders": false,
+    "telegramUsername": "",
+    "version": 3,
+    "phoneIsTest": true,
+    "about": "Лучок — магазин вещей в Минске. Выбирайте находки в каталоге, собирайте подборку и бронируйте для примерки в магазине. Для вещей с дефектами мы отдельно указываем, что именно нужно учесть. По вопросам получения и отправки можно связаться с магазином.",
+    "documentStatus": "DRAFT"
+  },
+  "categories": [
+    {
+      "id": "outerwear",
+      "name": "Куртки",
+      "measurements": [
+        "chest",
+        "length",
+        "sleeve"
+      ]
+    },
+    {
+      "id": "knit",
+      "name": "Трикотаж",
+      "measurements": [
+        "chest",
+        "length",
+        "sleeve"
+      ]
+    },
+    {
+      "id": "shirts",
+      "name": "Рубашки",
+      "measurements": [
+        "chest",
+        "length",
+        "sleeve"
+      ]
+    },
+    {
+      "id": "tops",
+      "name": "Футболки и топы",
+      "measurements": [
+        "chest",
+        "length"
+      ]
+    },
+    {
+      "id": "trousers",
+      "name": "Брюки и джинсы",
+      "measurements": [
+        "waist",
+        "rise",
+        "length",
+        "inseam"
+      ]
+    },
+    {
+      "id": "dresses",
+      "name": "Платья и юбки",
+      "measurements": [
+        "chest",
+        "waist",
+        "length"
+      ]
+    },
+    {
+      "id": "children",
+      "name": "Детское",
+      "measurements": [
+        "chest",
+        "length"
+      ]
+    },
+    {
+      "id": "bags",
+      "name": "Сумки",
+      "measurements": [
+        "width",
+        "height",
+        "depth",
+        "strap"
+      ]
+    },
+    {
+      "id": "accessories",
+      "name": "Аксессуары",
+      "measurements": [
+        "length",
+        "width"
+      ]
+    }
+  ],
+  "items": [
+    {
+      "id": "2b58b467-27f3-449f-aae9-f2d291445753",
+      "sku": "ЛЧ-0008",
+      "title": "Платье свободного кроя",
+      "category": "dresses",
+      "priceMinor": 6200,
+      "publication": "PUBLISHED",
+      "version": 2,
+      "attributes": {
+        "color": "#b4ad99",
+        "season": "Всесезон",
+        "audience": "Унисекс",
+        "sizeLabel": "M",
+        "sizeSystem": "INT"
+      },
+      "measurements": {
+        "chest": 470,
+        "waist": 380,
+        "length": 1020
+      },
+      "media": [
+        {
+          "id": "6083ebc3-4a5d-4411-87b6-ccf5efa48356",
+          "width": 960,
+          "height": 1280,
+          "variants": {
+            "240": "/media/6083ebc3-4a5d-4411-87b6-ccf5efa48356/240.webp",
+            "480": "/media/6083ebc3-4a5d-4411-87b6-ccf5efa48356/480.webp",
+            "960": "/media/6083ebc3-4a5d-4411-87b6-ccf5efa48356/960.webp",
+            "1600": "/media/6083ebc3-4a5d-4411-87b6-ccf5efa48356/1600.webp"
+          },
+          "role": "FRONT",
+          "position": 0,
+          "url": "/media/6083ebc3-4a5d-4411-87b6-ccf5efa48356/480.webp"
+        }
+      ],
+      "available": true,
+      "hasDefect": true,
+      "defectDescription": "Небольшая затяжка у бокового шва."
+    },
+    {
+      "id": "3cd050a3-1760-4974-984e-4368b8428c7c",
+      "sku": "ЛЧ-0007",
+      "title": "Шарф шалфейного цвета",
+      "category": "accessories",
+      "priceMinor": 1900,
+      "publication": "PUBLISHED",
+      "version": 2,
+      "attributes": {
+        "color": "#a9b6a1",
+        "season": "Всесезон",
+        "audience": "Унисекс",
+        "sizeLabel": "M",
+        "sizeSystem": "INT"
+      },
+      "measurements": {
+        "width": 300,
+        "length": 1600
+      },
+      "media": [
+        {
+          "id": "ca4d076c-d599-42f5-9a08-a77158bacd99",
+          "width": 960,
+          "height": 1280,
+          "variants": {
+            "240": "/media/ca4d076c-d599-42f5-9a08-a77158bacd99/240.webp",
+            "480": "/media/ca4d076c-d599-42f5-9a08-a77158bacd99/480.webp",
+            "960": "/media/ca4d076c-d599-42f5-9a08-a77158bacd99/960.webp",
+            "1600": "/media/ca4d076c-d599-42f5-9a08-a77158bacd99/1600.webp"
+          },
+          "role": "FRONT",
+          "position": 0,
+          "url": "/media/ca4d076c-d599-42f5-9a08-a77158bacd99/480.webp"
+        }
+      ],
+      "available": true,
+      "hasDefect": false,
+      "defectDescription": ""
+    },
+    {
+      "id": "213cb2f3-e217-467c-94a3-af819670e060",
+      "sku": "ЛЧ-0006",
+      "title": "Сумка на плечо",
+      "category": "bags",
+      "priceMinor": 6900,
+      "publication": "PUBLISHED",
+      "version": 2,
+      "attributes": {
+        "color": "#97715a",
+        "season": "Всесезон",
+        "audience": "Унисекс",
+        "sizeLabel": "M",
+        "sizeSystem": "INT"
+      },
+      "measurements": {
+        "depth": 120,
+        "strap": 980,
+        "width": 310,
+        "height": 240
+      },
+      "media": [
+        {
+          "id": "56e98615-b6c8-4005-a7f9-49aa49c2a722",
+          "width": 960,
+          "height": 1280,
+          "variants": {
+            "240": "/media/56e98615-b6c8-4005-a7f9-49aa49c2a722/240.webp",
+            "480": "/media/56e98615-b6c8-4005-a7f9-49aa49c2a722/480.webp",
+            "960": "/media/56e98615-b6c8-4005-a7f9-49aa49c2a722/960.webp",
+            "1600": "/media/56e98615-b6c8-4005-a7f9-49aa49c2a722/1600.webp"
+          },
+          "role": "FRONT",
+          "position": 0,
+          "url": "/media/56e98615-b6c8-4005-a7f9-49aa49c2a722/480.webp"
+        }
+      ],
+      "available": true,
+      "hasDefect": false,
+      "defectDescription": ""
+    },
+    {
+      "id": "f9d0792a-58c2-43fb-8674-47c79a750924",
+      "sku": "ЛЧ-0005",
+      "title": "Детская кофта",
+      "category": "children",
+      "priceMinor": 2800,
+      "publication": "PUBLISHED",
+      "version": 2,
+      "attributes": {
+        "color": "#d2b6b5",
+        "height": 110,
+        "season": "Всесезон",
+        "audience": "Детское",
+        "sizeLabel": "110",
+        "sizeSystem": "INT"
+      },
+      "measurements": {
+        "chest": 350,
+        "length": 430
+      },
+      "media": [
+        {
+          "id": "0d9dca25-7e01-4572-80d1-21fce774a4e4",
+          "width": 960,
+          "height": 1280,
+          "variants": {
+            "240": "/media/0d9dca25-7e01-4572-80d1-21fce774a4e4/240.webp",
+            "480": "/media/0d9dca25-7e01-4572-80d1-21fce774a4e4/480.webp",
+            "960": "/media/0d9dca25-7e01-4572-80d1-21fce774a4e4/960.webp",
+            "1600": "/media/0d9dca25-7e01-4572-80d1-21fce774a4e4/1600.webp"
+          },
+          "role": "FRONT",
+          "position": 0,
+          "url": "/media/0d9dca25-7e01-4572-80d1-21fce774a4e4/480.webp"
+        }
+      ],
+      "available": true,
+      "hasDefect": false,
+      "defectDescription": ""
+    },
+    {
+      "id": "823e51a7-d208-4cfe-bc51-49441e73e678",
+      "sku": "ЛЧ-0004",
+      "title": "Голубая рубашка",
+      "category": "shirts",
+      "priceMinor": 4200,
+      "publication": "PUBLISHED",
+      "version": 2,
+      "attributes": {
+        "color": "#c5d3d9",
+        "season": "Всесезон",
+        "audience": "Унисекс",
+        "sizeLabel": "M",
+        "sizeSystem": "INT"
+      },
+      "measurements": {
+        "chest": 520,
+        "length": 690,
+        "sleeve": 620
+      },
+      "media": [
+        {
+          "id": "a05e18d0-a3d2-456b-aa99-10b854043fa5",
+          "width": 960,
+          "height": 1280,
+          "variants": {
+            "240": "/media/a05e18d0-a3d2-456b-aa99-10b854043fa5/240.webp",
+            "480": "/media/a05e18d0-a3d2-456b-aa99-10b854043fa5/480.webp",
+            "960": "/media/a05e18d0-a3d2-456b-aa99-10b854043fa5/960.webp",
+            "1600": "/media/a05e18d0-a3d2-456b-aa99-10b854043fa5/1600.webp"
+          },
+          "role": "FRONT",
+          "position": 0,
+          "url": "/media/a05e18d0-a3d2-456b-aa99-10b854043fa5/480.webp"
+        }
+      ],
+      "available": true,
+      "hasDefect": false,
+      "defectDescription": ""
+    },
+    {
+      "id": "89ec72ed-85aa-4b2c-abfb-7052139c4741",
+      "sku": "ЛЧ-0003",
+      "title": "Джемпер песочного цвета",
+      "category": "knit",
+      "priceMinor": 5200,
+      "publication": "PUBLISHED",
+      "version": 2,
+      "attributes": {
+        "color": "#d7c5a9",
+        "season": "Всесезон",
+        "audience": "Унисекс",
+        "sizeLabel": "M",
+        "sizeSystem": "INT"
+      },
+      "measurements": {
+        "chest": 540,
+        "length": 630,
+        "sleeve": 600
+      },
+      "media": [
+        {
+          "id": "8bc3bce5-96a0-4d73-b60a-1253214820a6",
+          "width": 960,
+          "height": 1280,
+          "variants": {
+            "240": "/media/8bc3bce5-96a0-4d73-b60a-1253214820a6/240.webp",
+            "480": "/media/8bc3bce5-96a0-4d73-b60a-1253214820a6/480.webp",
+            "960": "/media/8bc3bce5-96a0-4d73-b60a-1253214820a6/960.webp",
+            "1600": "/media/8bc3bce5-96a0-4d73-b60a-1253214820a6/1600.webp"
+          },
+          "role": "FRONT",
+          "position": 0,
+          "url": "/media/8bc3bce5-96a0-4d73-b60a-1253214820a6/480.webp"
+        }
+      ],
+      "available": true,
+      "hasDefect": false,
+      "defectDescription": ""
+    },
+    {
+      "id": "86b4a487-5eda-472e-a11e-33a02ae00b22",
+      "sku": "ЛЧ-0002",
+      "title": "Прямые джинсы",
+      "category": "trousers",
+      "priceMinor": 3500,
+      "publication": "PUBLISHED",
+      "version": 2,
+      "attributes": {
+        "color": "#536b86",
+        "season": "Всесезон",
+        "audience": "Унисекс",
+        "sizeLabel": "M",
+        "sizeSystem": "INT"
+      },
+      "measurements": {
+        "rise": 280,
+        "waist": 380,
+        "inseam": 760,
+        "length": 1030
+      },
+      "media": [
+        {
+          "id": "272aa929-87f1-4213-b97e-feca0cae0537",
+          "width": 960,
+          "height": 1280,
+          "variants": {
+            "240": "/media/272aa929-87f1-4213-b97e-feca0cae0537/240.webp",
+            "480": "/media/272aa929-87f1-4213-b97e-feca0cae0537/480.webp",
+            "960": "/media/272aa929-87f1-4213-b97e-feca0cae0537/960.webp",
+            "1600": "/media/272aa929-87f1-4213-b97e-feca0cae0537/1600.webp"
+          },
+          "role": "FRONT",
+          "position": 0,
+          "url": "/media/272aa929-87f1-4213-b97e-feca0cae0537/480.webp"
+        }
+      ],
+      "available": true,
+      "hasDefect": false,
+      "defectDescription": ""
+    },
+    {
+      "id": "fe50a860-e986-4a93-8b0c-12fe21ad433a",
+      "sku": "ЛЧ-0001",
+      "title": "Бомбер карамельного цвета",
+      "category": "outerwear",
+      "priceMinor": 4500,
+      "publication": "PUBLISHED",
+      "version": 2,
+      "attributes": {
+        "color": "#b8794f",
+        "season": "Всесезон",
+        "audience": "Унисекс",
+        "sizeLabel": "M",
+        "sizeSystem": "INT"
+      },
+      "measurements": {
+        "chest": 560,
+        "length": 650,
+        "sleeve": 610
+      },
+      "media": [
+        {
+          "id": "6e41ea7e-57f9-4c00-8e9e-c7a3697a50ca",
+          "width": 960,
+          "height": 1280,
+          "variants": {
+            "240": "/media/6e41ea7e-57f9-4c00-8e9e-c7a3697a50ca/240.webp",
+            "480": "/media/6e41ea7e-57f9-4c00-8e9e-c7a3697a50ca/480.webp",
+            "960": "/media/6e41ea7e-57f9-4c00-8e9e-c7a3697a50ca/960.webp",
+            "1600": "/media/6e41ea7e-57f9-4c00-8e9e-c7a3697a50ca/1600.webp"
+          },
+          "role": "FRONT",
+          "position": 0,
+          "url": "/media/6e41ea7e-57f9-4c00-8e9e-c7a3697a50ca/480.webp"
+        }
+      ],
+      "available": true,
+      "hasDefect": false,
+      "defectDescription": ""
+    }
+  ]
+}

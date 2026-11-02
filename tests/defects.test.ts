@@ -90,3 +90,27 @@ test("production rejects drafts/test contacts when a legacy acceptingOrders flag
   }
  }finally{config.production=false;await pool.query("UPDATE store_settings SET value=$1 WHERE id=true",[old]);}
 });
+
+test("checkout discloses public rules and rejects a changed rules version before creating an order", async () => {
+ const login=await app.inject({method:"POST",url:"/api/auth/dev",payload:{role:"BUYER"}});
+ const buyer=String(login.headers["set-cookie"]).split(";")[0];
+ const original=(await pool.query("SELECT value FROM store_settings WHERE id=true")).rows[0].value;
+ const configured={...original, acceptingOrders:true, carriers:{...original.carriers, EUROPOST:{...original.carriers.EUROPOST,contract:"PRIVATE CONTRACT",paymentScheme:"PRIVATE PAYMENT"}}};
+ await pool.query("UPDATE store_settings SET value=$1 WHERE id=true",[configured]);
+ const item=(await send("POST","/staff/items",data)).json();
+ await pool.query("UPDATE items SET publication='PUBLISHED',physical='AVAILABLE' WHERE id=$1",[item.id]);
+ const cmd=(url:string,payload:Record<string,unknown>)=>app.inject({method:"POST",url:"/api"+url,payload,headers:{cookie:buyer,"idempotency-key":randomUUID()}});
+ try {
+  const held=await cmd("/checkout/leases",{itemIds:[item.id]});assert.equal(held.statusCode,200,held.body);
+  const lease=held.json();assert.ok(lease.rules.buyerGuide.pickup.includes("уведомления"));
+  assert.equal(lease.rules.carriers.EUROPOST.contract,undefined);assert.equal(lease.rules.carriers.EUROPOST.paymentScheme,undefined);
+  await pool.query("UPDATE store_settings SET version=version+1 WHERE id=true");
+  const stale=await cmd("/orders",{leaseId:lease.id,settingsVersion:lease.rules.version,method:"PICKUP",phone:"+375291234567",termsAccepted:true});
+  assert.equal(stale.statusCode,409,stale.body);assert.equal(stale.json().code,"RULES_CHANGED");
+  assert.equal((await pool.query("SELECT 1 FROM order_lines WHERE item_id=$1",[item.id])).rowCount,0);
+  await app.inject({method:"DELETE",url:"/api/checkout/leases/"+lease.id,headers:{cookie:buyer,"idempotency-key":randomUUID()}});
+  const fresh=(await cmd("/checkout/leases",{itemIds:[item.id]})).json();
+  const order=await cmd("/orders",{leaseId:fresh.id,settingsVersion:fresh.rules.version,method:"PICKUP",phone:"+375291234567",termsAccepted:true});
+  assert.equal(order.statusCode,200,order.body);assert.equal(order.json().ruleSnapshot.version,fresh.rules.version);
+ } finally { await pool.query("UPDATE store_settings SET value=$1 WHERE id=true",[original]); }
+});

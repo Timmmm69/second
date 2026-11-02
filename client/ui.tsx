@@ -238,7 +238,7 @@ export function ErrorBox({
   return (
     <div role="alert" className="error-box">
       <strong>
-        {err.status === 409
+        {err.status === 0 ? "Нет соединения" : err.status === 503 ? "Магазин временно недоступен" : err.status === 422 ? "Проверьте заполненные данные" : err.status === 409
           ? "Данные изменились"
           : err.status === 401
             ? "Откройте приложение через Telegram"
