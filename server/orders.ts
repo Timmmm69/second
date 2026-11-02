@@ -474,16 +474,17 @@ export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
       "ORDER_CREATED",
       "Вещи закреплены. Проверяем физическое наличие",
     );
-    if (body.method !== "PICKUP") {
+    {
       const owners = (await c.query("SELECT id FROM users WHERE role='OWNER'"))
         .rows;
       for (const owner of owners)
         await c.query(
-          "INSERT INTO outbox_events(entity_id,entity_version,event_type,recipient_id,message) VALUES($1,1,'SHIPMENT_REQUEST',$2,$3) ON CONFLICT DO NOTHING",
+          "INSERT INTO outbox_events(entity_id,entity_version,event_type,recipient_id,message) VALUES($1,1,$4,$2,$3) ON CONFLICT DO NOTHING",
           [
             id,
             owner.id,
-            `Заявка №${o.number}: ${items.length} вещей, ${body.method === "BELPOST" ? "Белпочта" : "Европочта"}. Откройте защищённую очередь.`,
+            `Заявка №${o.number}: ${items.length} вещей, ${body.method === "PICKUP" ? "Самовывоз" : body.method === "BELPOST" ? "Белпочта" : "Европочта"}. Откройте защищённую очередь.`,
+            body.method === "PICKUP" ? "OWNER_ORDER_REQUEST" : "SHIPMENT_REQUEST",
           ],
         );
     }

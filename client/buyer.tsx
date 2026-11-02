@@ -367,6 +367,7 @@ function Catalog() {
                     ? ` · рост ${item.attributes.height} см`
                     : ""}
                 </p>
+                {item.hasDefect && <span className="defect-badge">Есть дефект</span>}
                 <strong className="price">{money(item.priceMinor)}</strong>
               </button>
               <button
@@ -686,6 +687,7 @@ function ItemPage({ id }: { id: string }) {
             арт. {item.sku}
           </p>
           <p className="item-price">{money(item.priceMinor)}</p>
+          <Defect item={item} />
           {!item.available && (
             <div className="notice">
               <strong>Сейчас недоступно</strong>
@@ -951,6 +953,7 @@ function Selection() {
                   <p className="muted">
                     {item.attributes.sizeLabel} · арт. {item.sku}
                   </p>
+                  <Defect item={item} />
                   <strong>{money(item.priceMinor)}</strong>
                   {!item.available && (
                     <p className="field-error">Сейчас недоступно</p>
@@ -1331,11 +1334,11 @@ function Checkout() {
                 onChange={(e) => set("city", e.target.value)}
               />
               <Field
-                label="Номер и адрес отделения"
+                label="Номер/название и адрес пункта выдачи"
                 required
                 value={draft.office}
                 onChange={(e) => set("office", e.target.value)}
-                hint="Ручной ввод — сотрудник проверит отделение по официальному справочнику."
+                hint="Адрес пункта, не домашний адрес. Укажите номер/название и полный адрес; сотрудник сверит их с перевозчиком."
               />
               <Field
                 label={
@@ -1438,6 +1441,7 @@ function Checkout() {
                   <p className="muted">
                     {i.attributes.sizeLabel} · {i.sku}
                   </p>
+                  <Defect item={i} />
                   <strong>{money(i.priceMinor)}</strong>
                 </div>
               </div>
@@ -1447,7 +1451,7 @@ function Checkout() {
             <h2>{methodNames[draft.method]}</h2>
             <p>{draft.phone}</p>
             {draft.method === "PICKUP" ? (
-              <p>{settings?.address}</p>
+              <p>{settings?.address}<MapLink address={settings?.address} /></p>
             ) : (
               <>
                 <p>{draft.fullName}</p>
@@ -1780,6 +1784,7 @@ function OrderPage({ id }: { id: string }) {
           <>
             <p>{settings?.address || "Адрес укажет магазин"}</p>
             <p className="muted">
+              <MapLink address={settings?.address} />
               График и исключения — в разделе «О магазине».
             </p>
           </>
@@ -2027,7 +2032,7 @@ function OrderPage({ id }: { id: string }) {
               }
             />
             <Field
-              label="Номер и адрес отделения"
+              label="Номер/название и адрес пункта выдачи"
               required
               value={recipient.office}
               onChange={(e) =>
@@ -2069,13 +2074,14 @@ function About() {
   return (
     <div className="page narrow">
       <h1>О магазине</h1>
-      <p className="lead">Лучок. Ваши находки в Минске.</p>
+      <p className="lead pre-wrap">{settings.about || settings.name}</p>
       <section className="detail-section">
         <h2>Где нас найти</h2>
         <p>{settings.address || "Адрес ещё не заполнен владельцем"}</p>
+        <MapLink address={settings.address} />
         {settings.phone && (
           <a className="text-link" href={`tel:${settings.phone}`}>
-            {settings.phone}
+            {settings.phone}{settings.phoneIsTest !== false ? " · тестовый номер" : ""}
           </a>
         )}
         <dl className="details-list">
@@ -2105,6 +2111,7 @@ function About() {
           {settings.seller || "Реквизиты заполняются перед запуском магазина."}
         </p>
       </section>
+      {settings.documentStatus !== "APPROVED" && <p className="notice">Черновики документов — не утверждены для публикации. Реальные оформления закрыты.</p>}
       {Object.entries(settings.documents).map(([key, text]) => (
         <details className="document" key={key}>
           <summary>
@@ -2153,7 +2160,7 @@ function Support() {
             </Button>
           </>
         ) : (
-          <p>Аккаунт магазина пока не указан.</p>
+          <p>Контакт поддержки уточняется.</p>
         )}
       </section>
       <Field
@@ -2164,7 +2171,7 @@ function Support() {
       {orderNumber && <Copy value={orderNumber} label="Скопировать номер" />}
       {settings?.phone && (
         <a className="button secondary" href={`tel:${settings.phone}`}>
-          Позвонить {settings.phone}
+          Позвонить {settings.phone}{settings.phoneIsTest !== false ? " · тестовый номер" : ""}
         </a>
       )}
       <section className="detail-section">
@@ -2348,4 +2355,14 @@ function Invite() {
       </form>
     </div>
   );
+}
+
+function Defect({ item }: { item: { hasDefect?: boolean; defectDescription?: string } }) {
+  return item.hasDefect ? <details className="defect-notice"><summary>Есть дефект — описание</summary><p className="pre-wrap">{item.defectDescription}</p></details> : null;
+}
+
+function MapLink({ address }: { address?: string }) {
+  if (!address?.trim()) return null;
+  const url = `https://yandex.by/maps/?text=${encodeURIComponent(address)}`;
+  return <a className="text-link map-link" href={url} target="_blank" rel="noopener noreferrer" onClick={e => { if (tg()?.openLink) { e.preventDefault(); tg()?.openLink?.(url); } }}>Открыть в Яндекс Картах</a>;
 }

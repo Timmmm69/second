@@ -433,7 +433,7 @@ export async function processOutbox(deliver: Delivery = telegramDelivery) {
     const result = await deliver(
       String(row.telegram_id),
       row.message,
-      `${config.origin}/#orders/${row.entity_id}`,
+      row.event_type === "OWNER_ISSUE" ? `${config.origin}/#staff/issues` : ["OWNER_ORDER_REQUEST", "SHIPMENT_REQUEST"].includes(row.event_type) ? `${config.origin}/#staff/orders/${row.entity_id}` : `${config.origin}/#orders/${row.entity_id}`,
     );
     await tx(async (c) => {
       const current = (

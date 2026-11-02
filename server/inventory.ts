@@ -16,6 +16,8 @@ export type ItemRow = {
   attributes: Record<string, unknown>;
   measurements: Record<string, number>;
   storage_location: string;
+  has_defect: boolean;
+  defect_description: string;
 };
 export async function audit(
   c: PoolClient,
@@ -190,6 +192,8 @@ export async function itemSnapshot(c: PoolClient, i: ItemRow) {
     category: i.category,
     priceMinor: i.price_minor,
     version: i.version,
+    hasDefect: i.has_defect ?? false,
+    defectDescription: i.has_defect ? i.defect_description : "",
     attributes: i.attributes,
     measurements: i.measurements,
     media,
@@ -270,10 +274,12 @@ export async function issue(
   orderId: string | null = null,
   itemId: string | null = null,
 ) {
-  await c.query(
-    `INSERT INTO operation_issues(entity_id,kind,message,order_id,item_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(kind,entity_id) WHERE state='OPEN' DO NOTHING`,
+  const inserted = await c.query(
+    `INSERT INTO operation_issues(entity_id,kind,message,order_id,item_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(kind,entity_id) WHERE state='OPEN' DO NOTHING RETURNING id`,
     [entityId, kind, message, orderId, itemId],
   );
+  if (inserted.rowCount && kind !== "NOTIFICATION_FAILED")
+    await c.query("INSERT INTO outbox_events(entity_id,entity_version,event_type,recipient_id,message,payload) SELECT $1,1,'OWNER_ISSUE',id,$2,$3 FROM users WHERE role='OWNER' ON CONFLICT DO NOTHING", [inserted.rows[0].id, "Требует внимания: " + message, {orderId}]);
 }
 export async function event(
   c: PoolClient,

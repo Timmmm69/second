@@ -406,12 +406,18 @@ button:focus:not(:focus-visible) {
   font-size: 0.875rem;
 }
 .save-item {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  line-height: 0;
+  flex: 0 0 44px;
   position: absolute;
   top: 8px;
   right: 8px;
   min-width: 44px;
   min-height: 44px;
-  padding: 11px;
+  padding: 0;
   background: #ffffffed;
   color: #222;
   border-radius: 50%;
@@ -1664,3 +1670,10 @@ a[href^="tel"] {
 .text-link {
   min-height: 44px;
 }
+
+.save-item > svg { display: block; margin: 0; flex-shrink: 0; }
+.defect-badge { display: inline-block; margin: 4px 0; padding: 3px 7px; border-radius: 6px; background: #fff1d6; color: #684300; font-size: .75rem; line-height: 1.4; }
+.defect-notice { margin: 10px 0; padding: 10px 12px; border-radius: 10px; background: #fff7e7; color: #684300; overflow-wrap: anywhere; }
+.defect-notice summary { cursor: pointer; font-size: .875rem; }
+
+.map-link { display: block; margin: 10px 0; }

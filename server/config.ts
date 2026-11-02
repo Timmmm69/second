@@ -14,8 +14,6 @@ export function loadConfig(env = process.env) {
     throw new Error(
       "Production requires BOT_TOKEN, WEBHOOK_SECRET, DATA_KEY and HTTPS APP_ORIGIN",
     );
-  if (production && !/^[A-Z2-7]{16,}$/.test(env.OWNER_TOTP_SECRET ?? ""))
-    throw new Error("Production requires OWNER_TOTP_SECRET base32");
   if (production && env.BOT_DELIVERY_MODE !== "live")
     throw new Error("Production requires explicit BOT_DELIVERY_MODE=live");
   if (
