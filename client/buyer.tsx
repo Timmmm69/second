@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, useMemo, useSyncExternalStore, type FormEvent } from "react";
 import {
   api,
   ApiError,
@@ -38,6 +38,8 @@ import {
   type Method,
   type Order,
 } from "./types";
+import { getDraftSession } from "./checkout-draft";
+import { storeHours } from "../shared/store-hours";
 import { defaultBuyerGuide } from "../shared/buyer-guide";
 import { openTelegram, tg } from "./telegram";
 const draftDefault: Draft = {
@@ -50,13 +52,6 @@ const draftDefault: Draft = {
   postalCode: "",
   comment: "",
 };
-const cleanDraft = (input: Partial<Draft>): Draft =>
-  Object.fromEntries(
-    Object.entries(draftDefault).map(([key, fallback]) => [
-      key,
-      input[key as keyof Draft] ?? fallback,
-    ]),
-  ) as unknown as Draft;
 const activeLine = (line: Line) =>
   ["RESERVED", "RELEASE_PENDING"].includes(line.outcome);
 let catalogCache: {
@@ -1000,85 +995,59 @@ function Checkout() {
   const { user, settings, selection, selectionIds, setSelection, go, toast, path, offline, demo } = useApp();
   const requestedMethod = path.endsWith("/pickup") ? "PICKUP" : path.endsWith("/delivery") ? "EUROPOST" : null;
 
-  const [draft, setDraft] = useState<Draft>(draftDefault),
-    [loaded, setLoaded] = useState(false),
-    [step, setStep] = useState(() =>
-      readLocal("checkout-lease", null) ? 2 : requestedMethod ? 1 : 0,
+  const session = useMemo(() => getDraftSession(user?.id || "anonymous", api), [user?.id]);
+  const draftState = useSyncExternalStore(session.subscribe, session.snapshot);
+  const { draft, loaded } = draftState;
+  const accountKey = (name: string) => `${user?.id || "anonymous"}:${name}`;
+  const [step, setStep] = useState(() =>
+      readLocal(accountKey("checkout-lease"), null) ? 2 : requestedMethod ? 1 : 0,
     ),
     [error, setError] = useState<unknown>(null),
     [busy, setBusy] = useState(false),
+    [attempted, setAttempted] = useState(false),
     [lease, setLease] = useState<{ id: string; expiresAt: string; items?: Item[]; rules?: Settings } | null>(() =>
-      readLocal("checkout-lease", null),
+      readLocal(accountKey("checkout-lease"), null),
     ),
     [conflicts, setConflicts] = useState<{ itemId: string; reason: string }[]>(
       [],
     ),
     [pending, setPending] = useState(() =>
-      Boolean(readLocal("checkout-operation", null)),
+      Boolean(readLocal(accountKey("checkout-operation"), null)),
     );
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { if (loaded) { window.scrollTo({top:0,behavior:"instant"}); heading.current?.focus({preventScroll:true}); } }, [step,loaded]);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const draftFinished = useRef(false);
-  const latestDraft = useRef(draft); latestDraft.current = draft;
-  const draftReady = useRef(false); draftReady.current = loaded;
-  useEffect(() => () => { if (!demo && draftReady.current && !draftFinished.current) api("/me/checkout-draft", {method:"PATCH", body:latestDraft.current, keepalive:true}).catch(() => {}); }, [demo]);
   const key = useRef(
-    readLocal<string | null>("checkout-operation", null) || operationKey(),
+    readLocal<string | null>(accountKey("checkout-operation"), null) || operationKey(),
   );
   useEffect(() => {
-    if (demo) { setDraft({ ...draftDefault, method: requestedMethod || "PICKUP" }); setStep(requestedMethod ? 1 : 0); setLoaded(true); return; }
     if (!user) return;
     let active = true;
     (async () => {
-      const data = cleanDraft(await api<Partial<Draft>>("/me/checkout-draft"));
-      if (lease && !lease.rules && !pending) {
+      await session.load();
+      if (!active) return;
+      const data = session.snapshot().draft;
+      if (lease && ((!lease.rules && !pending) || (requestedMethod && !pending && data.method !== requestedMethod))) {
         await api(`/checkout/leases/${lease.id}`, {method:"DELETE"});
         if (!active) return;
-        setLease(null); saveLocal("checkout-lease", null); setStep(1);
+        setLease(null); saveLocal(accountKey("checkout-lease"), null); setStep(1);
       }
-      if (requestedMethod && !pending) {
-        if (lease && data.method !== requestedMethod) {
-          await api(`/checkout/leases/${lease.id}`, {method:"DELETE"});
-          if (!active) return;
-          setLease(null); saveLocal("checkout-lease", null); setStep(1);
-        }
-        data.method = requestedMethod;
-      }
-      if (active) { setDraft(data); setLoaded(true); }
+      if (requestedMethod && !pending && data.method !== requestedMethod) session.update({ method: requestedMethod });
     })().catch(e => { if (active) setError(e); });
-    return () => { active = false; };
-  }, [user, demo, requestedMethod]);
+    return () => { active = false; session.flush({keepalive:true}).catch(() => {}); };
+  }, [user?.id, session, requestedMethod]);
   useEffect(() => {
-    if (!loaded || demo) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      if (!draftFinished.current) command("/me/checkout-draft", draft, "PATCH").catch(setError);
-    }, 500);
-    return () => {
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-    };
-  }, [draft, loaded, demo]);
-  useEffect(() => {
-    if (!loaded || demo) return;
-    const flush = () => {
-      if (document.visibilityState === "hidden")
-        api("/me/checkout-draft", {
-          method: "PATCH",
-          body: draft,
-          keepalive: true,
-        }).catch(() => {});
-    };
+    const flush = () => { if (document.hidden) session.flush({keepalive:true}).catch(() => {}); };
+    const leave = () => { session.flush({keepalive:true}).catch(() => {}); };
     document.addEventListener("visibilitychange", flush);
-    return () => document.removeEventListener("visibilitychange", flush);
-  }, [draft, loaded, demo]);
+    window.addEventListener("pagehide", leave);
+    return () => { document.removeEventListener("visibilitychange", flush); window.removeEventListener("pagehide", leave); };
+  }, [session]);
   const changeReceiving = async () => {
-    if (demo) { go("/checkout"); return; }
-    try { if (saveTimer.current) clearTimeout(saveTimer.current); await command("/me/checkout-draft", latestDraft.current, "PATCH"); go("/checkout"); } catch(e) { setError(e); }
+    try { await session.flush(); go("/checkout"); } catch(e) { setError(e); }
   };
-  const set = (key: keyof Draft, value: string) =>
-    setDraft((d) => ({ ...d, [key]: value }));
+  const set = (key: keyof Draft, value: string) => session.update({[key]:value});
   const contact = () => {
+    const phoneAtRequest = session.snapshot().draft.phone;
     const app = tg();
     if (!app?.requestContact) {
       toast(
@@ -1090,7 +1059,7 @@ function Checkout() {
       if (success) {
         try {
           const saved = await api<Partial<Draft>>("/me/contact");
-          if (saved.phone) set("phone", saved.phone);
+          if (saved.phone && session.snapshot().draft.phone === phoneAtRequest) set("phone", saved.phone);
           else
             toast("Контакт передан. При необходимости введите номер вручную.");
         } catch (e) {
@@ -1101,19 +1070,17 @@ function Checkout() {
   };
   const acquire = async (ids = selectionIds) => {
     if (pending) return;
-    if (demo) { setLease({ id: "preview", expiresAt: new Date(Date.now()+600000).toISOString(), items: selection }); setStep(2); return; }
     setBusy(true);
     setError(null);
     setConflicts([]);
     try {
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-      await command("/me/checkout-draft", draft, "PATCH");
+      await session.flush();
       const response = await command<{ id: string; expiresAt: string; items: Item[]; rules: Settings }>(
         "/checkout/leases",
         { itemIds: ids },
       );
       setLease(response);
-      saveLocal("checkout-lease", response);
+      saveLocal(accountKey("checkout-lease"), response);
       setStep(2);
     } catch (e) {
       setError(e);
@@ -1130,9 +1097,9 @@ function Checkout() {
       );
       const order = "result" in op ? op.result : op;
       if (order.id) {
-        draftFinished.current = true;
-        saveLocal("checkout-operation", null);
-        saveLocal("checkout-lease", null);
+        session.finish();
+        saveLocal(accountKey("checkout-operation"), null);
+        saveLocal(accountKey("checkout-lease"), null);
         await setSelection([]).catch(() => {});
         go(`/orders/${order.id}`);
       }
@@ -1143,21 +1110,21 @@ function Checkout() {
     }
   };
   const submit = async () => {
-    if (!lease || demo) return;
+    if (!lease) return;
     setBusy(true);
     setError(null);
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveLocal("checkout-operation", key.current);
+    saveLocal(accountKey("checkout-operation"), key.current);
     try {
+      await session.flush();
       const order = await command<Order>(
         "/orders",
-        { ...draft, leaseId: lease.id, termsAccepted: true, settingsVersion: lease.rules?.version },
+        { ...draft, ...session.orderMetadata(), leaseId: lease.id, termsAccepted: true, settingsVersion: lease.rules?.version },
         "POST",
         key.current,
       );
-      draftFinished.current = true;
-      saveLocal("checkout-operation", null);
-      saveLocal("checkout-lease", null);
+      session.finish();
+      saveLocal(accountKey("checkout-operation"), null);
+      saveLocal(accountKey("checkout-lease"), null);
       await setSelection([]).catch(() => {});
       go(`/orders/${order.id}`);
     } catch (e) {
@@ -1170,9 +1137,9 @@ function Checkout() {
           );
           const order = "result" in op ? op.result : op;
           if (order.id) {
-            draftFinished.current = true;
-            saveLocal("checkout-operation", null);
-            saveLocal("checkout-lease", null);
+            session.finish();
+            saveLocal(accountKey("checkout-operation"), null);
+            saveLocal(accountKey("checkout-lease"), null);
             await setSelection([]).catch(() => {});
             go(`/orders/${order.id}`);
           }
@@ -1185,10 +1152,10 @@ function Checkout() {
       ) {
         if (e.code === "RULES_CHANGED") await api(`/checkout/leases/${lease.id}`, { method:"DELETE" }).catch(() => {});
         setLease(null);
-        saveLocal("checkout-lease", null);
+        saveLocal(accountKey("checkout-lease"), null);
         setStep(1);
         key.current = operationKey();
-        saveLocal("checkout-operation", null);
+        saveLocal(accountKey("checkout-operation"), null);
       }
     } finally {
       setBusy(false);
@@ -1213,14 +1180,7 @@ function Checkout() {
       <div className="page narrow">
         <ErrorBox
           error={error}
-          retry={() =>
-            api<Partial<Draft>>("/me/checkout-draft")
-              .then((data) => {
-                setDraft(cleanDraft(data));
-                setLoaded(true);
-              })
-              .catch(setError)
-          }
+          retry={() => session.load().catch(setError)}
         />
         {!error && <Loading />}
       </div>
@@ -1231,6 +1191,17 @@ function Checkout() {
       !conflicts.some((c) => c.itemId === id) &&
       !unavailable.some((i) => i.id === id),
   );
+  const fieldErrors: Record<string,string> = error instanceof ApiError ? {...error.fieldErrors} : {};
+  if (attempted) {
+    if (!/^\+?[\d\s()-]{9,22}$/.test(draft.phone)) fieldErrors.phone = "Укажите телефон для связи";
+    if (draft.method !== "PICKUP") {
+      if (draft.fullName.trim().split(/\s+/).length < 2) fieldErrors.fullName = "Укажите фамилию и имя получателя";
+      if (!draft.city.trim()) fieldErrors.city = "Укажите населённый пункт";
+      if (!draft.office.trim()) fieldErrors.office = "Укажите номер или название пункта";
+      if (draft.method === "EUROPOST" && !draft.officeAddress?.trim()) fieldErrors.officeAddress = "Укажите адрес пункта выдачи";
+      if (draft.method === "BELPOST" && !/^\d{6}$/.test(draft.postalCode)) fieldErrors.postalCode = "Укажите шестизначный индекс";
+    }
+  }
   const validPhone = /^\+?[\d\s()-]{9,22}$/.test(draft.phone);
   const validRecipient =
     draft.method === "PICKUP" ||
@@ -1249,7 +1220,7 @@ function Checkout() {
       <h1 ref={heading} tabIndex={-1}>
         {["Как получить вещи?", "Данные для получения", "Всё верно?"][step]}
       </h1>
-      <ErrorBox error={error} />
+      <ErrorBox error={error || draftState.error} />
       {!methodEnabled && !demo && <div className="notice" role="status"><h2>Этот способ сейчас недоступен</h2><p>Выберите самовывоз или другой доступный способ. Введённые данные сохранятся.</p><Button secondary onClick={changeReceiving}>Изменить получение</Button></div>}
       {pending && (
         <div className="notice">
@@ -1318,22 +1289,18 @@ function Checkout() {
           </div>
         </>
       )}
-      {step === 1 && demo && <section className="form-stack">
-        <div className="receiving-summary"><Icon name={draft.method === "PICKUP" ? "pin" : "box"} /><div><strong>{draft.method === "PICKUP" ? "Бронь с примеркой" : guide.shippingSummary}</strong><p className="small-text">{draft.method === "PICKUP" ? settings?.address : "ФИО, телефон, населённый пункт и пункт выдачи"}</p></div></div>
-        <p>{draft.method === "PICKUP" ? guide.pickup : guide.shipping}</p>
-        <p className="muted">В этом просмотре поля контактов закрыты. Можно посмотреть состав и следующий шаг без ввода личных данных.</p>
-        <Button disabled={!selection.length} onClick={() => acquire()}>Посмотреть подтверждение</Button>
-        <Button secondary onClick={changeReceiving}>Изменить получение</Button>
-      </section>}
-      {step === 1 && !demo && (
+      {step === 1 && (
         <form
           className="form-stack"
+          noValidate
           onSubmit={(e: FormEvent) => {
-            e.preventDefault();
+            e.preventDefault(); setAttempted(true);
             if (validPhone && validRecipient) acquire();
+            else requestAnimationFrame(()=> document.querySelector<HTMLInputElement>('input[aria-invalid="true"]')?.focus());
           }}
         >
           <div className="receiving-summary"><Icon name={draft.method === "PICKUP" ? "pin" : "box"} /><div><strong>{draft.method === "PICKUP" ? "Бронь с примеркой" : methodNames[draft.method]}</strong><p className="small-text">{draft.method === "PICKUP" ? settings?.address : guide.shippingSummary}</p></div></div>
+          {demo && <p className="small-text">Заполнен вымышленный получатель. Изменения контактов остаются в памяти этой сессии; после перезагрузки снова появятся тестовые данные.</p>}
           <p className="muted">
             Номер нужен для связи по вашему обращению. Мы не получаем его
             автоматически из Telegram.
@@ -1346,15 +1313,11 @@ function Checkout() {
             value={draft.phone}
             onChange={(e) => set("phone", e.target.value)}
             placeholder="+375 29 000 00 00"
-            error={
-              draft.phone && !validPhone
-                ? "Проверьте номер телефона"
-                : undefined
-            }
+            error={draft.phone && !validPhone ? "Проверьте номер телефона" : fieldErrors.phone}
           />
-          <Button secondary onClick={contact}>
+          {!demo && <Button secondary onClick={contact}>
             Поделиться контактом Telegram
-          </Button>
+          </Button>}
           {draft.method !== "PICKUP" && (
             <>
               <Field
@@ -1363,22 +1326,23 @@ function Checkout() {
                 required
                 value={draft.fullName}
                 onChange={(e) => set("fullName", e.target.value)}
-                hint="Укажите имя по требованиям перевозчика. Паспортные данные не нужны."
+                hint="Укажите ФИО получателя по требованиям перевозчика. Он может отличаться от владельца Telegram. Паспортные данные не нужны."
+                error={draft.fullName && draft.fullName.trim().split(/\s+/).length < 2 ? "Укажите фамилию и имя получателя" : fieldErrors.fullName}
               />
               <Field
                 label="Населённый пункт"
                 required
-                value={draft.city}
+                error={fieldErrors.city} value={draft.city}
                 onChange={(e) => set("city", e.target.value)}
               />
               <Field
                 label={draft.method === "EUROPOST" ? "Номер или название пункта выдачи" : "Номер и адрес отделения"}
                 required
-                value={draft.office}
+                error={fieldErrors.office} value={draft.office}
                 onChange={(e) => set("office", e.target.value)}
                 hint="Сотрудник проверит пункт выдачи перед отправкой."
               />
-              {draft.method === "EUROPOST" && <Field label="Адрес пункта выдачи" required value={draft.officeAddress || ""} onChange={e => set("officeAddress", e.target.value)} hint="Улица и дом пункта выдачи, не домашний адрес покупателя." />}
+              {draft.method === "EUROPOST" && <Field label="Адрес пункта выдачи" required error={fieldErrors.officeAddress} value={draft.officeAddress || ""} onChange={e => set("officeAddress", e.target.value)} hint="Улица и дом пункта выдачи, не домашний адрес покупателя." />}
               <Field
                 label={
                   draft.method === "BELPOST"
@@ -1388,7 +1352,7 @@ function Checkout() {
                 inputMode="numeric"
                 pattern={draft.method === "BELPOST" ? "[0-9]{6}" : undefined}
                 required={draft.method === "BELPOST"}
-                value={draft.postalCode}
+                error={fieldErrors.postalCode} value={draft.postalCode}
                 onChange={(e) => set("postalCode", e.target.value)}
               />
               <a
@@ -1410,6 +1374,12 @@ function Checkout() {
             value={draft.comment}
             onChange={(v) => set("comment", v)}
           />
+          <div className="recipient-preferences">
+            <label className="check-row"><input type="checkbox" checked={draftState.saveRecipient} disabled={draftState.clearing} onChange={e=>session.setSaveRecipient(e.target.checked)} /><span>Сохранить данные для следующих обращений<small>После оформления подставим телефон и последнего получателя. Можно исправить или очистить. Это не рекламная подписка.</small></span></label>
+            <button type="button" className="text-link" disabled={draftState.clearing || busy} onClick={()=>session.clear().then(()=>toast("Данные получателя и черновик очищены")).catch(setError)}>Очистить сохранённые данные</button>
+          </div>
+          <p className="draft-status small-text" role="status">{{idle:"",saving:"Сохраняем…",saved:"Сохранено",failed:"Не удалось сохранить. Ввод остаётся в форме."}[draftState.status]}</p>
+          {draftState.status === "failed" && <Button secondary onClick={()=>session.flush().catch(setError)}>Повторить сохранение</Button>}
           <p className="small-text">
             Данные используются для исполнения обращения.{" "}
             <button
@@ -1424,11 +1394,9 @@ function Checkout() {
             <Button
               type="submit"
               disabled={
-                busy ||
+                busy || draftState.clearing ||
                 pending ||
                 !methodEnabled || offline ||
-                !validPhone ||
-                !validRecipient ||
                 !selectionIds.length
               }
             >
@@ -1488,13 +1456,13 @@ function Checkout() {
           </div>
           <section className="detail-section">
             <h2>{methodNames[draft.method]}</h2>
-            {!demo && <p>{draft.phone}</p>}
+            {<p>{draft.phone}</p>}
             {draft.method === "PICKUP" ? (
               <p>{displayedSettings?.address}<MapLink address={displayedSettings?.address} /></p>
             ) : (
               <>
-                <p>{demo ? "Пункт выдачи выбирается при оформлении в магазине" : draft.fullName}</p>
-                {!demo && <p>
+                <p>{draft.fullName}</p>
+                {<p>
                   {draft.city}, {draft.office}{draft.officeAddress ? `, ${draft.officeAddress}` : ""}
                   {draft.postalCode ? `, ${draft.postalCode}` : ""}
                 </p>}
@@ -1517,12 +1485,12 @@ function Checkout() {
           <Summary label="Стоимость вещей">{money(total)}</Summary>
           <div className="bottom-action button-stack">
             <Button
-              disabled={busy || pending || demo || offline || !methodEnabled || !settings?.acceptingOrders}
+              disabled={busy || pending || offline || !methodEnabled || (!demo && !settings?.acceptingOrders)}
               onClick={submit}
             >
               {busy
                 ? "Сохраняем…"
-                : demo ? "Оформление недоступно в просмотре" : draft.method === "PICKUP"
+                : demo ? (draft.method === "PICKUP" ? "Создать тестовую бронь" : "Создать тестовую заявку") : draft.method === "PICKUP"
                   ? "Подтвердить бесплатную бронь"
                   : "Оформить заявку на отправку"}
             </Button>
@@ -1530,12 +1498,12 @@ function Checkout() {
               secondary
               disabled={busy}
               onClick={async () => {
-                if (lease && !demo)
+                if (lease)
                   await api(`/checkout/leases/${lease.id}`, {
                     method: "DELETE",
                   }).catch(setError);
                 setLease(null);
-                saveLocal("checkout-lease", null);
+                saveLocal(accountKey("checkout-lease"), null);
                 setStep(1);
               }}
             >
@@ -2095,71 +2063,54 @@ function OrderPage({ id }: { id: string }) {
   );
 }
 function About() {
-  const { settings, go } = useApp();
+  const { settings, go, demo } = useApp();
+  const [details, setDetails] = useState<"pickup"|"shipping"|null>(null);
   if (!settings) return <Loading />;
-  const dayNames = [
-    "Воскресенье",
-    "Понедельник",
-    "Вторник",
-    "Среда",
-    "Четверг",
-    "Пятница",
-    "Суббота",
-  ];
-  return (
-    <div className="page narrow">
-      <h1>О магазине</h1>
-      <p className="lead pre-wrap">{settings.about || settings.name}</p>
-      <section className="detail-section">
-        <h2>Где нас найти</h2>
-        <p>{settings.address || "Адрес ещё не заполнен владельцем"}</p>
-        <MapLink address={settings.address} />
-        {settings.phone && settings.phoneIsTest === false && settings.phone.replace(/\D/g, "") !== "375337777777" && (
-          <a className="text-link" href={`tel:${settings.phone}`}>
-            {settings.phone}
-          </a>
-        )}
-        <dl className="details-list">
-          {Object.entries(settings.calendar.week).map(([day, hours]) => (
-            <div key={day}>
-              <dt>{dayNames[Number(day)]}</dt>
-              <dd>{hours ? `${hours[0]}–${hours[1]}` : "Выходной"}</dd>
-            </div>
-          ))}
-        </dl>
-        {Object.entries(settings.calendar.exceptions).length > 0 && (
-          <>
-            <h3>Изменения графика</h3>
-            {Object.entries(settings.calendar.exceptions).map(
-              ([day, hours]) => (
-                <p key={day}>
-                  {day}: {hours ? `${hours[0]}–${hours[1]}` : "магазин закрыт"}
-                </p>
-              ),
-            )}
-          </>
-        )}
-      </section>
-      <section className="detail-section">
-        <h2>Продавец</h2>
-        <p className="pre-wrap">
-          {settings.seller || "Реквизиты заполняются перед запуском магазина."}
-        </p>
-      </section>
-      <section className="detail-section"><h2>Как всё устроено</h2>
-        {([ ["pickup", "Бронь и самовывоз"], ["shipping", "Доставка в пункт выдачи"], ["dispatch", "Когда отправят посылку"], ["cancellation", "Если планы изменились"], ["returns", "Возвраты и обращения"], ["privacy", "Данные для получения"] ] as const).map(([key, title]) => <details className="document" key={key}><summary>{title}</summary><p className="pre-wrap">{settings.buyerGuide?.[key] || defaultBuyerGuide[key]}</p></details>)}
-      </section>
-      <section className="detail-section"><h2>Документы продавца</h2>
-      {settings.documentStatus === "APPROVED" ? Object.entries(settings.documents).map(([key, text]) => <details className="document" key={key}><summary>{{privacy:"Обработка персональных данных", reservation:"Бронирование и получение", shipping:"Условия отправки", returns:"Возвраты товаров"}[key] || key}</summary><p className="pre-wrap">{text}</p></details>) : <p className="muted">Документы готовятся к публикации. Приём новых обращений откроется после проверки сведений магазина и условий.</p>}
-      </section>
-      <p className="small-text">
-        Время магазина — Europe/Minsk. Все цены в белорусских рублях.
-      </p>
-      <Button secondary onClick={() => go("/support")}>
-        Контакты и обращения
-      </Button>
-    </div>
-  );
+  const hours = storeHours(settings.calendar);
+  const guide = { ...defaultBuyerGuide, ...settings.buyerGuide };
+  const phone = settings.phone && settings.phoneIsTest === false && settings.phone.replace(/\D/g, "") !== "375337777777";
+  return <div className="page narrow about-page">
+    <section className="about-intro">
+      <p className="eyebrow">Вещи · Минск</p>
+      <h1>{settings.name}</h1>
+      <p className="lead pre-wrap">{settings.about || `${settings.name} — магазин вещей в Минске. В основном у нас новые вещи: одежда, детские находки, сумки и аксессуары. Если есть дефект, отдельно показываем и описываем его в карточке.`}</p>
+      <Button onClick={() => go("/catalog")}>Выбрать вещи</Button>
+    </section>
+    <section className="store-visit" aria-labelledby="visit-title">
+      <div className="section-heading"><Icon name="pin"/><h2 id="visit-title">Заглядывайте на примерку</h2></div>
+      <p className="visit-address">{settings.address || "Адрес уточняется"}</p>
+      <p className="visit-hours">{hours.schedule}</p>
+      <p className="small-text">{hours.status}</p>
+      {hours.exceptions.slice(0,3).map(e=><p className="schedule-change" key={e.day}>{e.label}: {e.hours}</p>)}
+      <MapLink address={settings.address} />
+      <details className="hours-details"><summary>Подробный график</summary><dl className="details-list">{hours.days.map(day=><div key={day.day}><dt>{day.name}</dt><dd>{day.hours}</dd></div>)}</dl>{hours.exceptions.map(e=><p key={e.day}>{e.label}: {e.hours}</p>)}</details>
+    </section>
+    <section className="about-section">
+      <p className="eyebrow">Бесплатная бронь</p><h2>Сначала примерьте</h2>
+      <ol className="try-on-steps">{[["Выберите вещи", "Соберите подборку и подтвердите бронь."],["Дождитесь готовности", "Сотрудник найдёт и проверит каждую вещь."],["Приходите за своим", "Примерьте и оплатите только то, что подошло."]].map(([title,text],i)=><li key={title}><span>{i+1}</span><div><h3>{title}</h3><p>{text}</p></div></li>)}</ol>
+      <p className="small-text">На примерке можно отказаться от части вещей. Точный срок брони появится после проверки.</p>
+      <button className="text-link" onClick={()=>setDetails("pickup")}>Все условия бронирования</button>
+    </section>
+    <section className="about-section shipping-story">
+      <div className="section-heading"><Icon name="box"/><h2>Удобнее с доставкой?</h2></div>
+      <p>{guide.shippingSummary}. Укажите получателя и пункт выдачи — домашний адрес не нужен.</p>
+      <p className="muted">Отправку оформляет сотрудник. Расходы и порядок оплаты согласуем с вами до передачи посылки.</p>
+      <button className="text-link" onClick={()=>setDetails("shipping")}>Как устроена доставка</button>
+    </section>
+    <section className="about-section">
+      <h2>Поможем с выбором и получением</h2><p>Есть вопрос о вещи, примерке или доставке? Если уже оформили обращение, подготовьте его номер — так мы быстрее разберёмся.</p>
+      {settings.telegramUsername && !demo ? <Button secondary onClick={()=>openTelegram(settings.telegramUsername)}>Написать магазину</Button> : phone && !demo ? <a className="button secondary" href={`tel:${settings.phone}`}>Позвонить {settings.phone}</a> : <p className="small-text">{demo ? "Связь с магазином появится после подключения подтверждённого контакта поддержки." : "Контакт поддержки уточняется. Адрес и график посещения указаны выше."}</p>}
+    </section>
+    <footer className="store-footer">
+      <h2>Сведения и правила</h2>
+      {settings.seller && <p className="pre-wrap">{settings.seller}</p>}
+      <details className="document"><summary>Возвраты и обращения</summary><p className="pre-wrap">{guide.returns}</p></details>
+      <details className="document"><summary>Данные для получения</summary><p className="pre-wrap">{guide.privacy}</p></details>
+      {settings.documentStatus === "APPROVED" ? Object.entries(settings.documents).map(([key,text])=><details className="document" key={key}><summary>{{privacy:"Обработка персональных данных",reservation:"Бронирование и получение",shipping:"Условия отправки",returns:"Правила возврата товаров"}[key] || key}</summary><p className="pre-wrap">{text}</p></details>) : <p className="small-text">Документы продавца готовятся к публикации. Приём реальных обращений откроется после проверки сведений и условий.</p>}
+      <p className="small-text">Время Минска · цены в BYN</p>
+    </footer>
+    {details && <Sheet title={details === "pickup" ? "Бронь с примеркой" : "Доставка в пункт выдачи"} onClose={()=>setDetails(null)}><p className="pre-wrap">{guide[details]}</p><p className="pre-wrap">{details === "shipping" ? guide.dispatch : guide.cancellation}</p><Button secondary onClick={()=>setDetails(null)}>Понятно</Button></Sheet>}
+  </div>;
 }
 function Support() {
   const { settings, go, demo } = useApp();
@@ -2390,5 +2341,5 @@ function Defect({ item, expanded = false }: { item: { hasDefect?: boolean; defec
 function MapLink({ address }: { address?: string }) {
   if (!address?.trim()) return null;
   const url = `https://yandex.by/maps/?text=${encodeURIComponent(address)}`;
-  return <a className="text-link map-link" href={url} target="_blank" rel="noopener noreferrer" onClick={e => { if (tg()?.openLink) { e.preventDefault(); tg()?.openLink?.(url); } }}>Открыть в Яндекс Картах</a>;
+  return <a className="text-link map-link" href={url} target="_blank" rel="noopener noreferrer" onClick={e => { if (tg()?.openLink) { e.preventDefault(); tg()?.openLink?.(url); } }}>Как добраться ↗</a>;
 }

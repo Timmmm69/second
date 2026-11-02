@@ -3,7 +3,7 @@ import { api, readLocal, saveLocal } from "./api";
 import { useApp } from "./context";
 import { OrderCard } from "./buyer";
 import { useMutation } from "./mutations";
-import { tg } from "./telegram";
+import { tg, openTelegram } from "./telegram";
 import {
   Button,
   Copy,
@@ -911,7 +911,7 @@ function ItemEditor({ id }: { id: string }) {
   );
 }
 function StaffOrder({ id }: { id: string }) {
-  const { go, toast } = useApp();
+  const { go, toast, demo } = useApp();
   const {
     data: order,
     setData,
@@ -1112,12 +1112,20 @@ function StaffOrder({ id }: { id: string }) {
         )}
       </section>
       <section className="detail-section">
-        <h2>Контакт и получение</h2>
+        <h2>Покупатель</h2>
+        <p className="small-text">Обращение №{order.number} · {statusNames[order.status] || order.status}</p>
+        {order.buyer ? <div className="buyer-identity">
+          <h3>{order.buyer.displayName || "Имя в Telegram не указано"}</h3>
+          <p className="small-text">Актуальный аккаунт Telegram</p>
+          <p>Telegram ID: <strong>{order.buyer.telegramId}</strong></p>
+          <Copy value={order.buyer.telegramId} label="Скопировать Telegram ID" />
+          {order.buyer.username && /^[a-zA-Z0-9_]{5,32}$/.test(order.buyer.username) && !demo ? <><p>@{order.buyer.username}</p><Button secondary onClick={()=>openTelegram(order.buyer!.username!)}>Открыть Telegram</Button></> : <p className="small-text">{demo ? "Тестовый аккаунт без username." : "Username не указан. По одному числовому ID нельзя гарантированно открыть личный чат. Используйте телефон ниже или существующую переписку."}</p>}
+          {order.buyer.atCheckout && (order.buyer.atCheckout.displayName !== order.buyer.displayName || order.buyer.atCheckout.username !== order.buyer.username) && <details className="document"><summary>Аккаунт при оформлении</summary><p>{order.buyer.atCheckout.displayName}</p>{order.buyer.atCheckout.username && <p>@{order.buyer.atCheckout.username}</p>}<p>ID {order.buyer.atCheckout.telegramId}</p></details>}
+        </div> : <p className="small-text">Сведения аккаунта недоступны.</p>}
+        <h3>{order.method === "PICKUP" ? "Телефон для связи" : "Получатель и пункт выдачи"}</h3>
         <p>{order.recipient?.fullName}</p>
         {order.recipient?.phone && (
-          <a className="text-link" href={`tel:${order.recipient.phone}`}>
-            {order.recipient.phone}
-          </a>
+          <><p>{order.recipient.phone}</p><Copy value={order.recipient.phone} label="Скопировать телефон" />{!demo && <a className="text-link" href={`tel:${order.recipient.phone}`}>Позвонить</a>}</>
         )}
         {order.method !== "PICKUP" && (
           <>

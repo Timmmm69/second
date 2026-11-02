@@ -112,7 +112,9 @@ export interface Proposal {
   respondBy: string;
   lineIds: string[];
 }
+export interface BuyerIdentity { telegramId: string; displayName: string; username?: string; }
 export interface Order {
+  buyer?: BuyerIdentity & { atCheckout?: BuyerIdentity };
   id: string;
   number: string | number;
   method: Method;

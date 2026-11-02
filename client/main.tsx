@@ -12,7 +12,7 @@ import { api, command, readLocal, saveLocal } from "./api";
 import { AppContext } from "./context";
 import { tg } from "./telegram";
 import { Button, ErrorBox, Icon, Loading, Sheet } from "./ui";
-import type { Category, Item, Settings, User } from "./types";
+import type { Category, Item, Settings, User, Role } from "./types";
 import Buyer from "./buyer";
 import "./style.css";
 const Staff = lazy(() => import("./staff"));
@@ -297,10 +297,10 @@ function App() {
   const login = async (role: string) => {
     try {
       setAuthError(null);
-      await command("/auth/dev", { role });
+      await command(import.meta.env.VITE_PUBLIC_DEMO === "1" ? "/demo/role" : "/auth/dev", { role });
       await refreshUser();
       setMenu(false);
-      go(role === "BUYER" ? "/catalog" : "/staff/queue");
+      go(role === "BUYER" ? "/catalog" : role === "OWNER" ? "/owner" : "/staff/queue");
     } catch (e) {
       setAuthError(e);
     }
@@ -360,7 +360,13 @@ function App() {
             <Icon name="menu" />
           </button>
         </header>
-        {(dev || import.meta.env.VITE_PUBLIC_DEMO === "1") && <aside className="preview-note" role="note">Просмотр с демонстрационным ассортиментом · реальные оформления отключены</aside>}
+        {import.meta.env.VITE_PUBLIC_DEMO === "1" ? <aside className="demo-toolbar" aria-label="Управление демонстрацией">
+          <p role="note">Демонстрация · все действия тестовые</p>
+          <div className="demo-role-switch" aria-label="Режим демонстрации">
+            {([["BUYER", "Покупатель"], ["STAFF", "Менеджер"], ["OWNER", "Владелец"]] as [Role,string][]).map(([role,label]) => <button key={role} aria-pressed={user?.role === role} onClick={() => login(role)}>{label}</button>)}
+            <button className="demo-reset" onClick={async () => { if (!confirm("Сбросить ваши тестовые обращения и изменения магазина?")) return; try { await command("/demo/reset"); for (const key of Object.keys(localStorage)) if (key.startsWith("luchok-demo:")) localStorage.removeItem(key); location.hash = "/catalog"; location.reload(); } catch(e) { setAuthError(e); setMenu(true); } }}>Сбросить</button>
+          </div>
+        </aside> : dev && <aside className="preview-note" role="note">Локальная тестовая среда</aside>}
         {offline && (
           <div className="network-bar" role="status">
             Нет соединения. Оформление и выдача временно недоступны.

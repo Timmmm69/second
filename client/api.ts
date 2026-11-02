@@ -68,7 +68,7 @@ export async function api<T = unknown>(
     throw new ApiError(0, {
       code: "NETWORK",
       message:
-        "Нет соединения. Данные формы сохранены. Проверьте сеть и повторите действие.",
+        "Нет соединения. Введённые данные остаются в текущей сессии. Проверьте сеть и повторите действие.",
     });
   }
   const data = await response.json().catch(() => ({}));
@@ -82,16 +82,20 @@ export const command = <T = unknown>(
   key?: string,
   ownerCode?: string,
 ) => api<T>(path, { method, body, key, ownerCode });
+const demoMemory = new Map<string, unknown>();
+const ephemeralDemoKey = (key:string) => /checkout-(lease|operation)|staff-operation|counter-operation/.test(key);
 export function readLocal<T>(key: string, fallback: T): T {
+  if (import.meta.env.VITE_PUBLIC_DEMO === "1" && ephemeralDemoKey(key)) return (demoMemory.get(key) ?? fallback) as T;
   try {
-    return JSON.parse(localStorage.getItem(key) || "null") ?? fallback;
+    return JSON.parse(localStorage.getItem(import.meta.env.VITE_PUBLIC_DEMO === "1" ? `luchok-demo:${key}` : key) || "null") ?? fallback;
   } catch {
     return fallback;
   }
 }
 export function saveLocal(key: string, value: unknown) {
+  if (import.meta.env.VITE_PUBLIC_DEMO === "1" && ephemeralDemoKey(key)) { demoMemory.set(key,value); return; }
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    localStorage.setItem(import.meta.env.VITE_PUBLIC_DEMO === "1" ? `luchok-demo:${key}` : key, JSON.stringify(value));
   } catch {
     /* Device storage may be unavailable. Server remains authoritative. */
   }
