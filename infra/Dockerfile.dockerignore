@@ -1,0 +1,14 @@
+.git
+node_modules
+var
+dist
+dist-server
+.env
+.env.*
+**/.env
+**/.env.*
+*.zip
+*.tar*
+reference
+artifacts
+screenshots

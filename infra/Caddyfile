@@ -1,0 +1,18 @@
+{
+  email {$ACME_EMAIL}
+}
+{$DOMAIN} {
+  encode zstd gzip
+  header {
+    Strict-Transport-Security "max-age=31536000"
+    X-Content-Type-Options nosniff
+    Referrer-Policy strict-origin-when-cross-origin
+    -Server
+  }
+  request_body {
+    max_size 16MB
+  }
+  reverse_proxy api:3000
+  # Request access logs are intentionally disabled: WebApp URLs and queries
+  # must never become an accidental channel for personal data or auth data.
+}
