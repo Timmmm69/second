@@ -68,3 +68,16 @@ test("important issue reaches every OWNER exactly once, retries do not duplicate
  const owners=(await pool.query("SELECT id FROM users WHERE role='OWNER'")).rows;
  assert.equal(recipients.length,owners.length);assert.ok(recipients.every(r=>r.n===1));
 });
+
+test("a new pickup request notifies all owners once and contains no recipient data",async()=>{
+ const buyer=await login("991122338");
+ const item=(await pool.query("INSERT INTO items(sku,title,category,price_minor,publication,physical) VALUES($1,'Тест уведомлений','accessories',100,'PUBLISHED','AVAILABLE') RETURNING id",[randomUUID()])).rows[0];
+ await pool.query("UPDATE store_settings SET value=jsonb_set(value,'{acceptingOrders}','true') WHERE id=true");
+ const send=(url:string,payload:any,key=randomUUID())=>app.inject({method:"POST",url:"/api"+url,headers:{cookie:buyer.cookie,"idempotency-key":key},payload});
+ const lease=await send("/checkout/leases",{itemIds:[item.id]});assert.equal(lease.statusCode,200,lease.body);
+ const key=randomUUID(), payload={leaseId:lease.json().id,method:"PICKUP",phone:"+375291234567",termsAccepted:true};
+ const order=await send("/orders",payload,key);assert.equal(order.statusCode,200,order.body);await send("/orders",payload,key);
+ const owners=(await pool.query("SELECT id FROM users WHERE role='OWNER'")).rows;
+ const events=(await pool.query("SELECT recipient_id,message FROM outbox_events WHERE entity_id=$1 AND event_type='OWNER_ORDER_REQUEST'",[order.json().id])).rows;
+ assert.equal(events.length,owners.length);assert.equal(new Set(events.map(e=>e.recipient_id)).size,owners.length);assert.ok(events.every(e=>!e.message.includes(payload.phone)));
+});

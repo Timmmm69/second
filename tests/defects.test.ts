@@ -43,3 +43,30 @@ test("defect persists through API, snapshot is immutable, switching off clears d
   assert.equal(snapshot.defectDescription, "Небольшая затяжка на рукаве");
   assert.equal((await pool.query("SELECT defect_description FROM items WHERE id=$1", [i.id])).rows[0].defect_description, "");
 });
+
+test("order history freezes defect disclosure, including after cancellation and catalog edits", async () => {
+  const b=await app.inject({method:"POST",url:"/api/auth/dev",payload:{role:"BUYER"}});
+  const buyerCookie=String(b.headers["set-cookie"]).split(";")[0];
+  await pool.query("UPDATE store_settings SET value=jsonb_set(value,'{acceptingOrders}','true') WHERE id=true");
+  const i=(await send("POST","/staff/items",{...data,hasDefect:true,defectDescription:"Маленькая затяжка справа"})).json();
+  await pool.query("UPDATE items SET publication='PUBLISHED',physical='AVAILABLE' WHERE id=$1",[i.id]);
+  const command=(url:string,payload:Record<string,unknown>)=>app.inject({method:"POST",url:"/api"+url,payload,headers:{cookie:buyerCookie,"idempotency-key":randomUUID()}});
+  const lease=await command("/checkout/leases",{itemIds:[i.id]});assert.equal(lease.statusCode,200,lease.body);
+  assert.equal(lease.json().items[0].defectDescription,"Маленькая затяжка справа");
+  const order=await command("/orders",{leaseId:lease.json().id,method:"PICKUP",phone:"+375291234567",termsAccepted:true});assert.equal(order.statusCode,200,order.body);
+  assert.equal(order.json().lines[0].hasDefect,true);
+  const cancel=await command(`/orders/${order.json().id}/cancel`,{version:order.json().version});assert.equal(cancel.statusCode,200,cancel.body);
+  const current=(await app.inject({url:"/api/staff/items/"+i.id,headers:{cookie}})).json();
+  const edit=await send("PATCH","/staff/items/"+i.id,{...data,hasDefect:false,version:current.version});assert.equal(edit.statusCode,200,edit.body);
+  const history=await app.inject({url:"/api/orders/"+order.json().id,headers:{cookie:buyerCookie}});assert.equal(history.statusCode,200,history.body);
+  assert.equal(history.json().lines[0].defectDescription,"Маленькая затяжка справа");
+  assert.equal(history.json().lines[0].hasDefect,true);
+});
+
+test("Europost requires a pickup point address, stores it in encrypted server draft",async()=>{
+ const b=await app.inject({method:"POST",url:"/api/auth/dev",payload:{role:"BUYER"}});const h={cookie:String(b.headers["set-cookie"]).split(";")[0],"idempotency-key":randomUUID()};
+ const invalid=await app.inject({method:"POST",url:"/api/orders",headers:h,payload:{leaseId:randomUUID(),method:"EUROPOST",phone:"+375291234567",fullName:"Тест Получатель",city:"Минск",office:"Пункт 1",termsAccepted:true}});
+ assert.equal(invalid.statusCode,422,invalid.body);assert.equal(invalid.json().code,"OFFICE_ADDRESS_REQUIRED");
+ const patch=await app.inject({method:"PATCH",url:"/api/me/checkout-draft",headers:h,payload:{method:"EUROPOST",office:"Пункт 1",officeAddress:"Синтетическая улица, 2"}});assert.equal(patch.statusCode,200,patch.body);
+ const restored=await app.inject({url:"/api/me/checkout-draft",headers:h});assert.equal(restored.json().officeAddress,"Синтетическая улица, 2");
+});

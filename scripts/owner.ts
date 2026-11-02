@@ -1,6 +1,6 @@
 import pg from "pg";
 import { verifyTotp, totpStep } from "../server/auth.js";
-import { encrypt } from "../server/crypto.js";
+import { encrypt, decrypt } from "../server/crypto.js";
 
 /** Deliberately an out-of-band server CLI, never an HTTP bootstrap route. */
 export async function createFirstOwner(
@@ -23,7 +23,7 @@ export async function createFirstOwner(
     );
   }
   if (!env.DATABASE_URL) throw new Error("DATABASE_URL не задан.");
-  const secret = env.OWNER_PERSONAL_TOTP_SECRET ?? "";
+  const secret = (env.OWNER_PERSONAL_TOTP_SECRET ?? "").toUpperCase();
   const code = env.OWNER_PERSONAL_TOTP_CODE ?? "";
   if (!/^[A-Z2-7]{32,}$/i.test(secret) || !verifyTotp(secret, code))
     throw new Error("Нужен личный Base32-секрет (32+ символа) и текущий код из аутентификатора в защищённых OWNER_PERSONAL_TOTP_SECRET/OWNER_PERSONAL_TOTP_CODE. Секрет не печатается.");
@@ -57,11 +57,15 @@ export async function createFirstOwner(
       );
     const id = candidate.rows[0].id as string;
     if (enroll && candidate.rows[0].role !== "OWNER") throw new Error("Подключение фактора не меняет роль. Нужен существующий владелец.");
+    let auditActor = id;
     if (add) {
       const authorizer = option("--authorizing-telegram-id");
       const owner = (await c.query("SELECT id FROM users WHERE telegram_id=$1 AND role='OWNER'", [authorizer ?? "0"])).rows[0];
       if (!owner || !existing.rowCount || candidate.rows[0].role === "OWNER") throw new Error("Для второго владельца нужен текущий владелец --authorizing-telegram-id и другой проверенный аккаунт.");
+      auditActor = owner.id;
     }
+    for (const other of (await c.query("SELECT secret_enc FROM owner_credentials WHERE user_id<>$1", [id])).rows)
+      if (decrypt<string>(other.secret_enc).toUpperCase() === secret) throw new Error("Этот фактор уже используется другим владельцем. Подготовьте отдельный личный секрет.");
     if ((await c.query("SELECT 1 FROM owner_credentials WHERE user_id=$1", [id])).rowCount && !argv.includes("--confirm-factor-reset"))
       throw new Error("Фактор уже подключён. Для восстановления нужен явный --confirm-factor-reset; все сессии будут отозваны.");
     await c.query("INSERT INTO owner_credentials(user_id,secret_enc,last_step) VALUES($1,$2,$3) ON CONFLICT(user_id) DO UPDATE SET secret_enc=excluded.secret_enc,last_step=excluded.last_step,updated_at=now()", [id, encrypt(secret), totpStep(secret, code)]);
@@ -76,7 +80,7 @@ export async function createFirstOwner(
     await c.query(
       "INSERT INTO audit_events(actor_id,command,entity_type,entity_id,details) VALUES($1,$4,'User',$2,$3)",
       [
-        id,
+        auditActor,
         id,
         {
           previousRole: candidate.rows[0].role,

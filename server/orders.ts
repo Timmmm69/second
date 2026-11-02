@@ -10,6 +10,7 @@ import { z } from "zod";
 import { tx } from "./db.js";
 import { AppError, assert } from "./errors.js";
 import type { Actor } from "./types.js";
+import { config } from "./config.js";
 import { encrypt, decrypt } from "./crypto.js";
 import {
   type Calendar,
@@ -44,6 +45,7 @@ const recipientSchema = z.object({
   fullName: z.string().trim().max(200).optional(),
   city: z.string().trim().max(150).optional(),
   office: z.string().trim().max(350).optional(),
+  officeAddress: z.string().trim().max(500).optional(),
   postalCode: z.string().trim().max(20).optional(),
   comment: z.string().trim().max(1000).optional(),
 });
@@ -277,6 +279,7 @@ export async function createLease(
   return idem(actor, key, "checkout.lease", body, async (c) => {
     await c.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [actor.id]);
     const settings = await getSettings(c);
+    if (config.production) assert(settings.documentStatus === "APPROVED" && settings.phoneIsTest === false && settings.phone?.replace(/\D/g, "") !== "375337777777" && settings.seller?.trim() && settings.telegramUsername?.trim(), 503, "LAUNCH_SETTINGS", "Рабочие контакты и утверждённые документы ещё не подготовлены");
     assert(
       settings.acceptingOrders,
       503,
@@ -324,6 +327,7 @@ export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
         "RECIPIENT_REQUIRED",
         `Заполните ${field === "fullName" ? "ФИО получателя" : field === "city" ? "населённый пункт" : "отделение"}`,
       );
+  if (body.method === "EUROPOST") assert(body.officeAddress?.trim(), 422, "OFFICE_ADDRESS_REQUIRED", "Укажите адрес пункта выдачи Европочты, не домашний адрес");
   return idem(actor, key, "orders.create", body, async (c) => {
     await c.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [actor.id]);
     const lease = (
@@ -384,6 +388,7 @@ export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
       "Описание вещи изменилось. Перепроверьте состав",
     );
     const settings = await getSettings(c);
+    if (config.production) assert(settings.documentStatus === "APPROVED" && settings.phoneIsTest === false && settings.phone?.replace(/\D/g, "") !== "375337777777" && settings.seller?.trim() && settings.telegramUsername?.trim(), 503, "LAUNCH_SETTINGS", "Рабочие контакты и утверждённые документы ещё не подготовлены");
     assert(
       settings.acceptingOrders,
       503,
@@ -405,6 +410,7 @@ export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
       fullName: body.fullName ?? "",
       city: body.city ?? "",
       office: body.office ?? "",
+      officeAddress: body.officeAddress ?? "",
       postalCode: body.postalCode ?? "",
       comment: body.comment ?? "",
       phoneSource: "MANUAL",
@@ -894,6 +900,7 @@ export async function registerOrders(app: FastifyInstance) {
           "RECIPIENT_REQUIRED",
           "Заполните ФИО, населённый пункт и отделение",
         );
+      if (o.method === "EUROPOST") assert(body.officeAddress?.trim(), 422, "OFFICE_ADDRESS_REQUIRED", "Укажите адрес пункта выдачи Европочты");
       const { version: _, ...recipient } = body;
       void _;
       if (o.status === "CHECKING") {
@@ -1810,6 +1817,7 @@ export async function registerOrders(app: FastifyInstance) {
         );
         if (returning.length) {
           const settings = await getSettings(c);
+    if (config.production) assert(settings.documentStatus === "APPROVED" && settings.phoneIsTest === false && settings.phone?.replace(/\D/g, "") !== "375337777777" && settings.seller?.trim() && settings.telegramUsername?.trim(), 503, "LAUNCH_SETTINGS", "Рабочие контакты и утверждённые документы ещё не подготовлены");
           assert(
             settings.carriers?.[o.method]?.partialDelivery === true,
             422,

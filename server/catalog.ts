@@ -223,6 +223,7 @@ export async function registerCatalog(app: FastifyInstance) {
         fullName: z.string().max(200).optional(),
         city: z.string().max(200).optional(),
         office: z.string().max(500).optional(),
+        officeAddress: z.string().max(500).optional(),
         postalCode: z.string().max(20).optional(),
         comment: z.string().max(1000).optional(),
       })

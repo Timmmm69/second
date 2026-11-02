@@ -43,6 +43,7 @@ const draftDefault: Draft = {
   fullName: "",
   city: "",
   office: "",
+  officeAddress: "",
   postalCode: "",
   comment: "",
 };
@@ -75,7 +76,7 @@ export default function Buyer() {
   return <Catalog />;
 }
 function Catalog() {
-  const { categories, go, selectionIds, setSelection, toast } = useApp();
+  const { categories, go, selectionIds, setSelection, toast, settings } = useApp();
   const [filters, setFilters] = useState<Record<string, string>>(() =>
       readLocal("catalogFilters", { sort: "new" }),
     ),
@@ -414,7 +415,7 @@ function Catalog() {
           <p>
             Выберите вещи и заберите их в магазине.
             <br />
-            Доставка — Белпочта и Европочта.
+            {Object.entries(settings?.carriers || {}).filter(([,c]) => c.enabled).length ? `Доставка — ${Object.entries(settings?.carriers || {}).filter(([,c]) => c.enabled).map(([k]) => methodNames[k as Method]).join(" и ")}.` : "Условия отправки уточняются перед запуском."}
           </p>
         </div>
       </section>
@@ -687,7 +688,7 @@ function ItemPage({ id }: { id: string }) {
             арт. {item.sku}
           </p>
           <p className="item-price">{money(item.priceMinor)}</p>
-          <Defect item={item} />
+          <Defect item={item} expanded />
           {!item.available && (
             <div className="notice">
               <strong>Сейчас недоступно</strong>
@@ -1008,7 +1009,7 @@ function Checkout() {
     ),
     [error, setError] = useState<unknown>(null),
     [busy, setBusy] = useState(false),
-    [lease, setLease] = useState<{ id: string; expiresAt: string } | null>(() =>
+    [lease, setLease] = useState<{ id: string; expiresAt: string; items?: Item[] } | null>(() =>
       readLocal("checkout-lease", null),
     ),
     [conflicts, setConflicts] = useState<{ itemId: string; reason: string }[]>(
@@ -1207,9 +1208,10 @@ function Checkout() {
       draft.fullName.trim().split(/\s+/).length >= 2 &&
         draft.city.trim() &&
         draft.office.trim() &&
+        (draft.method !== "EUROPOST" || draft.officeAddress?.trim()) &&
         (draft.method !== "BELPOST" || /^\d{6}$/.test(draft.postalCode)),
     );
-  const total = selection.reduce((s, i) => s + i.priceMinor, 0);
+  const total = (lease?.items || selection).reduce((s, i) => s + i.priceMinor, 0);
   return (
     <div className="page narrow checkout-page">
       <div className="step-label">
@@ -1340,6 +1342,7 @@ function Checkout() {
                 onChange={(e) => set("office", e.target.value)}
                 hint="Адрес пункта, не домашний адрес. Укажите номер/название и полный адрес; сотрудник сверит их с перевозчиком."
               />
+              {draft.method === "EUROPOST" && <Field label="Адрес пункта выдачи" required value={draft.officeAddress || ""} onChange={e => set("officeAddress", e.target.value)} hint="Улица и дом пункта выдачи, не домашний адрес покупателя." />}
               <Field
                 label={
                   draft.method === "BELPOST"
@@ -1433,7 +1436,7 @@ function Checkout() {
             </p>
           </div>
           <div className="compact-lines">
-            {selection.map((i) => (
+            {(lease?.items || selection).map((i) => (
               <div className="item-row" key={i.id}>
                 <Photo media={i.media[0]} alt={i.title} />
                 <div>
@@ -1441,7 +1444,7 @@ function Checkout() {
                   <p className="muted">
                     {i.attributes.sizeLabel} · {i.sku}
                   </p>
-                  <Defect item={i} />
+                  <Defect item={i} expanded />
                   <strong>{money(i.priceMinor)}</strong>
                 </div>
               </div>
@@ -1456,7 +1459,7 @@ function Checkout() {
               <>
                 <p>{draft.fullName}</p>
                 <p>
-                  {draft.city}, {draft.office}
+                  {draft.city}, {draft.office}{draft.officeAddress ? `, ${draft.officeAddress}` : ""}
                   {draft.postalCode ? `, ${draft.postalCode}` : ""}
                 </p>
               </>
@@ -1792,7 +1795,7 @@ function OrderPage({ id }: { id: string }) {
           <>
             <p>{order.recipient?.fullName}</p>
             <p>
-              {order.recipient?.city}, {order.recipient?.office}
+              {order.recipient?.city}, {order.recipient?.office}{order.recipient?.officeAddress ? `, ${order.recipient.officeAddress}` : ""}
             </p>
             {order.recipient?.postalCode && (
               <p>Индекс {order.recipient.postalCode}</p>
@@ -1871,6 +1874,7 @@ function OrderPage({ id }: { id: string }) {
               <Photo media={line.media?.[0]} alt={line.title} />
               <div>
                 <strong>{line.title}</strong>
+                <Defect item={line} />
                 <p className="muted">
                   {line.attributes?.sizeLabel} · {line.sku}
                 </p>
@@ -2039,6 +2043,7 @@ function OrderPage({ id }: { id: string }) {
                 setRecipient((v) => ({ ...v, office: e.target.value }))
               }
             />
+            {order.method === "EUROPOST" && <Field label="Адрес пункта выдачи" required value={recipient.officeAddress || ""} onChange={e => setRecipient(v => ({...v, officeAddress:e.target.value}))} />}
             <Field
               label="Индекс"
               value={recipient.postalCode}
@@ -2357,8 +2362,8 @@ function Invite() {
   );
 }
 
-function Defect({ item }: { item: { hasDefect?: boolean; defectDescription?: string } }) {
-  return item.hasDefect ? <details className="defect-notice"><summary>Есть дефект — описание</summary><p className="pre-wrap">{item.defectDescription}</p></details> : null;
+function Defect({ item, expanded = false }: { item: { hasDefect?: boolean; defectDescription?: string }; expanded?: boolean }) {
+  return item.hasDefect ? <details className="defect-notice" open={expanded || undefined}><summary>Есть дефект — описание</summary><p className="pre-wrap">{item.defectDescription}</p></details> : null;
 }
 
 function MapLink({ address }: { address?: string }) {

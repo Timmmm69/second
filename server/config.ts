@@ -50,7 +50,6 @@ export function loadConfig(env = process.env) {
     dataKey: key,
     mediaDir: path.resolve(env.MEDIA_DIR ?? "var/media"),
     botDeliveryMode: env.BOT_DELIVERY_MODE ?? "dry-run",
-    totpSecret: env.OWNER_TOTP_SECRET ?? "",
     sessionHours: 12,
   };
 }

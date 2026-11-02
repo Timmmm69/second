@@ -80,6 +80,7 @@ export interface Draft {
   fullName: string;
   city: string;
   office: string;
+  officeAddress?: string;
   postalCode: string;
   comment: string;
 }

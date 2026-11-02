@@ -886,6 +886,7 @@ function ItemEditor({ id }: { id: string }) {
               ))}
           </dl>
           <p>{form.attributes.material}</p>
+          {form.hasDefect && <div className="defect-notice"><strong>Есть дефект</strong><p className="pre-wrap">{form.defectDescription}</p></div>}
           {missing.length > 0 && (
             <div className="notice">
               <strong>До публикации заполните</strong>
@@ -1110,7 +1111,7 @@ function StaffOrder({ id }: { id: string }) {
         {order.method !== "PICKUP" && (
           <>
             <p>
-              {order.recipient?.city}, {order.recipient?.office}
+              {order.recipient?.city}, {order.recipient?.office}{order.recipient?.officeAddress ? `, ${order.recipient.officeAddress}` : ""}
             </p>
             <p>Индекс {order.recipient?.postalCode || "не указан"}</p>
             <Copy
@@ -1119,6 +1120,7 @@ function StaffOrder({ id }: { id: string }) {
                 order.recipient?.phone,
                 order.recipient?.city,
                 order.recipient?.office,
+                order.recipient?.officeAddress,
                 order.recipient?.postalCode,
               ]
                 .filter(Boolean)
