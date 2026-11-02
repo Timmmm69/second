@@ -2,11 +2,11 @@
 
 Магазин **новых** вещей: единичные остатки, бесплатная бронь с примеркой, заявки в отделения Белпочты/Европочты и мобильная работа сотрудников. React/TypeScript/Vite, Fastify, PostgreSQL, Sharp. API и worker — процессы одного приложения. Платежи, касса и почтовые кабинеты работают вне Mini App.
 
-Назначенный репозиторий: `https://github.com/Timmmm69/second`, локальная ветка `codex/miniapp-v1.2`. Главная ветка инициализирована по разрешению владельца; реализация представлена отдельной веткой и pull request.
+Репозиторий: [Timmmm69/second](https://github.com/Timmmm69/second), ветка `codex/miniapp-v1.2`, [pull request №1](https://github.com/Timmmm69/second/pull/1). Главная ветка инициализирована по разрешению владельца.
 
 Исходная согласованная спецификация, дизайн-система и макеты находятся в `reference/`. Трассировка требований — [docs/coverage.md](docs/coverage.md); фактические результаты — [docs/verification.md](docs/verification.md). Проверка реального Telegram и публикация отделены от локальных тестов.
 
-Итог текущей проверки: **60/60 тестов на настоящей PostgreSQL**, TypeScript/lint/build проходят. Ключевой сценарий покупателя и сотрудника проверен в браузере. Снимки: [docs/screenshots/mobile-review.jpg](docs/screenshots/mobile-review.jpg). Реальные Telegram iOS/Android и целевой VPS остаются отдельной приёмкой.
+Итог локальной проверки: **60/60 тестов на настоящей PostgreSQL**, TypeScript/lint/build проходят. [GitHub Actions](https://github.com/Timmmm69/second/actions/runs/41428213058) также прошёл на PostgreSQL 16 и 17: по 59 успешных тестов, один opt-in тест перезапуска пропущен. Ключевой сценарий покупателя и сотрудника проверен в браузере. Снимки: [docs/screenshots/mobile-review.jpg](docs/screenshots/mobile-review.jpg). Реальные Telegram iOS/Android и целевой VPS остаются отдельной приёмкой.
 
 ## Локальный запуск
 
