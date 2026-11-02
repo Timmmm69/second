@@ -4,6 +4,7 @@ import path from "node:path";
 import sharp from "sharp";
 import { pool, tx } from "../server/db.js";
 import { config } from "../server/config.js";
+import { initialStore } from "../server/store-initial.js";
 import { setPhysical } from "../server/inventory.js";
 
 /** Isolated local fixtures only. Never copy the design reference into stock. */
@@ -156,6 +157,7 @@ export async function seedDemo(env = process.env) {
           "Тестовая стойка " + (index + 1),
         ],
       );
+      if (index === 0) await c.query("UPDATE items SET has_defect=true,defect_description=$2 WHERE id=$1", [itemId, "ТЕСТ: небольшая затяжка на рукаве; пример раскрытия дефекта, не реальный товар"]);
       await c.query(
         "INSERT INTO media_assets(id,item_id,original_key,checksum,mime,width,height,variants,position,role,state) VALUES($1,$2,$3,$4,$5,960,1280,$6,0,'FRONT','READY')",
         [
@@ -179,6 +181,8 @@ export async function seedDemo(env = process.env) {
         [
           itemId,
           {
+            hasDefect: index === 0,
+            defectDescription: index === 0 ? "ТЕСТ: небольшая затяжка на рукаве; пример раскрытия дефекта, не реальный товар" : "",
             title: f.title,
             priceMinor: f.price,
             attributes,
@@ -190,13 +194,15 @@ export async function seedDemo(env = process.env) {
   }
   await tx(async (c) => {
     const row = (
-      await c.query("SELECT value FROM store_settings WHERE id=true FOR UPDATE")
+      await c.query("SELECT value,version FROM store_settings WHERE id=true FOR UPDATE")
     ).rows[0];
+    if (row.version > 2) return; // Seed never overwrites configured/initialized settings.
     const value = {
       ...row.value,
+      ...initialStore,
       name: "Лучок · тестовая среда",
-      address: "Тестовый адрес — не магазин",
-      phone: "+375290000000",
+      address: initialStore.address,
+      phone: initialStore.phone,
       telegramUsername: "",
       seller: "Тестовые реквизиты, не для публикации",
       acceptingOrders: true,
@@ -208,13 +214,13 @@ export async function seedDemo(env = process.env) {
       },
       carriers: {
         BELPOST: {
-          enabled: true,
-          codConfirmed: true,
-          returnsConfirmed: true,
+          enabled: false,
+          codConfirmed: false,
+          returnsConfirmed: false,
           terms:
             "ТЕСТ: оплата при получении через почту; доставка, упаковка и комиссии за счёт получателя; суммы подтвердит сотрудник.",
-          contract: "TEST-BELPOST",
-          verifiedAt: new Date().toISOString(),
+          contract: "",
+          verifiedAt: "",
           paymentScheme:
             "ТЕСТ: товары наложенным платежом, услуги почты за счёт получателя.",
           returnsScheme:
@@ -223,12 +229,12 @@ export async function seedDemo(env = process.env) {
         },
         EUROPOST: {
           enabled: true,
-          codConfirmed: true,
-          returnsConfirmed: true,
+          codConfirmed: false,
+          returnsConfirmed: false,
           terms:
             "ТЕСТ: оплата при получении через почту; доставка, упаковка и комиссии за счёт получателя; суммы подтвердит сотрудник.",
-          contract: "TEST-EUROPOST",
-          verifiedAt: new Date().toISOString(),
+          contract: "",
+          verifiedAt: "",
           paymentScheme:
             "ТЕСТ: товары наложенным платежом, услуги почты за счёт получателя.",
           returnsScheme:

@@ -115,6 +115,15 @@ export function verifyTotp(secret: string, code: string, now = Date.now()) {
     ),
   );
 }
+export function totpStep(secret: string, code: string, now = Date.now()): number | null {
+  if (!secret || !/^\d{6}$/.test(code)) return null;
+  for (const offset of [-1, 0, 1]) {
+    const at = now + offset * 30000;
+    if (timingSafeEqual(Buffer.from(totp(secret, at)), Buffer.from(code)))
+      return Math.floor(at / 30000);
+  }
+  return null;
+}
 export async function ownerStepUp(req: FastifyRequest) {
   if (!config.production) return;
   assert(
@@ -123,12 +132,18 @@ export async function ownerStepUp(req: FastifyRequest) {
     "REAUTH_REQUIRED",
     "Переоткройте приложение для подтверждения доступа владельца",
   );
-  assert(
-    verifyTotp(config.totpSecret, String(req.headers["x-owner-code"] ?? "")),
-    403,
-    "TOTP_REQUIRED",
-    "Введите текущий шестизначный код владельца",
-  );
+  assert(req.actor?.role === "OWNER" && req.sessionId, 403, "FORBIDDEN", "Доступ только владельцу");
+  await tx(async c => {
+    const credential = (await c.query("SELECT * FROM owner_credentials WHERE user_id=$1 FOR UPDATE", [req.actor.id])).rows[0];
+    assert(credential, 403, "TOTP_ENROLLMENT_REQUIRED", "Подключите личный второй фактор через защищённый CLI сервера");
+    const session = (await c.query("SELECT owner_step_up_at FROM sessions WHERE id=$1 AND revoked_at IS NULL", [req.sessionId])).rows[0];
+    assert(session, 401, "AUTH_REQUIRED", "Переоткройте приложение");
+    if (session.owner_step_up_at && Date.now() - session.owner_step_up_at.getTime() < 5 * 60000) return;
+    const step = totpStep(decrypt<string>(credential.secret_enc), String(req.headers["x-owner-code"] ?? ""));
+    assert(step !== null && step > Number(credential.last_step), 403, "TOTP_REQUIRED", "Введите новый текущий код вашего личного второго фактора");
+    await c.query("UPDATE owner_credentials SET last_step=$2 WHERE user_id=$1", [req.actor.id, step]);
+    await c.query("UPDATE sessions SET owner_step_up_at=clock_timestamp() WHERE id=$1", [req.sessionId]);
+  });
 }
 export async function authenticate(req: FastifyRequest) {
   const token = req.cookies.session;
@@ -233,7 +248,7 @@ export async function registerAuth(app: FastifyInstance) {
         }
         const row = (
           await c.query(
-            "INSERT INTO users(telegram_id,display_name,username,allow_bot) VALUES($1,$2,$3,$4) ON CONFLICT(telegram_id) DO UPDATE SET username=excluded.username,display_name=excluded.display_name,updated_at=now() RETURNING *",
+            "INSERT INTO users(telegram_id,display_name,username,allow_bot,telegram_verified_at) VALUES($1,$2,$3,$4,clock_timestamp()) ON CONFLICT(telegram_id) DO UPDATE SET username=excluded.username,display_name=excluded.display_name,updated_at=now(),telegram_verified_at=clock_timestamp() RETURNING *",
             [
               u.id,
               [u.first_name, u.last_name].filter(Boolean).join(" "),

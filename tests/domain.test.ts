@@ -86,6 +86,7 @@ async function newOrder(method = "PICKUP", count = 1) {
     fullName: "Тест Получатель",
     city: "Минск",
     office: "Отделение 1, тестовый адрес",
+    officeAddress: "Синтетическая улица, 1",
     postalCode: "220000",
     termsAccepted: true,
   });

@@ -40,7 +40,7 @@ export function Icon({ name, size = 22 }: { name: string; size?: number }) {
         <circle cx="9" cy="18" r="2" fill="white" />
       </>
     ),
-    check: <path d="m5 12 4 4L20 5" />,
+    check: <path d="m4.5 13.5 5 5 10-13" />,
     pin: (
       <>
         <path d="M19 10c0 6-7 11-7 11S5 16 5 10a7 7 0 1 1 14 0Z" />

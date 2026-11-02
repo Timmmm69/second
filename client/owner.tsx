@@ -9,6 +9,7 @@ import {
   Empty,
   ErrorBox,
   Field,
+  Select,
   Icon,
   Loading,
   Summary,
@@ -206,8 +207,10 @@ function StoreSettings() {
             value={form.phone}
             onChange={(e) => set("phone", e.target.value)}
           />
+          <label className="checkbox-row"><input type="checkbox" checked={form.phoneIsTest ?? true} onChange={e => set("phoneIsTest", e.target.checked)} />Телефон тестовый</label>
+          <Textarea label="О магазине" value={form.about || ""} onChange={v => set("about", v)} />
           <Field
-            label="Telegram-аккаунт магазина"
+            label="Аккаунт поддержки в Telegram (не бот)"
             value={form.telegramUsername}
             placeholder="username без @"
             onChange={(e) => set("telegramUsername", e.target.value)}
@@ -363,6 +366,11 @@ function StoreSettings() {
       </section>
       <section className="detail-section">
         <h2>Условия получения и документы</h2>
+        <Select label="Статус документов" value={form.documentStatus || "DRAFT"} onChange={e => { set("documentStatus", e.target.value); if (e.target.value === "DRAFT") set("acceptingOrders", false); }}>
+          <option value="DRAFT">Черновик — не утверждено для публикации</option>
+          <option value="APPROVED">Проверено и утверждено владельцем для публикации</option>
+        </Select>
+        <p className="small-text">Изменённый текст сначала сохраните как черновик. После проверки утвердите отдельным сохранением.</p>
         <p>
           Не публикуйте непроверенные правовые тексты. Бронь и подача заявки
           бесплатны; условия возврата указываются в документах магазина.
@@ -381,7 +389,7 @@ function StoreSettings() {
               }
               value={form.documents[key]}
               onChange={(value) =>
-                set("documents", { ...form.documents, [key]: value })
+                { set("documents", { ...form.documents, [key]: value }); set("documentStatus", "DRAFT"); set("acceptingOrders", false); }
               }
               rows={6}
             />

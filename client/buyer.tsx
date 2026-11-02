@@ -43,6 +43,7 @@ const draftDefault: Draft = {
   fullName: "",
   city: "",
   office: "",
+  officeAddress: "",
   postalCode: "",
   comment: "",
 };
@@ -75,7 +76,7 @@ export default function Buyer() {
   return <Catalog />;
 }
 function Catalog() {
-  const { categories, go, selectionIds, setSelection, toast } = useApp();
+  const { categories, go, selectionIds, setSelection, toast, settings } = useApp();
   const [filters, setFilters] = useState<Record<string, string>>(() =>
       readLocal("catalogFilters", { sort: "new" }),
     ),
@@ -367,6 +368,7 @@ function Catalog() {
                     ? ` · рост ${item.attributes.height} см`
                     : ""}
                 </p>
+                {item.hasDefect && <span className="defect-badge">Есть дефект</span>}
                 <strong className="price">{money(item.priceMinor)}</strong>
               </button>
               <button
@@ -413,7 +415,7 @@ function Catalog() {
           <p>
             Выберите вещи и заберите их в магазине.
             <br />
-            Доставка — Белпочта и Европочта.
+            {Object.entries(settings?.carriers || {}).filter(([,c]) => c.enabled).length ? `Доставка — ${Object.entries(settings?.carriers || {}).filter(([,c]) => c.enabled).map(([k]) => methodNames[k as Method]).join(" и ")}.` : "Условия отправки уточняются перед запуском."}
           </p>
         </div>
       </section>
@@ -686,6 +688,7 @@ function ItemPage({ id }: { id: string }) {
             арт. {item.sku}
           </p>
           <p className="item-price">{money(item.priceMinor)}</p>
+          <Defect item={item} expanded />
           {!item.available && (
             <div className="notice">
               <strong>Сейчас недоступно</strong>
@@ -951,6 +954,7 @@ function Selection() {
                   <p className="muted">
                     {item.attributes.sizeLabel} · арт. {item.sku}
                   </p>
+                  <Defect item={item} />
                   <strong>{money(item.priceMinor)}</strong>
                   {!item.available && (
                     <p className="field-error">Сейчас недоступно</p>
@@ -1005,7 +1009,7 @@ function Checkout() {
     ),
     [error, setError] = useState<unknown>(null),
     [busy, setBusy] = useState(false),
-    [lease, setLease] = useState<{ id: string; expiresAt: string } | null>(() =>
+    [lease, setLease] = useState<{ id: string; expiresAt: string; items?: Item[] } | null>(() =>
       readLocal("checkout-lease", null),
     ),
     [conflicts, setConflicts] = useState<{ itemId: string; reason: string }[]>(
@@ -1204,9 +1208,10 @@ function Checkout() {
       draft.fullName.trim().split(/\s+/).length >= 2 &&
         draft.city.trim() &&
         draft.office.trim() &&
+        (draft.method !== "EUROPOST" || draft.officeAddress?.trim()) &&
         (draft.method !== "BELPOST" || /^\d{6}$/.test(draft.postalCode)),
     );
-  const total = selection.reduce((s, i) => s + i.priceMinor, 0);
+  const total = (lease?.items || selection).reduce((s, i) => s + i.priceMinor, 0);
   return (
     <div className="page narrow checkout-page">
       <div className="step-label">
@@ -1331,12 +1336,13 @@ function Checkout() {
                 onChange={(e) => set("city", e.target.value)}
               />
               <Field
-                label="Номер и адрес отделения"
+                label="Номер/название и адрес пункта выдачи"
                 required
                 value={draft.office}
                 onChange={(e) => set("office", e.target.value)}
-                hint="Ручной ввод — сотрудник проверит отделение по официальному справочнику."
+                hint="Адрес пункта, не домашний адрес. Укажите номер/название и полный адрес; сотрудник сверит их с перевозчиком."
               />
+              {draft.method === "EUROPOST" && <Field label="Адрес пункта выдачи" required value={draft.officeAddress || ""} onChange={e => set("officeAddress", e.target.value)} hint="Улица и дом пункта выдачи, не домашний адрес покупателя." />}
               <Field
                 label={
                   draft.method === "BELPOST"
@@ -1430,7 +1436,7 @@ function Checkout() {
             </p>
           </div>
           <div className="compact-lines">
-            {selection.map((i) => (
+            {(lease?.items || selection).map((i) => (
               <div className="item-row" key={i.id}>
                 <Photo media={i.media[0]} alt={i.title} />
                 <div>
@@ -1438,6 +1444,7 @@ function Checkout() {
                   <p className="muted">
                     {i.attributes.sizeLabel} · {i.sku}
                   </p>
+                  <Defect item={i} expanded />
                   <strong>{money(i.priceMinor)}</strong>
                 </div>
               </div>
@@ -1447,12 +1454,12 @@ function Checkout() {
             <h2>{methodNames[draft.method]}</h2>
             <p>{draft.phone}</p>
             {draft.method === "PICKUP" ? (
-              <p>{settings?.address}</p>
+              <p>{settings?.address}<MapLink address={settings?.address} /></p>
             ) : (
               <>
                 <p>{draft.fullName}</p>
                 <p>
-                  {draft.city}, {draft.office}
+                  {draft.city}, {draft.office}{draft.officeAddress ? `, ${draft.officeAddress}` : ""}
                   {draft.postalCode ? `, ${draft.postalCode}` : ""}
                 </p>
               </>
@@ -1780,6 +1787,7 @@ function OrderPage({ id }: { id: string }) {
           <>
             <p>{settings?.address || "Адрес укажет магазин"}</p>
             <p className="muted">
+              <MapLink address={settings?.address} />
               График и исключения — в разделе «О магазине».
             </p>
           </>
@@ -1787,7 +1795,7 @@ function OrderPage({ id }: { id: string }) {
           <>
             <p>{order.recipient?.fullName}</p>
             <p>
-              {order.recipient?.city}, {order.recipient?.office}
+              {order.recipient?.city}, {order.recipient?.office}{order.recipient?.officeAddress ? `, ${order.recipient.officeAddress}` : ""}
             </p>
             {order.recipient?.postalCode && (
               <p>Индекс {order.recipient.postalCode}</p>
@@ -1866,6 +1874,7 @@ function OrderPage({ id }: { id: string }) {
               <Photo media={line.media?.[0]} alt={line.title} />
               <div>
                 <strong>{line.title}</strong>
+                <Defect item={line} />
                 <p className="muted">
                   {line.attributes?.sizeLabel} · {line.sku}
                 </p>
@@ -2027,13 +2036,14 @@ function OrderPage({ id }: { id: string }) {
               }
             />
             <Field
-              label="Номер и адрес отделения"
+              label="Номер/название и адрес пункта выдачи"
               required
               value={recipient.office}
               onChange={(e) =>
                 setRecipient((v) => ({ ...v, office: e.target.value }))
               }
             />
+            {order.method === "EUROPOST" && <Field label="Адрес пункта выдачи" required value={recipient.officeAddress || ""} onChange={e => setRecipient(v => ({...v, officeAddress:e.target.value}))} />}
             <Field
               label="Индекс"
               value={recipient.postalCode}
@@ -2069,13 +2079,14 @@ function About() {
   return (
     <div className="page narrow">
       <h1>О магазине</h1>
-      <p className="lead">Лучок. Ваши находки в Минске.</p>
+      <p className="lead pre-wrap">{settings.about || settings.name}</p>
       <section className="detail-section">
         <h2>Где нас найти</h2>
         <p>{settings.address || "Адрес ещё не заполнен владельцем"}</p>
+        <MapLink address={settings.address} />
         {settings.phone && (
           <a className="text-link" href={`tel:${settings.phone}`}>
-            {settings.phone}
+            {settings.phone}{settings.phoneIsTest !== false ? " · тестовый номер" : ""}
           </a>
         )}
         <dl className="details-list">
@@ -2105,6 +2116,7 @@ function About() {
           {settings.seller || "Реквизиты заполняются перед запуском магазина."}
         </p>
       </section>
+      {settings.documentStatus !== "APPROVED" && <p className="notice">Черновики документов — не утверждены для публикации. Реальные оформления закрыты.</p>}
       {Object.entries(settings.documents).map(([key, text]) => (
         <details className="document" key={key}>
           <summary>
@@ -2153,7 +2165,7 @@ function Support() {
             </Button>
           </>
         ) : (
-          <p>Аккаунт магазина пока не указан.</p>
+          <p>Контакт поддержки уточняется.</p>
         )}
       </section>
       <Field
@@ -2164,7 +2176,7 @@ function Support() {
       {orderNumber && <Copy value={orderNumber} label="Скопировать номер" />}
       {settings?.phone && (
         <a className="button secondary" href={`tel:${settings.phone}`}>
-          Позвонить {settings.phone}
+          Позвонить {settings.phone}{settings.phoneIsTest !== false ? " · тестовый номер" : ""}
         </a>
       )}
       <section className="detail-section">
@@ -2348,4 +2360,14 @@ function Invite() {
       </form>
     </div>
   );
+}
+
+function Defect({ item, expanded = false }: { item: { hasDefect?: boolean; defectDescription?: string }; expanded?: boolean }) {
+  return item.hasDefect ? <details className="defect-notice" open={expanded || undefined}><summary>Есть дефект — описание</summary><p className="pre-wrap">{item.defectDescription}</p></details> : null;
+}
+
+function MapLink({ address }: { address?: string }) {
+  if (!address?.trim()) return null;
+  const url = `https://yandex.by/maps/?text=${encodeURIComponent(address)}`;
+  return <a className="text-link map-link" href={url} target="_blank" rel="noopener noreferrer" onClick={e => { if (tg()?.openLink) { e.preventDefault(); tg()?.openLink?.(url); } }}>Открыть в Яндекс Картах</a>;
 }

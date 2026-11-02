@@ -41,11 +41,11 @@ export default function Staff() {
   if (path === "/staff/search") return <Search />;
   if (path === "/staff/returns") return <Returns />;
   if (path === "/staff/counter") return <Counter />;
-  return <Queue />;
+  return <Queue key={path} />;
 }
 function Queue() {
-  const { go } = useApp();
-  const [filter, setFilter] = useState("checking");
+  const { go, path } = useApp();
+  const [filter, setFilter] = useState(path === "/staff/issues" ? "problems" : "checking");
   const { data, error, loading, reload } = useLoad<{
     orders: Order[];
     issues: Issue[];
@@ -362,6 +362,8 @@ function Items() {
   );
 }
 const initialItem = {
+  hasDefect: false,
+  defectDescription: "",
   title: "",
   sku: "",
   category: "outerwear",
@@ -408,6 +410,8 @@ function ItemEditor({ id }: { id: string }) {
   useEffect(() => {
     if (item) {
       setForm({
+        hasDefect: item.hasDefect ?? false,
+        defectDescription: item.defectDescription ?? "",
         title: item.title,
         sku: item.sku,
         category: item.category,
@@ -430,7 +434,7 @@ function ItemEditor({ id }: { id: string }) {
     window.addEventListener("beforeunload", unload);
     return () => window.removeEventListener("beforeunload", unload);
   }, [dirty]);
-  const set = (key: string, value: string) => {
+  const set = (key: string, value: string | boolean) => {
     setForm((v) => ({ ...v, [key]: value }));
     setDirty(true);
   };
@@ -635,7 +639,15 @@ function ItemEditor({ id }: { id: string }) {
             />
           ))}
         </div>
-        <h2>Сведения о новой вещи</h2>
+        <label className="checkbox-row">
+          <input type="checkbox" checked={form.hasDefect} onChange={e => set("hasDefect", e.target.checked)} />
+          Есть дефект
+        </label>
+        {form.hasDefect && <label className="field">Описание дефекта
+          <textarea required maxLength={4000} value={form.defectDescription} onChange={e => set("defectDescription", e.target.value)} />
+          <small>Укажите конкретную особенность. Добавьте фото дефекта ниже. При выключении флага текст удалится после сохранения.</small>
+        </label>}
+        <h2>Сведения о вещи</h2>
         {[
           ["brand", "Бренд"],
           ["color", "Цвет"],
@@ -874,6 +886,7 @@ function ItemEditor({ id }: { id: string }) {
               ))}
           </dl>
           <p>{form.attributes.material}</p>
+          {form.hasDefect && <div className="defect-notice"><strong>Есть дефект</strong><p className="pre-wrap">{form.defectDescription}</p></div>}
           {missing.length > 0 && (
             <div className="notice">
               <strong>До публикации заполните</strong>
@@ -1098,7 +1111,7 @@ function StaffOrder({ id }: { id: string }) {
         {order.method !== "PICKUP" && (
           <>
             <p>
-              {order.recipient?.city}, {order.recipient?.office}
+              {order.recipient?.city}, {order.recipient?.office}{order.recipient?.officeAddress ? `, ${order.recipient.officeAddress}` : ""}
             </p>
             <p>Индекс {order.recipient?.postalCode || "не указан"}</p>
             <Copy
@@ -1107,6 +1120,7 @@ function StaffOrder({ id }: { id: string }) {
                 order.recipient?.phone,
                 order.recipient?.city,
                 order.recipient?.office,
+                order.recipient?.officeAddress,
                 order.recipient?.postalCode,
               ]
                 .filter(Boolean)

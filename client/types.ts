@@ -14,6 +14,8 @@ export interface Media {
   position?: number;
 }
 export interface Item {
+  hasDefect?: boolean;
+  defectDescription?: string;
   id: string;
   sku: string;
   title: string;
@@ -52,6 +54,9 @@ export interface Carrier {
   verifiedAt?: string;
 }
 export interface Settings {
+  about?: string;
+  phoneIsTest?: boolean;
+  documentStatus?: "DRAFT" | "APPROVED";
   name: string;
   address: string;
   phone: string;
@@ -75,10 +80,13 @@ export interface Draft {
   fullName: string;
   city: string;
   office: string;
+  officeAddress?: string;
   postalCode: string;
   comment: string;
 }
 export interface Line {
+  hasDefect?: boolean;
+  defectDescription?: string;
   id: string;
   itemId: string;
   title: string;

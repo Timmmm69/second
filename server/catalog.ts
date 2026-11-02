@@ -26,10 +26,13 @@ const itemInput = z
     measurements: z
       .record(z.string(), z.number().int().min(0).max(20000))
       .default({}),
+    hasDefect: z.boolean().default(false),
+    defectDescription: z.string().trim().max(4000).default(""),
     storageLocation: z.string().max(200).default(""),
     version: z.number().int().optional(),
   })
-  .strict();
+  .strict()
+  .refine(b => !b.hasDefect || b.defectDescription.length > 0, { message: "Опишите конкретный дефект", path: ["defectDescription"] });
 export async function mapItem(row: any, staff = false) {
   const assets = (
     await pool.query(
@@ -46,6 +49,8 @@ export async function mapItem(row: any, staff = false) {
     publication: row.publication,
     physical: staff ? row.physical : undefined,
     version: row.version,
+    hasDefect: row.has_defect ?? false,
+    defectDescription: row.has_defect ? row.defect_description : "",
     attributes: row.attributes,
     measurements: row.measurements,
     media: assets.map((m) => ({
@@ -218,6 +223,7 @@ export async function registerCatalog(app: FastifyInstance) {
         fullName: z.string().max(200).optional(),
         city: z.string().max(200).optional(),
         office: z.string().max(500).optional(),
+        officeAddress: z.string().max(500).optional(),
         postalCode: z.string().max(20).optional(),
         comment: z.string().max(1000).optional(),
       })
@@ -338,7 +344,7 @@ export async function registerCatalog(app: FastifyInstance) {
       async (c) => {
         await assertActiveCategory(c, b.category);
         const { rows } = await c.query(
-          "INSERT INTO items(sku,title,category,price_minor,attributes,measurements,storage_location) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",
+          "INSERT INTO items(sku,title,category,price_minor,attributes,measurements,storage_location,has_defect,defect_description) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
           [
             b.sku ?? "V-" + crypto.randomUUID().slice(0, 8).toUpperCase(),
             b.title,
@@ -347,6 +353,8 @@ export async function registerCatalog(app: FastifyInstance) {
             b.attributes,
             b.measurements,
             b.storageLocation,
+            b.hasDefect,
+            b.hasDefect ? b.defectDescription : "",
           ],
         );
         await audit(c, req.actor.id, "ITEM_CREATE", "ITEM", rows[0].id, {});
@@ -383,7 +391,7 @@ export async function registerCatalog(app: FastifyInstance) {
         );
         const row = (
           await c.query(
-            "UPDATE items SET sku=$2,title=$3,category=$4,price_minor=$5,attributes=$6,measurements=$7,storage_location=$8,version=version+1,updated_at=now() WHERE id=$1 RETURNING *",
+            "UPDATE items SET sku=$2,title=$3,category=$4,price_minor=$5,attributes=$6,measurements=$7,storage_location=$8,has_defect=$9,defect_description=$10,version=version+1,updated_at=now() WHERE id=$1 RETURNING *",
             [
               id,
               b.sku ?? old.sku,
@@ -393,6 +401,8 @@ export async function registerCatalog(app: FastifyInstance) {
               b.attributes,
               b.measurements,
               b.storageLocation,
+            b.hasDefect,
+            b.hasDefect ? b.defectDescription : "",
             ],
           )
         ).rows[0];
@@ -454,6 +464,8 @@ export async function registerCatalog(app: FastifyInstance) {
                   !item.attributes[key].length)
               )
                 fields[key] = "Заполните сведения для нового товара";
+            if (item.has_defect && !item.defect_description?.trim())
+              fields.defectDescription = "Опишите конкретный дефект";
             if (!item.storage_location)
               fields.storageLocation = "Укажите место хранения";
             if (!b.checked) fields.checked = "Подтвердите физическую проверку";
@@ -503,6 +515,8 @@ export async function registerCatalog(app: FastifyInstance) {
               [
                 id,
                 JSON.stringify({
+                  hasDefect: item.has_defect,
+                  defectDescription: item.has_defect ? item.defect_description : "",
                   title: item.title,
                   priceMinor: item.price_minor,
                   attributes: item.attributes,

@@ -37,3 +37,9 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - name: Build and smoke production container
+        if: matrix.postgres == '17'
+        run: |
+          node --input-type=module -e 'import pg from "pg";const p=new pg.Pool({connectionString:process.env.DATABASE_URL});await p.query("CREATE DATABASE luchok_smoke_test");await p.end();'
+          docker build -f infra/Dockerfile -t luchok:ci .
+          DATABASE_URL=postgresql://postgres:postgres@localhost:5432/luchok_smoke_test bash infra/smoke-production.sh

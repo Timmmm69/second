@@ -10,6 +10,7 @@ import { z } from "zod";
 import { tx } from "./db.js";
 import { AppError, assert } from "./errors.js";
 import type { Actor } from "./types.js";
+import { config } from "./config.js";
 import { encrypt, decrypt } from "./crypto.js";
 import {
   type Calendar,
@@ -44,6 +45,7 @@ const recipientSchema = z.object({
   fullName: z.string().trim().max(200).optional(),
   city: z.string().trim().max(150).optional(),
   office: z.string().trim().max(350).optional(),
+  officeAddress: z.string().trim().max(500).optional(),
   postalCode: z.string().trim().max(20).optional(),
   comment: z.string().trim().max(1000).optional(),
 });
@@ -268,6 +270,16 @@ export async function readOrder(c: PoolClient, id: string, actor: Actor) {
       : undefined,
   };
 }
+function assertLaunchSettings(settings: any) {
+  if (!config.production) return;
+  assert(
+    settings.documentStatus === "APPROVED" && settings.phoneIsTest === false &&
+    settings.phone?.trim() && settings.phone.replace(/\D/g, "") !== "375337777777" &&
+    settings.address?.trim() && settings.seller?.trim() && settings.telegramUsername?.trim() &&
+    ["privacy", "reservation", "shipping", "returns"].every(key => (settings.documents?.[key] ?? "").trim().length >= 20),
+    503, "LAUNCH_SETTINGS", "Рабочие контакты и утверждённые документы ещё не подготовлены",
+  );
+}
 export async function createLease(
   actor: Actor,
   key: unknown,
@@ -277,6 +289,7 @@ export async function createLease(
   return idem(actor, key, "checkout.lease", body, async (c) => {
     await c.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [actor.id]);
     const settings = await getSettings(c);
+    assertLaunchSettings(settings);
     assert(
       settings.acceptingOrders,
       503,
@@ -324,6 +337,7 @@ export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
         "RECIPIENT_REQUIRED",
         `Заполните ${field === "fullName" ? "ФИО получателя" : field === "city" ? "населённый пункт" : "отделение"}`,
       );
+  if (body.method === "EUROPOST") assert(body.officeAddress?.trim(), 422, "OFFICE_ADDRESS_REQUIRED", "Укажите адрес пункта выдачи Европочты, не домашний адрес");
   return idem(actor, key, "orders.create", body, async (c) => {
     await c.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [actor.id]);
     const lease = (
@@ -384,6 +398,7 @@ export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
       "Описание вещи изменилось. Перепроверьте состав",
     );
     const settings = await getSettings(c);
+    assertLaunchSettings(settings);
     assert(
       settings.acceptingOrders,
       503,
@@ -405,6 +420,7 @@ export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
       fullName: body.fullName ?? "",
       city: body.city ?? "",
       office: body.office ?? "",
+      officeAddress: body.officeAddress ?? "",
       postalCode: body.postalCode ?? "",
       comment: body.comment ?? "",
       phoneSource: "MANUAL",
@@ -474,16 +490,17 @@ export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
       "ORDER_CREATED",
       "Вещи закреплены. Проверяем физическое наличие",
     );
-    if (body.method !== "PICKUP") {
+    {
       const owners = (await c.query("SELECT id FROM users WHERE role='OWNER'"))
         .rows;
       for (const owner of owners)
         await c.query(
-          "INSERT INTO outbox_events(entity_id,entity_version,event_type,recipient_id,message) VALUES($1,1,'SHIPMENT_REQUEST',$2,$3) ON CONFLICT DO NOTHING",
+          "INSERT INTO outbox_events(entity_id,entity_version,event_type,recipient_id,message) VALUES($1,1,$4,$2,$3) ON CONFLICT DO NOTHING",
           [
             id,
             owner.id,
-            `Заявка №${o.number}: ${items.length} вещей, ${body.method === "BELPOST" ? "Белпочта" : "Европочта"}. Откройте защищённую очередь.`,
+            `Заявка №${o.number}: ${items.length} вещей, ${body.method === "PICKUP" ? "Самовывоз" : body.method === "BELPOST" ? "Белпочта" : "Европочта"}. Откройте защищённую очередь.`,
+            body.method === "PICKUP" ? "OWNER_ORDER_REQUEST" : "SHIPMENT_REQUEST",
           ],
         );
     }
@@ -893,6 +910,7 @@ export async function registerOrders(app: FastifyInstance) {
           "RECIPIENT_REQUIRED",
           "Заполните ФИО, населённый пункт и отделение",
         );
+      if (o.method === "EUROPOST") assert(body.officeAddress?.trim(), 422, "OFFICE_ADDRESS_REQUIRED", "Укажите адрес пункта выдачи Европочты");
       const { version: _, ...recipient } = body;
       void _;
       if (o.status === "CHECKING") {

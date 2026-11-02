@@ -41,6 +41,9 @@ const settingsSchema = z.object({
   name: z.string().trim().min(1).max(100),
   address: z.string().max(1000),
   phone: z.string().max(80),
+  phoneIsTest: z.boolean().default(true),
+  about: z.string().max(6000).default(""),
+  documentStatus: z.enum(["DRAFT", "APPROVED"]).default("DRAFT"),
   telegramUsername: z.string().regex(/^@?[a-zA-Z0-9_]{0,32}$/),
   seller: z.string().max(4000),
   documents: z.object({
@@ -57,7 +60,7 @@ export async function settings() {
   const r = (
     await pool.query("SELECT value,version FROM store_settings WHERE id=true")
   ).rows[0];
-  return { ...r.value, version: r.version };
+  return { about: "", phoneIsTest: true, documentStatus: "DRAFT", ...r.value, version: r.version };
 }
 export async function registerSettings(app: FastifyInstance) {
   app.get("/settings", async () => {
@@ -112,12 +115,15 @@ export async function registerSettings(app: FastifyInstance) {
       assert(
         next.address.trim() &&
           next.phone.trim() &&
+          !next.phoneIsTest &&
+          next.phone.replace(/\D/g, "") !== "375337777777" &&
+          next.documentStatus === "APPROVED" &&
           next.seller.trim() &&
           next.telegramUsername.trim() &&
           Object.values(next.documents).every((v) => v.trim().length >= 20),
         422,
         "LAUNCH_SETTINGS",
-        "Заполните реквизиты, адрес, контакты и проверенные документы магазина",
+        "Для реальных оформлений нужны рабочий телефон, поддержка, реквизиты и явно утверждённые документы",
       );
     return tx(async (c) => {
       const old = (
@@ -129,6 +135,8 @@ export async function registerSettings(app: FastifyInstance) {
         "VERSION",
         "Настройки изменены. Обновите страницу",
       );
+      const documentsChanged = (Object.keys(next.documents) as (keyof typeof next.documents)[]).some(key => old.value.documents?.[key] !== next.documents[key]);
+      assert(!documentsChanged || next.documentStatus === "DRAFT", 422, "DOCUMENT_REVIEW", "Сначала сохраните новый текст как черновик, затем проверьте и утвердите отдельным сохранением");
       const value = { ...next };
       delete (value as any).version;
       const version = old.version + 1;
