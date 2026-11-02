@@ -99,11 +99,32 @@ function App() {
       active = false;
     };
   }, [refreshUser, sdkReady]);
+  const refreshSettings = useCallback(async () => {
+    setSettings(await api<Settings>("/settings"));
+  }, []);
+  const refreshCategories = useCallback(async () => {
+    const service = path.startsWith("/staff") || path.startsWith("/owner");
+    const route = service && (user?.role === "OWNER" || user?.role === "STAFF")
+      ? "/staff/categories" : "/categories";
+    setCategories(await api<Category[]>(route));
+  }, [path, user?.role]);
   useEffect(() => {
-    api<Settings>("/settings").then(setSettings).catch(setAuthError);
-    api<Category[]>("/categories")
-      .then(setCategories)
-      .catch(() => {});
+    refreshCategories().catch(() => {});
+    const refresh = () => {
+      if (!document.hidden) {
+        refreshCategories().catch(() => {});
+        refreshSettings().catch(() => {});
+      }
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [refreshCategories, refreshSettings]);
+  useEffect(() => {
+    refreshSettings().catch(setAuthError);
     const fn = () => {
       setPath(location.hash.slice(1) || "/catalog");
       window.scrollTo({ top: 0 });
@@ -117,7 +138,7 @@ function App() {
       window.removeEventListener("online", net);
       window.removeEventListener("offline", net);
     };
-  }, []);
+  }, [refreshSettings]);
   useEffect(() => {
     const app = tg();
     if (!app) return;
@@ -283,6 +304,8 @@ function App() {
         dev,
         settings,
         categories,
+        refreshCategories,
+        refreshSettings,
         selection,
         selectionIds,
         setSelection,

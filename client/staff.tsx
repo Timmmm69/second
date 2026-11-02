@@ -402,6 +402,10 @@ function ItemEditor({ id }: { id: string }) {
   const [checked, setChecked] = useState(false);
   const [price, setPrice] = useState("");
   useEffect(() => {
+    if (id === "new" && !dirty && categories.length && !categories.some(c => c.id === form.category && !c.archived))
+      setForm(v => ({...v, category: categories.find(c => !c.archived)?.id || ""}));
+  }, [id, dirty, categories, form.category]);
+  useEffect(() => {
     if (item) {
       setForm({
         title: item.title,
@@ -549,9 +553,9 @@ function ItemEditor({ id }: { id: string }) {
           value={form.category}
           onChange={(e) => set("category", e.target.value)}
         >
-          {categories.map((c) => (
+          {categories.filter((c) => !c.archived || c.id === form.category).map((c) => (
             <option value={c.id} key={c.id}>
-              {c.name}
+              {c.name}{c.archived ? " (в архиве)" : ""}
             </option>
           ))}
         </Select>

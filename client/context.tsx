@@ -5,6 +5,8 @@ export interface AppContextValue {
   dev: boolean;
   settings: Settings | null;
   categories: Category[];
+  refreshCategories: () => Promise<void>;
+  refreshSettings: () => Promise<void>;
   selection: Item[];
   selectionIds: string[];
   setSelection: (ids: string[]) => Promise<void>;

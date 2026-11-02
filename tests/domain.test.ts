@@ -68,7 +68,7 @@ async function api(
 async function item() {
   const id = randomUUID();
   await pool.query(
-    "INSERT INTO items(id,sku,title,category,price_minor,publication) VALUES($1,$2,'Тестовая новая вещь','jackets',4500,'PUBLISHED')",
+    "INSERT INTO items(id,sku,title,category,price_minor,publication) VALUES($1,$2,'Тестовая новая вещь','outerwear',4500,'PUBLISHED')",
     [id, "T-" + id],
   );
   await tx((c) => setPhysical(c, [id], "AVAILABLE", staff.id, "test fixture"));

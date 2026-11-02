@@ -4,43 +4,13 @@ import { pool, tx } from "./db.js";
 import { assert } from "./errors.js";
 import { encrypt, decrypt } from "./crypto.js";
 import { lockItems, setPhysical, audit, idem } from "./inventory.js";
-export const categories = [
-  {
-    id: "outerwear",
-    name: "Куртки",
-    measurements: ["chest", "length", "sleeve"],
-  },
-  { id: "knit", name: "Трикотаж", measurements: ["chest", "length", "sleeve"] },
-  {
-    id: "shirts",
-    name: "Рубашки",
-    measurements: ["chest", "length", "sleeve"],
-  },
-  { id: "tops", name: "Футболки и топы", measurements: ["chest", "length"] },
-  {
-    id: "trousers",
-    name: "Брюки и джинсы",
-    measurements: ["waist", "rise", "length", "inseam"],
-  },
-  {
-    id: "dresses",
-    name: "Платья и юбки",
-    measurements: ["chest", "waist", "length"],
-  },
-  { id: "children", name: "Детское", measurements: ["chest", "length"] },
-  {
-    id: "bags",
-    name: "Сумки",
-    measurements: ["width", "height", "depth", "strap"],
-  },
-  { id: "accessories", name: "Аксессуары", measurements: ["length", "width"] },
-];
+import { readCategories, assertActiveCategory } from "./categories.js";
 const ids = z.array(z.uuid()).max(10000);
 const itemInput = z
   .object({
     sku: z.string().trim().min(1).max(80).optional(),
     title: z.string().trim().min(1).max(180),
-    category: z.enum(categories.map((c) => c.id) as [string, ...string[]]),
+    category: z.string().min(1).max(100),
     priceMinor: z.number().int().min(0).max(100000000),
     attributes: z
       .record(
@@ -101,7 +71,6 @@ export async function readItems(itemIds: string[], staff = false) {
 
 const uuidParam = z.object({ id: z.uuid() });
 export async function registerCatalog(app: FastifyInstance) {
-  app.get("/categories", async () => categories);
   app.get("/catalog", async (req) => {
     const q = z.record(z.string(), z.string()).parse(req.query),
       where = [
@@ -157,7 +126,7 @@ export async function registerCatalog(app: FastifyInstance) {
       );
     if (q.measurement) {
       assert(
-        categories.some((c) => c.measurements.includes(q.measurement)),
+        (await readCategories()).some((c) => c.measurements.includes(q.measurement)),
         422,
         "FILTER",
         "Неизвестный замер",
@@ -367,6 +336,7 @@ export async function registerCatalog(app: FastifyInstance) {
       "items.create",
       b,
       async (c) => {
+        await assertActiveCategory(c, b.category);
         const { rows } = await c.query(
           "INSERT INTO items(sku,title,category,price_minor,attributes,measurements,storage_location) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",
           [
@@ -393,6 +363,7 @@ export async function registerCatalog(app: FastifyInstance) {
       "items.edit:" + id,
       b,
       async (c) => {
+        await assertActiveCategory(c, b.category);
         const [old] = await lockItems(c, [id]);
         assert(
           old && old.version === b.version,

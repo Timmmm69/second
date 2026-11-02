@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, command } from "./api";
 import { useApp } from "./context";
 import { tg } from "./telegram";
+import { useMutation } from "./mutations";
 import {
   Button,
   Copy,
@@ -17,6 +18,8 @@ import {
 import {
   date,
   methodNames,
+  type Category,
+  measurementNames,
   type Carrier,
   type Settings,
   type User,
@@ -53,6 +56,7 @@ export default function Owner() {
       <div className="chips">
         {[
           ["settings", "Магазин"],
+          ["categories", "Категории"],
           ["staff", "Сотрудники"],
           ["audit", "Журнал"],
           ["operations", "Работа системы"],
@@ -68,6 +72,8 @@ export default function Owner() {
       </div>
       {tab === "settings" ? (
         <StoreSettings />
+      ) : tab === "categories" ? (
+        <CategorySettings />
       ) : tab === "staff" ? (
         <StaffAccess />
       ) : tab === "audit" ? (
@@ -123,7 +129,7 @@ function OwnerSecurity({
   );
 }
 function StoreSettings() {
-  const { toast, ownerCode, setOwnerCode } = useApp();
+  const { toast, ownerCode, setOwnerCode, refreshSettings } = useApp();
   const { data, error, loading, reload } = useLoad<Settings>("/owner/settings");
   const [form, setForm] = useState<Settings | null>(null),
     [busy, setBusy] = useState(false),
@@ -163,6 +169,7 @@ function StoreSettings() {
         ownerCode,
       );
       setForm(structuredClone(response));
+      await refreshSettings();
       toast("Настройки сохранены. Действующие сроки не сокращаются.");
     } catch (e) {
       setSaveError(e);
@@ -481,6 +488,65 @@ function StoreSettings() {
       </div>
     </form>
   );
+}
+function CategorySettings() {
+  const { ownerCode, setOwnerCode, refreshCategories, toast } = useApp();
+  const { data, error, loading, reload } = useLoad<Category[]>("/owner/categories");
+  const blank = { name: "", sortOrder: 100, measurements: [] as string[], archived: false };
+  const [form, setForm] = useState<Category | typeof blank>(blank);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const mutation = useMutation();
+  const [saveError, setError] = useState<unknown>(null);
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await mutation.run<Category>(editing ? `/owner/categories/${editing}` : "/owner/categories",
+        { name: form.name, measurements: form.measurements, sortOrder: form.sortOrder,
+          archived: form.archived, ...(editing && "version" in form ? { version: form.version } : {}) },
+        editing ? "PATCH" : "POST");
+      if (!result) return;
+      setEditing(null);
+      setForm(blank);
+      reload();
+      await refreshCategories();
+      toast("Категория сохранена");
+    } catch (e) { setError(e); } finally { setBusy(false); }
+  };
+  return <div className="form-stack">
+    <p>Категории можно добавлять без разработчика. Меньшее число порядка — выше в списке. Архивировать можно только категорию без вещей: сначала перенесите их в другую.</p>
+    <ErrorBox error={error || saveError || mutation.error} retry={reload} />
+    {mutation.recovery}
+    {loading ? <Loading /> : <section className="detail-section">
+      <h2>Категории магазина</h2>
+      {data?.map(c => <div className="summary-row" key={c.id}>
+        <span>{c.name}{c.archived ? " · в архиве" : ""} <small>· порядок {c.sortOrder}</small></span>
+        <Button secondary disabled={busy} onClick={() => { setEditing(c.id); setForm(structuredClone(c)); setError(null); }}>Изменить {c.name}</Button>
+      </div>)}
+    </section>}
+    <form className="form-stack" onSubmit={e => { e.preventDefault(); save(); }}>
+      <h2>{editing ? "Редактировать категорию" : "Новая категория"}</h2>
+      <Field label="Название категории" value={form.name} required maxLength={100}
+        placeholder="Например, Одежда для собак" onChange={e => setForm(v => ({...v,name:e.target.value}))} />
+      <Field label="Порядок отображения" type="number" min="0" max="1000000" required
+        value={form.sortOrder} onChange={e => setForm(v => ({...v,sortOrder:Number(e.target.value)}))} />
+      <fieldset><legend>Замеры в редакторе вещей</legend>
+        <p className="small-text">Выберите подходящие замеры. Значения вводятся в сантиметрах в карточке вещи.</p>
+        {Object.entries(measurementNames).map(([key,label]) => <label className="check-row" key={key}>
+          <input type="checkbox" checked={form.measurements.includes(key)} onChange={e => {
+            const checked=e.target.checked;
+            setForm(v => ({...v,measurements:checked ? [...v.measurements,key] : v.measurements.filter(k => k!==key)}));
+          }} /><span>{label}</span>
+        </label>)}
+      </fieldset>
+      <label className="check-row"><input type="checkbox" checked={form.archived}
+        onChange={e => setForm(v => ({...v,archived:e.target.checked}))} /><span>В архиве</span></label>
+      <OwnerSecurity code={ownerCode} onChange={setOwnerCode} />
+      <Button type="submit" disabled={busy || !form.name.trim()}>{busy ? "Сохраняем…" : "Сохранить категорию"}</Button>
+      {editing && <Button secondary disabled={busy} onClick={() => {setEditing(null);setForm(blank);setError(null);}}>Отменить редактирование</Button>}
+    </form>
+  </div>;
 }
 function StaffAccess() {
   const { toast, user, ownerCode: code, setOwnerCode: setCode } = useApp();

@@ -14,6 +14,7 @@ import { pool } from "./db.js";
 import { AppError, assert } from "./errors.js";
 import { authenticate, registerAuth } from "./auth.js";
 import { registerCatalog } from "./catalog.js";
+import { registerCategories } from "./categories.js";
 import { registerSettings } from "./settings.js";
 import { registerMedia, serveMedia } from "./media.js";
 import { registerOrders } from "./orders.js";
@@ -178,6 +179,7 @@ export async function buildApp({ staticFiles = true } = {}) {
   await app.register(
     async (api) => {
       await registerAuth(api);
+      await registerCategories(api);
       await registerCatalog(api);
       await registerSettings(api);
       await registerMedia(api);

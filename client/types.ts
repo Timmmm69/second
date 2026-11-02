@@ -29,6 +29,9 @@ export interface Item {
   storageLocation?: string;
 }
 export interface Category {
+  sortOrder: number;
+  archived: boolean;
+  version: number;
   id: string;
   name: string;
   measurements: string[];
