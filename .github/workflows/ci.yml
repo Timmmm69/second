@@ -37,6 +37,8 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - run: npm run build:preview
+      - run: npm run verify:preview
       - name: Build and smoke production container
         if: matrix.postgres == '17'
         run: |

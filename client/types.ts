@@ -54,6 +54,7 @@ export interface Carrier {
   verifiedAt?: string;
 }
 export interface Settings {
+  buyerGuide?: import("../shared/buyer-guide").BuyerGuide;
   about?: string;
   phoneIsTest?: boolean;
   documentStatus?: "DRAFT" | "APPROVED";
@@ -125,6 +126,7 @@ export interface Order {
   pickupDeadline?: string;
   dispatchDeadline?: string;
   recipient: Draft;
+  ruleSnapshot?: Settings;
   pickupCode?: string;
   lines: Line[];
   shipment?: Shipment;
@@ -247,3 +249,5 @@ export const date = (s?: string) =>
         minute: "2-digit",
       }).format(new Date(s))
     : "—";
+
+export const itemCount = (n: number) => `${n} ${n % 100 >= 11 && n % 100 <= 14 ? "вещей" : n % 10 === 1 ? "вещь" : n % 10 >= 2 && n % 10 <= 4 ? "вещи" : "вещей"}`;

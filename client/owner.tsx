@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, command } from "./api";
 import { useApp } from "./context";
+import { defaultBuyerGuide } from "../shared/buyer-guide";
 import { tg } from "./telegram";
 import { useMutation } from "./mutations";
 import {
@@ -49,7 +50,8 @@ interface Operation {
   createdAt?: string;
 }
 export default function Owner() {
-  const [tab, setTab] = useState("settings");
+  const { path, go } = useApp();
+  const tab = path.split("/")[2] || "settings";
   return (
     <div className="page narrow owner-page">
       <h1>Управление</h1>
@@ -65,12 +67,14 @@ export default function Owner() {
           <button
             key={key}
             className={tab === key ? "selected" : ""}
-            onClick={() => setTab(key)}
+            onClick={() => go(key === "settings" ? "/owner" : `/owner/${key}`)}
+            aria-current={tab === key ? "page" : undefined}
           >
             {label}
           </button>
         ))}
       </div>
+      <div className="workspace-intro"><Icon name={{settings:"pin",categories:"bag",staff:"person",audit:"orders",operations:"settings"}[tab] || "settings"} /><div><h2>{{settings:"Сведения и правила",categories:"Структура каталога",staff:"Команда магазина",audit:"История действий",operations:"Состояние сервисов"}[tab]}</h2><p>{{settings:"Проверяйте изменения перед сохранением. Утверждение документов выполняется отдельно.",categories:"Категории и замеры используются в каталоге и редакторе вещей.",staff:"Приглашайте сотрудников по проверенному Telegram ID и управляйте доступом.",audit:"Найдите действие по сотруднику, объекту или дате.",operations:"Проверьте диск, уведомления и открытые проблемы."}[tab]}</p></div></div>
       {tab === "settings" ? (
         <StoreSettings />
       ) : tab === "categories" ? (
@@ -363,6 +367,11 @@ function StoreSettings() {
         >
           Добавить исключение
         </Button>
+      </section>
+      <section className="detail-section">
+        <h2>Понятные условия для покупателя</h2>
+        <p className="muted">Эти тексты показываются в подборке, оформлении и разделе о магазине. Изменение условий закрывает новые оформления до проверки и повторного утверждения.</p>
+        {(Object.keys(defaultBuyerGuide) as (keyof typeof defaultBuyerGuide)[]).map(key => <details className="document" key={key}><summary>{{selection:"Что сохраняет подборка",pickupSummary:"Подпись к брони",pickup:"Бронь и примерка",shippingSummary:"Подпись к доставке",shipping:"Доставка и расчёты",dispatch:"Срок и передача посылки",cancellation:"Отмена",returns:"Возвраты и обращения",privacy:"Данные для получения"}[key]}</summary><Textarea label="Текст для покупателя" rows={key.endsWith("Summary") ? 2 : 5} value={form.buyerGuide?.[key] || defaultBuyerGuide[key]} onChange={value => { set("buyerGuide", {...defaultBuyerGuide,...form.buyerGuide,[key]:value}); set("documentStatus","DRAFT"); set("acceptingOrders",false); }} /></details>)}
       </section>
       <section className="detail-section">
         <h2>Условия получения и документы</h2>

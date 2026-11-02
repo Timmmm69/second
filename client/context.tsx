@@ -3,6 +3,7 @@ import type { Category, Item, Settings, User } from "./types";
 export interface AppContextValue {
   user: User | null;
   dev: boolean;
+  demo: boolean;
   settings: Settings | null;
   categories: Category[];
   refreshCategories: () => Promise<void>;

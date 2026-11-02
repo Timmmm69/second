@@ -17,7 +17,9 @@
     "lint": "eslint client server scripts tests",
     "test": "APP_MODE=local NODE_ENV=test node --import tsx --test --test-concurrency=1 tests/*.test.ts",
     "check": "npm run typecheck && npm run lint && npm test && npm run build",
-    "store:init": "node --env-file-if-exists=.env --import tsx scripts/store-initial.ts"
+    "store:init": "node --env-file-if-exists=.env --import tsx scripts/store-initial.ts",
+    "build:preview": "VITE_PUBLIC_DEMO=1 vite build --outDir dist-preview && node scripts/build-preview.mjs",
+    "verify:preview": "node scripts/verify-preview.mjs"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

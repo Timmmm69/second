@@ -1,3 +1,5 @@
+import { publicSettings } from "./public-settings.js";
+import { defaultBuyerGuide } from "../shared/buyer-guide.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { PoolClient } from "pg";
 import {
@@ -60,7 +62,7 @@ export async function getSettings(c: PoolClient) {
   const r = await c.query(
     "SELECT value,version FROM store_settings WHERE id=true",
   );
-  return { ...r.rows[0].value, version: r.rows[0].version };
+  return { ...r.rows[0].value, buyerGuide: {...defaultBuyerGuide, ...r.rows[0].value.buyerGuide}, version: r.rows[0].version };
 }
 export async function lockedOrder(
   c: PoolClient,
@@ -318,7 +320,7 @@ export async function createLease(
     await audit(c, actor.id, "checkout.lease", "lease", id, {
       itemIds: body.itemIds,
     });
-    return { id, expiresAt, items: snapshots };
+    return { id, expiresAt, items: snapshots, rules: publicSettings(settings) };
   });
 }
 export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
@@ -327,6 +329,7 @@ export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
       leaseId: z.string().uuid(),
       method: z.enum(["PICKUP", "BELPOST", "EUROPOST"]),
       termsAccepted: z.literal(true),
+      settingsVersion: z.number().int().positive().optional(),
     })
     .parse(raw);
   if (body.method !== "PICKUP")
@@ -399,6 +402,7 @@ export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
     );
     const settings = await getSettings(c);
     assertLaunchSettings(settings);
+    assert(body.settingsVersion === undefined || body.settingsVersion === settings.version, 409, "RULES_CHANGED", "Условия магазина изменились. Проверьте их ещё раз перед подтверждением");
     assert(
       settings.acceptingOrders,
       503,

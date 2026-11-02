@@ -302,6 +302,7 @@ function App() {
       value={{
         user,
         dev,
+        demo: import.meta.env.VITE_PUBLIC_DEMO === "1",
         settings,
         categories,
         refreshCategories,
@@ -320,7 +321,7 @@ function App() {
         setOwnerCode,
       }}
     >
-      <div className="app-shell">
+      <div className={`app-shell ${staff ? "service-shell" : ""}`}>
         <header className="app-header">
           <div className="header-start">
             {!rootPath && (
@@ -351,6 +352,7 @@ function App() {
             <Icon name="menu" />
           </button>
         </header>
+        {(dev || import.meta.env.VITE_PUBLIC_DEMO === "1") && <aside className="preview-note" role="note">Просмотр с демонстрационным ассортиментом · реальные оформления отключены</aside>}
         {offline && (
           <div className="network-bar" role="status">
             Нет соединения. Оформление и выдача временно недоступны.
@@ -414,12 +416,12 @@ function App() {
             <button
               key={to}
               className={
-                path === to || (to === "/orders" && path.startsWith("/orders/"))
+                path === to || (to === "/owner" && path.startsWith("/owner/")) || (to === "/orders" && path.startsWith("/orders/"))
                   ? "active"
                   : ""
               }
               onClick={() => go(to)}
-              aria-current={path === to ? "page" : undefined}
+              aria-current={path === to || (to === "/owner" && path.startsWith("/owner/")) ? "page" : undefined}
             >
               <span className="nav-icon">
                 <Icon name={icon} />
