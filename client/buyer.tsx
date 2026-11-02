@@ -1468,8 +1468,7 @@ function Checkout() {
           <div className="notice">
             <Icon name="clock" />
             <p>
-              Удерживаем вещи до {date(lease?.expiresAt)}. После истечения
-              перепроверим наличие.
+              {demo ? "Перед оформлением вы проверите актуальный состав, цены и особенности вещей." : <>Удерживаем вещи до {date(lease?.expiresAt)}. После истечения перепроверим наличие.</>}
             </p>
           </div>
           <div className="compact-lines">
@@ -1495,10 +1494,10 @@ function Checkout() {
             ) : (
               <>
                 <p>{demo ? "Пункт выдачи выбирается при оформлении в магазине" : draft.fullName}</p>
-                <p>
+                {!demo && <p>
                   {draft.city}, {draft.office}{draft.officeAddress ? `, ${draft.officeAddress}` : ""}
                   {draft.postalCode ? `, ${draft.postalCode}` : ""}
-                </p>
+                </p>}
               </>
             )}
           </section>
@@ -1508,7 +1507,7 @@ function Checkout() {
               {draft.method === "PICKUP"
                 ? guide.pickup : guide.shipping}
             </p>
-            {draft.method !== "PICKUP" && (
+            {draft.method !== "PICKUP" && displayedSettings?.carriers[draft.method]?.terms !== guide.shipping && (
               <p className="muted">{displayedSettings?.carriers[draft.method]?.terms}</p>
             )}
             <button className="text-link" onClick={() => go("/about")}>
@@ -1542,7 +1541,7 @@ function Checkout() {
             >
               Изменить данные
             </Button>
-            {!settings?.acceptingOrders && (
+            {!demo && !settings?.acceptingOrders && (
               <p>Магазин временно не принимает новые обращения.</p>
             )}
           </div>
