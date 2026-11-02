@@ -247,7 +247,7 @@ function Catalog() {
   ).length;
   return (
     <div className="page catalog-page">
-      <p className="catalog-kicker">Новые вещи · Беларусь</p>
+      <p className="catalog-kicker">Секонд-хенд · Минск</p>
       <div className="search-row">
         <label className="search-pill">
           <Icon name="search" />
@@ -710,7 +710,7 @@ function ItemPage({ id }: { id: string }) {
           </button>
           <section className="detail-section">
             <h2>Детали вещи</h2>
-            <p>Новая вещь.</p>
+            <p>Единственный экземпляр.</p>
             <dl className="details-list">
               {[
                 ["brand", "Бренд"],
@@ -1929,7 +1929,7 @@ function OrderPage({ id }: { id: string }) {
           label="Скопировать номер обращения"
         />
         <Button ghost onClick={() => go("/about")}>
-          Правила возврата новых товаров
+          Правила возврата товаров
         </Button>
       </div>
       {code && (
@@ -2069,7 +2069,7 @@ function About() {
   return (
     <div className="page narrow">
       <h1>О магазине</h1>
-      <p className="lead">Новые вещи. Ваши находки.</p>
+      <p className="lead">Лучок. Ваши находки в Минске.</p>
       <section className="detail-section">
         <h2>Где нас найти</h2>
         <p>{settings.address || "Адрес ещё не заполнен владельцем"}</p>
@@ -2112,7 +2112,7 @@ function About() {
               privacy: "Обработка персональных данных",
               reservation: "Бронирование и получение",
               shipping: "Условия почтовой отправки",
-              returns: "Возвраты новых товаров",
+              returns: "Возвраты товаров",
             }[key] || key}
           </summary>
           <p className="pre-wrap">
@@ -2168,7 +2168,7 @@ function Support() {
         </a>
       )}
       <section className="detail-section">
-        <h2>Возврат новой вещи</h2>
+        <h2>Возврат товара</h2>
         <p>
           Свяжитесь с магазином для согласования передачи вещи и рассмотрения
           требования. Правила и предусмотренные способы официального обращения

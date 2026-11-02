@@ -810,7 +810,7 @@ function ItemEditor({ id }: { id: string }) {
                 onClick={() => {
                   if (
                     confirm(
-                      "Вещь осмотрена, пригодна к продаже как новая и возвращена на место в зале?",
+                      "Вещь осмотрена, пригодна к повторной продаже и возвращена на место в зале?",
                     )
                   )
                     mutation
@@ -1548,7 +1548,7 @@ function StaffOrder({ id }: { id: string }) {
         </Sheet>
       )}
       {showReturn && (
-        <Sheet title="Возврат новой вещи" onClose={() => setShowReturn(false)}>
+        <Sheet title="Возврат товара" onClose={() => setShowReturn(false)}>
           <p>
             История исходной продажи сохраняется. Возврат денег при
             необходимости выполняется отдельно.
@@ -1938,7 +1938,7 @@ function Returns() {
                     disabled={mutation.busy}
                     onClick={async () => {
                       const note = prompt(
-                        "Результат осмотра, основание решения и подтверждение пригодности как новой вещи",
+                        "Результат осмотра, основание решения и подтверждение пригодности к повторной продаже",
                       );
                       if (!note) return;
                       const result = await mutation.run(

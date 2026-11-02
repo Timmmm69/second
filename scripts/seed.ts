@@ -194,7 +194,7 @@ export async function seedDemo(env = process.env) {
     ).rows[0];
     const value = {
       ...row.value,
-      name: "Вещи · тестовая среда",
+      name: "Лучок · тестовая среда",
       address: "Тестовый адрес — не магазин",
       phone: "+375290000000",
       telegramUsername: "",

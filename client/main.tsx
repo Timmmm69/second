@@ -314,9 +314,9 @@ function App() {
             <button
               className="brand"
               onClick={() => go(staff ? "/staff/queue" : "/catalog")}
-              aria-label="Вещи — главная"
+              aria-label={`${settings?.name || "Лучок"} — главная`}
             >
-              {settings?.name || "вещи"}
+              {settings?.name || "Лучок"}
               {staff && <span className="mode-caption">Команда магазина</span>}
             </button>
           </div>

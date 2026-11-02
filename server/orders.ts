@@ -2171,7 +2171,7 @@ export async function registerOrders(app: FastifyInstance) {
           lines.map((l) => l.item_id),
           "WRITTEN_OFF",
           actor(r).id,
-          "По осмотру нельзя повторно продавать как новую",
+          "По осмотру вещь непригодна к повторной продаже",
         );
         await c.query(
           "UPDATE items SET publication='HIDDEN' WHERE id=ANY($1::uuid[])",

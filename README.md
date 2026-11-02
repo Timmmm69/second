@@ -1,12 +1,14 @@
-# «Вещи» — Telegram Mini App, версия 1.2
+# «Лучок» — Telegram Mini App, версия 1.2
 
-Магазин **новых** вещей: единичные остатки, бесплатная бронь с примеркой, заявки в отделения Белпочты/Европочты и мобильная работа сотрудников. React/TypeScript/Vite, Fastify, PostgreSQL, Sharp. API и worker — процессы одного приложения. Платежи, касса и почтовые кабинеты работают вне Mini App.
+Секонд-хенд **«Лучок» в Минске**: единичные остатки, бесплатная бронь с примеркой, заявки в отделения Белпочты/Европочты и мобильная работа сотрудников. Telegram-бот магазина — [@luchok_secondhand_bot](https://t.me/luchok_secondhand_bot). React/TypeScript/Vite, Fastify, PostgreSQL, Sharp. API и worker — процессы одного приложения. Платежи, касса и почтовые кабинеты работают вне Mini App.
+
+Название, город и username бота уточнены владельцем после исходной спецификации. `BOT_USERNAME=luchok_secondhand_bot` указан в примере конфигурации; подключение Telegram требует токена именно этого бота и согласованного HTTPS-запуска. Поле `telegramUsername` в настройках магазина — отдельный аккаунт поддержки для личной переписки, оно не заполняется username бота автоматически. Точный адрес, телефон, реквизиты и условия возврата ещё должен заполнить владелец. Миграция `004` заменяет только исходное название «Вещи», сохраняя введённые владельцем настройки и историю версий.
 
 Репозиторий: [Timmmm69/second](https://github.com/Timmmm69/second), ветка `codex/miniapp-v1.2`, [pull request №1](https://github.com/Timmmm69/second/pull/1). Главная ветка инициализирована по разрешению владельца.
 
 Исходная согласованная спецификация, дизайн-система и макеты находятся в `reference/`. Трассировка требований — [docs/coverage.md](docs/coverage.md); фактические результаты — [docs/verification.md](docs/verification.md). Проверка реального Telegram и публикация отделены от локальных тестов.
 
-Итог локальной проверки: **60/60 тестов на настоящей PostgreSQL**, TypeScript/lint/build проходят. [GitHub Actions](https://github.com/Timmmm69/second/actions/runs/41428213058) также прошёл на PostgreSQL 16 и 17: по 59 успешных тестов, один opt-in тест перезапуска пропущен. Ключевой сценарий покупателя и сотрудника проверен в браузере. Снимки: [docs/screenshots/mobile-review.jpg](docs/screenshots/mobile-review.jpg). Реальные Telegram iOS/Android и целевой VPS остаются отдельной приёмкой.
+Итог локальной проверки после уточнения магазина: **62/62 теста на настоящей PostgreSQL**, TypeScript/lint/build проходят. [CI в PR](https://github.com/Timmmm69/second/pull/1/checks) проверяет PostgreSQL 16 и 17; opt-in тест перезапуска БД выполняется локально. Ключевой сценарий покупателя и сотрудника проверен в браузере. Снимки: [docs/screenshots/mobile-review.jpg](docs/screenshots/mobile-review.jpg). Реальные Telegram iOS/Android и целевой VPS остаются отдельной приёмкой.
 
 ## Локальный запуск
 
