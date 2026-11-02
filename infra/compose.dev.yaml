@@ -1,0 +1,19 @@
+name: veshi-dev
+services:
+  db:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: veshi_dev
+      POSTGRES_USER: veshi_dev
+      POSTGRES_PASSWORD: local-development-only
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - dev_database:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U veshi_dev -d veshi_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+volumes:
+  dev_database:

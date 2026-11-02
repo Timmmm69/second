@@ -1,0 +1,117 @@
+name: veshi
+x-app: &app
+  image: ${APP_IMAGE:-veshi:local}
+  build:
+    context: ..
+    dockerfile: infra/Dockerfile
+  env_file: .env
+  restart: unless-stopped
+  init: true
+  environment:
+    NODE_ENV: production
+    HOST: 0.0.0.0
+    PORT: 3000
+    DATABASE_URL: postgresql://veshi:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in infra/.env}@db:5432/veshi
+    MEDIA_DIR: /data/media
+    APP_MODE: production
+  volumes:
+    - media:/data/media
+  networks: [internal, edge]
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+
+services:
+  db:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: veshi
+      POSTGRES_USER: veshi
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      TZ: UTC
+    volumes:
+      - database:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U veshi -d veshi"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  migrate:
+    <<: *app
+    command: [node, dist-server/server/migrate.js]
+    restart: "no"
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    expose: ["3000"]
+
+  worker:
+    <<: *app
+    command: [node, dist-server/server/worker.js]
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - --input-type=module
+        - -e
+        - |
+          import pg from 'pg';
+          const p=new pg.Pool({connectionString:process.env.DATABASE_URL,max:1,connectionTimeoutMillis:5000,statement_timeout:5000});
+          p.query("SELECT count(*)::int AS alive FROM jobs WHERE name='maintenance' AND last_run_at>clock_timestamp()-interval '120 seconds'").then(r=>{if(r.rows[0].alive!==1)process.exitCode=1;}).catch(()=>{process.exitCode=1;}).finally(()=>p.end());
+      interval: 30s
+      timeout: 8s
+      start_period: 60s
+      retries: 3
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [edge]
+    depends_on: [api]
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  internal:
+    internal: true
+  edge:
+
+volumes:
+  database:
+  media:
+  caddy_data:
+  caddy_config:
