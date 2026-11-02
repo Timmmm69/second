@@ -1014,6 +1014,7 @@ function Checkout() {
     [pending, setPending] = useState(() =>
       Boolean(readLocal(accountKey("checkout-operation"), null)),
     );
+  const confirmationBody = useRef<Record<string,unknown> | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { if (loaded) { window.scrollTo({top:0,behavior:"instant"}); heading.current?.focus({preventScroll:true}); } }, [step,loaded]);
   const key = useRef(
@@ -1115,10 +1116,11 @@ function Checkout() {
     setError(null);
     saveLocal(accountKey("checkout-operation"), key.current);
     try {
-      await session.flush();
+      if (!pending) await session.flush();
+      confirmationBody.current ??= { ...draft, ...session.orderMetadata(), leaseId: lease.id, termsAccepted: true, settingsVersion: lease.rules?.version };
       const order = await command<Order>(
         "/orders",
-        { ...draft, ...session.orderMetadata(), leaseId: lease.id, termsAccepted: true, settingsVersion: lease.rules?.version },
+        confirmationBody.current,
         "POST",
         key.current,
       );
@@ -1129,7 +1131,8 @@ function Checkout() {
       go(`/orders/${order.id}`);
     } catch (e) {
       setError(e);
-      if (e instanceof ApiError && e.status === 0) {
+      const uncertain = !(e instanceof ApiError) || e.status === 0 || e.status >= 500 || e.code === "IDEMPOTENCY_MISMATCH";
+      if (uncertain) {
         setPending(true);
         try {
           const op = await api<Order | { result: Order }>(
@@ -1156,6 +1159,10 @@ function Checkout() {
         setStep(1);
         key.current = operationKey();
         saveLocal(accountKey("checkout-operation"), null);
+      }
+      if (!uncertain) {
+        confirmationBody.current = null; setPending(false);
+        saveLocal(accountKey("checkout-operation"), null); key.current = operationKey();
       }
     } finally {
       setBusy(false);
@@ -1231,6 +1238,8 @@ function Checkout() {
           <Button onClick={recover} disabled={busy}>
             Проверить результат
           </Button>
+          <Button secondary onClick={submit} disabled={busy || !lease || offline}>Повторить это подтверждение</Button>
+          <p className="small-text">Повтор использует тот же ключ операции и не создаёт второе обращение.</p>
         </div>
       )}
       {step === 0 && (
@@ -1299,14 +1308,12 @@ function Checkout() {
             else requestAnimationFrame(()=> document.querySelector<HTMLInputElement>('input[aria-invalid="true"]')?.focus());
           }}
         >
-          <div className="receiving-summary"><Icon name={draft.method === "PICKUP" ? "pin" : "box"} /><div><strong>{draft.method === "PICKUP" ? "Бронь с примеркой" : methodNames[draft.method]}</strong><p className="small-text">{draft.method === "PICKUP" ? settings?.address : guide.shippingSummary}</p></div></div>
-          {demo && <p className="small-text">Заполнен вымышленный получатель. Изменения контактов остаются в памяти этой сессии; после перезагрузки снова появятся тестовые данные.</p>}
-          <p className="muted">
-            Номер нужен для связи по вашему обращению. Мы не получаем его
-            автоматически из Telegram.
-          </p>
+          <div className="receiving-summary"><Icon name={draft.method === "PICKUP" ? "pin" : "box"} /><div><strong>{draft.method === "PICKUP" ? "Бронь с примеркой" : "Доставка в пункт выдачи"}</strong><p className="small-text">{draft.method === "PICKUP" ? settings?.address : guide.shippingSummary}</p></div></div>
+          {demo && <p className="small-text">Тестовые контакты можно менять. Они хранятся до перезагрузки.</p>}
+
           <Field
             label="Телефон"
+            hint="Для связи по обращению. Telegram не передаёт номер автоматически."
             type="tel"
             autoComplete="tel"
             required
@@ -1326,7 +1333,7 @@ function Checkout() {
                 required
                 value={draft.fullName}
                 onChange={(e) => set("fullName", e.target.value)}
-                hint="Укажите ФИО получателя по требованиям перевозчика. Он может отличаться от владельца Telegram. Паспортные данные не нужны."
+                hint="Получатель может отличаться от владельца Telegram."
                 error={draft.fullName && draft.fullName.trim().split(/\s+/).length < 2 ? "Укажите фамилию и имя получателя" : fieldErrors.fullName}
               />
               <Field
@@ -1496,7 +1503,7 @@ function Checkout() {
             </Button>
             <Button
               secondary
-              disabled={busy}
+              disabled={busy || pending}
               onClick={async () => {
                 if (lease)
                   await api(`/checkout/leases/${lease.id}`, {

@@ -1809,3 +1809,5 @@ button > svg, .button > svg { flex-shrink: 0; display: block; }
  .store-visit {padding:20px; border-radius:20px;}
  .store-footer {margin-left:-16px;margin-right:-16px;border-radius:0; padding:24px 16px;}
 }
+
+.about-intro .button:not(.secondary) {background:var(--accent);color:#222;}

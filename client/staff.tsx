@@ -388,7 +388,7 @@ const initialItem = {
   storageLocation: "",
 };
 function ItemEditor({ id }: { id: string }) {
-  const { categories, go, toast, user } = useApp();
+  const { categories, go, toast, user, demo } = useApp();
   const {
     data: item,
     setData,
@@ -708,8 +708,7 @@ function ItemEditor({ id }: { id: string }) {
           }}
         />
         <p className="small-text">
-          До 12 фото по 15 МБ. Общий вид, обратная сторона, бирка и детали.
-          Геолокация удаляется сервером.
+          {demo ? "До 12 тестовых фото по 4 МБ. Фотографии остаются в вашем браузере." : "До 12 фото по 15 МБ. Общий вид, обратная сторона, бирка и детали. Геолокация удаляется сервером."}
         </p>
         {uploadStatus && <p role="status">{uploadStatus}</p>}
         {uploadFiles.length > 0 && (
