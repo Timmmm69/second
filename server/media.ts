@@ -84,7 +84,7 @@ async function writePhoto(
 const pId = z.object({ id: z.uuid() });
 async function mediaStream(filename: string) {
   try {
-    // Open before sending headers so missing files still produce a JSON 404.
+    // Open before choosing image content type so missing files produce a JSON 404.
     const file = await open(filename, "r");
     return file.createReadStream();
   } catch {
@@ -285,8 +285,9 @@ export async function registerMedia(app: FastifyInstance) {
     const a = (await pool.query("SELECT * FROM media_assets WHERE id=$1", [id]))
       .rows[0];
     assert(a, 404, "MEDIA", "Фото не найдено");
+    reply.header("Cache-Control", "private, no-store");
     const stream = await mediaStream(path.join(config.mediaDir, a.original_key));
-    reply.header("Cache-Control", "private, no-store").type("image/webp");
+    reply.type("image/webp");
     return stream;
   });
 }
@@ -323,15 +324,14 @@ export async function serveMedia(app: FastifyInstance) {
         );
       }
     }
+    reply.header(
+      "Cache-Control",
+      publicPhoto ? "public, max-age=15" : "private, no-store",
+    );
     const stream = await mediaStream(
       path.join(config.mediaDir, id, width + ".webp"),
     );
-    reply
-      .header(
-        "Cache-Control",
-        publicPhoto ? "public, max-age=15" : "private, no-store",
-      )
-      .type("image/webp");
+    reply.type("image/webp");
     return stream;
   });
 }

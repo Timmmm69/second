@@ -313,6 +313,7 @@ test("T25/T35 upload signature decode, EXIF stripped variants, retry dedup and p
       const missing = await app.inject({ url, headers: { cookie } });
       assert.equal(missing.statusCode, 404, missing.body);
       assert.equal(missing.json().code, "MEDIA_MISSING");
+      assert.equal(missing.headers["cache-control"], cookie ? "no-store" : "public, max-age=15");
     } finally {
       await rename(file + ".missing", file);
     }
