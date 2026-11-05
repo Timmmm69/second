@@ -47,6 +47,13 @@ test("production prohibits local login and missing production secrets", () => {
   );
   assert.throws(() => loadConfig({ NODE_ENV: "production" }));
 });
+test("database pool defaults to five and accepts a bounded worker override", () => {
+  const env = { APP_MODE: "local" };
+  assert.equal(loadConfig(env).databasePoolMax, 5);
+  assert.equal(loadConfig({ ...env, PG_POOL_MAX: "2" }).databasePoolMax, 2);
+  for (const value of ["", "0", "-1", "1.5", "NaN", "31"])
+    assert.throws(() => loadConfig({ ...env, PG_POOL_MAX: value }), /PG_POOL_MAX/);
+});
 test("TOTP RFC6238 vector and window", () => {
   const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
   assert.equal(totp(secret, 59000, 8), "94287082");

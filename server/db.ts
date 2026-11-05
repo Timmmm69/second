@@ -2,7 +2,7 @@ import pg from "pg";
 import { config } from "./config.js";
 export const pool = new pg.Pool({
   connectionString: config.databaseUrl,
-  max: 20,
+  max: config.databasePoolMax,
   connectionTimeoutMillis: 5000,
   statement_timeout: 15000,
 });

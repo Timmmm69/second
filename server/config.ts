@@ -36,6 +36,13 @@ export function loadConfig(env = process.env) {
     throw new Error("Development key forbidden in production");
   if (!/^[0-9a-f]{64}$/i.test(key))
     throw new Error("DATA_KEY must be 32 random bytes in hex");
+  const databasePoolMax = Number(env.PG_POOL_MAX ?? 5);
+  if (
+    !Number.isInteger(databasePoolMax) ||
+    databasePoolMax < 1 ||
+    databasePoolMax > 30
+  )
+    throw new Error("PG_POOL_MAX must be an integer between 1 and 30");
   return {
     production,
     localDev,
@@ -44,6 +51,7 @@ export function loadConfig(env = process.env) {
     databaseUrl:
       env.DATABASE_URL ??
       "postgresql://veshi:veshi_local@127.0.0.1:5432/veshi_dev",
+    databasePoolMax,
     origin: env.APP_ORIGIN ?? "http://localhost:5173",
     botToken: env.BOT_TOKEN ?? "",
     webhookSecret: env.WEBHOOK_SECRET ?? "",
