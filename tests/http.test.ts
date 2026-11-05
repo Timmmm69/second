@@ -1,7 +1,8 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID, createHmac } from "node:crypto";
-import { mkdtemp, readFile, rm, mkdir, utimes } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rename, rm, mkdir, utimes } from "node:fs/promises";
+import { setTimeout } from "node:timers/promises";
 import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
@@ -224,6 +225,16 @@ test("T25/T35 upload signature decode, EXIF stripped variants, retry dedup and p
     });
   const bad = await send(Buffer.from("<script>fake</script>"));
   assert.equal(bad.statusCode, 422, bad.body);
+  const before = (await readdir(config.mediaDir)).sort();
+  const oversized = await send(Buffer.alloc(15 * 1024 * 1024 + 1));
+  assert.equal(oversized.statusCode, 413, oversized.body);
+  assert.deepEqual((await readdir(config.mediaDir)).sort(), before);
+  const itemId = i.id;
+  i.id = key();
+  const missingItem = await send(image);
+  i.id = itemId;
+  assert.equal(missingItem.statusCode, 404, missingItem.body);
+  assert.deepEqual((await readdir(config.mediaDir)).sort(), before);
   const r = await send(image);
   assert.equal(r.statusCode, 200, r.body);
   const asset = r.json();
@@ -244,6 +255,30 @@ test("T25/T35 upload signature decode, EXIF stripped variants, retry dedup and p
     403,
   );
   assert.equal((await app.inject(`/media/${asset.id}/480`)).statusCode, 403);
+  const rotate = () => app.inject({
+    method: "PATCH", url: `/api/staff/media/${asset.id}`,
+    headers: headers(staff), payload: { rotation: 90 },
+  });
+  const rotated = await rotate();
+  assert.equal(rotated.statusCode, 200, rotated.body);
+  assert.equal(rotated.json().width, 900);
+  assert.equal(rotated.json().height, 700);
+  await pool.query(
+    "INSERT INTO inventory_claim(item_id,owner_type,owner_id) VALUES($1,'CHECKOUT',$2)",
+    [i.id, key()],
+  );
+  try {
+    assert.equal((await rotate()).statusCode, 409);
+  } finally {
+    await pool.query("DELETE FROM inventory_claim WHERE item_id=$1", [i.id]);
+  }
+  const original = await app.inject({
+    url: `/api/staff/media/${asset.id}/original`, headers: { cookie: staff },
+  });
+  assert.equal(original.statusCode, 200, original.body);
+  assert.equal(original.headers["content-type"], "image/webp");
+  assert.equal(original.headers["cache-control"], "no-store");
+  assert.deepEqual(original.rawPayload, await readFile(path.join(config.mediaDir, asset.original_key)));
   const row = (
     await pool.query("SELECT version FROM items WHERE id=$1", [i.id])
   ).rows[0];
@@ -254,7 +289,74 @@ test("T25/T35 upload signature decode, EXIF stripped variants, retry dedup and p
     payload: { version: row.version, checked: true },
   });
   assert.equal(pub.statusCode, 200, pub.body);
-  assert.equal((await app.inject(`/media/${asset.id}/480`)).statusCode, 200);
+  const publicPhoto = await app.inject(`/media/${asset.id}/480`);
+  assert.equal(publicPhoto.statusCode, 200);
+  assert.equal(publicPhoto.headers["cache-control"], "public, max-age=15");
+  assert.equal(publicPhoto.headers["content-type"], "image/webp");
+  assert.deepEqual(publicPhoto.rawPayload, await readFile(path.join(config.mediaDir, asset.id, "480.webp")));
+  for (const [column, value] of [["publication", "HIDDEN"], ["physical", "SOLD"]]) {
+    await pool.query(`UPDATE items SET ${column}=$2 WHERE id=$1`, [i.id, value]);
+    assert.equal((await app.inject(`/media/${asset.id}/480`)).statusCode, 403);
+    assert.equal((await app.inject({ url: `/media/${asset.id}/480`, headers: { cookie: buyer } })).statusCode, 403);
+    const privatePhoto = await app.inject({ url: `/media/${asset.id}/480`, headers: { cookie: staff } });
+    assert.equal(privatePhoto.statusCode, 200);
+    assert.equal(privatePhoto.headers["cache-control"], "private, no-store");
+    await pool.query("UPDATE items SET publication='PUBLISHED',physical='AVAILABLE' WHERE id=$1", [i.id]);
+  }
+  for (const [filename, url, cookie] of [
+    [path.join(asset.id, "480.webp"), `/media/${asset.id}/480`, ""],
+    [asset.original_key, `/api/staff/media/${asset.id}/original`, staff],
+  ]) {
+    const file = path.join(config.mediaDir, filename);
+    await rename(file, file + ".missing");
+    try {
+      const missing = await app.inject({ url, headers: { cookie } });
+      assert.equal(missing.statusCode, 404, missing.body);
+      assert.equal(missing.json().code, "MEDIA_MISSING");
+      assert.equal(missing.headers["cache-control"], cookie ? "no-store" : "public, max-age=15");
+    } finally {
+      await rename(file + ".missing", file);
+    }
+  }
+  assert.ok(!(await readdir(config.mediaDir)).some(name => name.includes("-stage-")));
+});
+test("upload and rotation share admission; overload is rejected before buffering or taking item locks", { timeout: 10000 }, async () => {
+  const asset = (await pool.query("SELECT * FROM media_assets WHERE state='READY' LIMIT 1")).rows[0];
+  const blocker = await pool.connect();
+  const rotate = () => app.inject({
+    method: "PATCH", url: `/api/staff/media/${asset.id}`,
+    headers: headers(staff), payload: { rotation: 90 },
+  });
+  let pending: ReturnType<typeof rotate> | undefined;
+  try {
+    await blocker.query("BEGIN");
+    await blocker.query("SELECT id FROM items WHERE id=$1 FOR UPDATE", [asset.item_id]);
+    pending = rotate();
+    // Start injection and wait until this rotation has acquired admission, then waits on our row lock.
+    const finished = Promise.resolve(pending);
+    let waiting = false;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      waiting = !!(await pool.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query='SELECT id FROM items WHERE id=$1 FOR UPDATE'")).rowCount;
+      if (waiting) break;
+      await setTimeout(10);
+    }
+    assert.ok(waiting, "rotation must be waiting for the fixture lock");
+    const rejected = await Promise.all([
+      rotate(), rotate(),
+      app.inject({ method: "POST", url: "/api/staff/media/uploads", headers: headers(staff) }),
+    ]);
+    for (const r of rejected) {
+      assert.equal(r.statusCode, 503, r.body);
+      assert.equal(r.json().code, "IMAGE_BUSY");
+    }
+    await blocker.query("ROLLBACK");
+    assert.equal((await finished).statusCode, 200);
+    assert.equal((await rotate()).statusCode, 200, "admission is released after commit");
+  } finally {
+    await blocker.query("ROLLBACK");
+    blocker.release();
+    if (pending) await pending;
+  }
 });
 test("B03 numeric/measurement/category search filters return real items, invalid range 422", async () => {
   const r = await app.inject(

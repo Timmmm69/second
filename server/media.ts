@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { mkdir, writeFile, readFile, rm, rename } from "node:fs/promises";
+import { mkdir, open, rm, rename } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import sharp from "sharp";
@@ -9,9 +9,34 @@ import { config } from "./config.js";
 import { assert, AppError } from "./errors.js";
 import { audit } from "./inventory.js";
 sharp.concurrency(1);
+// Files are replaced on rotation; don't retain native caches or stale file inputs.
+sharp.cache(false);
 export const widths = [240, 480, 960, 1600];
+let photoBusy = false;
+// No waiting queue: acquire before reading an upload or opening a transaction.
+async function withPhotoProcessing<T>(work: () => Promise<T>) {
+  assert(
+    !photoBusy,
+    503,
+    "IMAGE_BUSY",
+    "Обрабатывается другое фото. Повторите через несколько секунд",
+  );
+  photoBusy = true;
+  try {
+    return await work();
+  } finally {
+    photoBusy = false;
+  }
+}
 export async function processPhoto(
-  input: Buffer,
+  input: Buffer | string,
+  target: string,
+  rotation = 0,
+) {
+  return withPhotoProcessing(() => writePhoto(input, target, rotation));
+}
+async function writePhoto(
+  input: Buffer | string,
   target: string,
   rotation = 0,
 ) {
@@ -36,14 +61,13 @@ export async function processPhoto(
   try {
     let image = sharp(input, { limitInputPixels: 40000000 }).rotate();
     if (rotation) image = image.rotate(rotation);
-    const clean = await image
+    const original = path.join(stage, "original.webp");
+    const meta = await image
       .toColorspace("srgb")
       .webp({ quality: 94 })
-      .toBuffer();
-    await writeFile(path.join(stage, "original.webp"), clean);
-    const meta = await sharp(clean).metadata();
+      .toFile(original);
     for (const w of widths)
-      await sharp(clean)
+      await sharp(original)
         .resize({ width: w, withoutEnlargement: true })
         .webp({ quality: w < 500 ? 80 : 88 })
         .toFile(path.join(stage, w + ".webp"));
@@ -58,11 +82,20 @@ export async function processPhoto(
   }
 }
 const pId = z.object({ id: z.uuid() });
+async function mediaStream(filename: string) {
+  try {
+    // Open before choosing image content type so missing files produce a JSON 404.
+    const file = await open(filename, "r");
+    return file.createReadStream();
+  } catch {
+    throw new AppError(404, "MEDIA_MISSING", "Фото временно недоступно");
+  }
+}
 export async function registerMedia(app: FastifyInstance) {
   app.post(
     "/staff/media/uploads",
     { config: { rateLimit: { max: 24, timeWindow: "1 minute" } } },
-    async (req) => {
+    async (req) => withPhotoProcessing(async () => {
       const file = await req.file({
         limits: { fileSize: 15 * 1024 * 1024, files: 1, fields: 2 },
       });
@@ -91,9 +124,9 @@ export async function registerMedia(app: FastifyInstance) {
       ).rows[0];
       if (duplicate) return { ...duplicate, url: duplicate.variants["480"] };
       const id = randomUUID(),
-        target = path.join(config.mediaDir, id),
-        meta = await processPhoto(buf, target);
+        target = path.join(config.mediaDir, id);
       try {
+        const meta = await writePhoto(buf, target);
         const asset = await tx(async (c) => {
           await c.query("SELECT id FROM items WHERE id=$1 FOR UPDATE", [
             itemId,
@@ -148,7 +181,7 @@ export async function registerMedia(app: FastifyInstance) {
         await rm(target, { recursive: true, force: true });
         throw e;
       }
-    },
+    }),
   );
   app.patch("/staff/media/:id", async (req) => {
     const { id } = pId.parse(req.params),
@@ -163,60 +196,63 @@ export async function registerMedia(app: FastifyInstance) {
             .optional(),
         })
         .parse(req.body);
-    const asset = (
-      await pool.query("SELECT * FROM media_assets WHERE id=$1", [id])
-    ).rows[0];
-    assert(asset, 404, "MEDIA", "Фото не найдено");
-    // Serialize metadata and image transformation against other edits and item reservation.
-    return tx(async (c) => {
-      await c.query("SELECT id FROM items WHERE id=$1 FOR UPDATE", [
-        asset.item_id,
-      ]);
-      assert(
-        !(
-          await c.query("SELECT 1 FROM inventory_claim WHERE item_id=$1", [
-            asset.item_id,
-          ])
-        ).rowCount,
-        409,
-        "CLAIMED",
-        "Нельзя менять фото закреплённой вещи",
-      );
-      let meta: { width: number; height: number } | undefined;
-      if (body.rotation)
-        meta = await processPhoto(
-          await readFile(path.join(config.mediaDir, asset.original_key)),
-          path.join(config.mediaDir, id),
-          body.rotation,
-        );
-      if (body.position !== undefined) {
-        const current = (
-          await c.query(
-            "SELECT id FROM media_assets WHERE item_id=$1 AND state='READY' ORDER BY position,created_at",
-            [asset.item_id],
-          )
-        ).rows
-          .map((r) => r.id)
-          .filter((v) => v !== id);
-        current.splice(Math.min(body.position, current.length), 0, id);
-        for (let position = 0; position < current.length; position++)
-          await c.query("UPDATE media_assets SET position=$2 WHERE id=$1", [
-            current[position],
-            position,
-          ]);
-        body.position = current.indexOf(id);
-      }
-      const row = (
-        await c.query(
-          "UPDATE media_assets SET role=coalesce($2,role),position=coalesce($3,position),width=coalesce($4,width),height=coalesce($5,height) WHERE id=$1 RETURNING *",
-          [id, body.role, body.position, meta?.width, meta?.height],
-        )
+    const edit = async () => {
+      const asset = (
+        await pool.query("SELECT * FROM media_assets WHERE id=$1", [id])
       ).rows[0];
-      await audit(c, req.actor.id, "MEDIA_EDIT", "ITEM", asset.item_id, {
-        mediaId: id,
+      assert(asset, 404, "MEDIA", "Фото не найдено");
+      // Serialize metadata and image transformation against other edits and item reservation.
+      return tx(async (c) => {
+        await c.query("SELECT id FROM items WHERE id=$1 FOR UPDATE", [
+          asset.item_id,
+        ]);
+        assert(
+          !(
+            await c.query("SELECT 1 FROM inventory_claim WHERE item_id=$1", [
+              asset.item_id,
+            ])
+          ).rowCount,
+          409,
+          "CLAIMED",
+          "Нельзя менять фото закреплённой вещи",
+        );
+        let meta: { width: number; height: number } | undefined;
+        if (body.rotation)
+          meta = await writePhoto(
+            path.join(config.mediaDir, asset.original_key),
+            path.join(config.mediaDir, id),
+            body.rotation,
+          );
+        if (body.position !== undefined) {
+          const current = (
+            await c.query(
+              "SELECT id FROM media_assets WHERE item_id=$1 AND state='READY' ORDER BY position,created_at",
+              [asset.item_id],
+            )
+          ).rows
+            .map((r) => r.id)
+            .filter((v) => v !== id);
+          current.splice(Math.min(body.position, current.length), 0, id);
+          for (let position = 0; position < current.length; position++)
+            await c.query("UPDATE media_assets SET position=$2 WHERE id=$1", [
+              current[position],
+              position,
+            ]);
+          body.position = current.indexOf(id);
+        }
+        const row = (
+          await c.query(
+            "UPDATE media_assets SET role=coalesce($2,role),position=coalesce($3,position),width=coalesce($4,width),height=coalesce($5,height) WHERE id=$1 RETURNING *",
+            [id, body.role, body.position, meta?.width, meta?.height],
+          )
+        ).rows[0];
+        await audit(c, req.actor.id, "MEDIA_EDIT", "ITEM", asset.item_id, {
+          mediaId: id,
+        });
+        return { ...row, url: row.variants["480"] };
       });
-      return { ...row, url: row.variants["480"] };
-    });
+    };
+    return body.rotation ? withPhotoProcessing(edit) : edit();
   });
   app.delete("/staff/media/:id", async (req) => {
     const { id } = pId.parse(req.params);
@@ -249,8 +285,10 @@ export async function registerMedia(app: FastifyInstance) {
     const a = (await pool.query("SELECT * FROM media_assets WHERE id=$1", [id]))
       .rows[0];
     assert(a, 404, "MEDIA", "Фото не найдено");
-    reply.header("Cache-Control", "private, no-store").type("image/webp");
-    return readFile(path.join(config.mediaDir, a.original_key));
+    reply.header("Cache-Control", "private, no-store");
+    const stream = await mediaStream(path.join(config.mediaDir, a.original_key));
+    reply.type("image/webp");
+    return stream;
   });
 }
 export async function serveMedia(app: FastifyInstance) {
@@ -286,16 +324,14 @@ export async function serveMedia(app: FastifyInstance) {
         );
       }
     }
-    reply
-      .header(
-        "Cache-Control",
-        publicPhoto ? "public, max-age=15" : "private, no-store",
-      )
-      .type("image/webp");
-    try {
-      return await readFile(path.join(config.mediaDir, id, width + ".webp"));
-    } catch {
-      throw new AppError(404, "MEDIA_MISSING", "Фото временно недоступно");
-    }
+    reply.header(
+      "Cache-Control",
+      publicPhoto ? "public, max-age=15" : "private, no-store",
+    );
+    const stream = await mediaStream(
+      path.join(config.mediaDir, id, width + ".webp"),
+    );
+    reply.type("image/webp");
+    return stream;
   });
 }
