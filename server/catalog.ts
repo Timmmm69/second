@@ -33,12 +33,25 @@ const itemInput = z
   .strict()
   .refine(b => !b.hasDefect || b.defectDescription.length > 0, { message: "Опишите конкретный дефект", path: ["defectDescription"] });
 export async function mapItem(row: any, staff = false) {
+  return (await mapItems([row], staff))[0];
+}
+async function mapItems(rows: any[], staff = false) {
+  if (!rows.length) return [];
   const assets = (
     await pool.query(
-      "SELECT id,width,height,variants,role,position FROM media_assets WHERE item_id=$1 AND state='READY' ORDER BY position,created_at",
-      [row.id],
+      "SELECT item_id,id,width,height,variants,role,position FROM media_assets WHERE item_id=ANY($1::uuid[]) AND state='READY' ORDER BY item_id,position,created_at",
+      [rows.map((row) => row.id)],
     )
   ).rows;
+  const byItem = new Map<string, any[]>();
+  for (const { item_id, ...asset } of assets) {
+    const media = byItem.get(item_id) ?? [];
+    media.push(asset);
+    byItem.set(item_id, media);
+  }
+  return rows.map((row) => itemWithMedia(row, byItem.get(row.id) ?? [], staff));
+}
+function itemWithMedia(row: any, assets: any[], staff: boolean) {
   return {
     id: row.id,
     sku: row.sku,
@@ -69,7 +82,7 @@ export async function readItems(itemIds: string[], staff = false) {
     `SELECT i.*, (EXISTS(SELECT 1 FROM inventory_claim c WHERE c.item_id=i.id AND (c.owner_type<>'CHECKOUT' OR c.expires_at>clock_timestamp())) OR EXISTS(SELECT 1 FROM operation_issues oi WHERE oi.item_id=i.id AND oi.state='OPEN' AND oi.kind IN ('NOT_FOUND','QUALITY','QUALITY_CHECK','INSPECTION','RETURN_INSPECTION'))) AS claimed FROM items i WHERE i.id=ANY($1::uuid[])`,
     [itemIds],
   );
-  const items = await Promise.all(rows.map((r) => mapItem(r, staff)));
+  const items = await mapItems(rows, staff);
   return itemIds.map((id) => items.find((i) => i.id === id)).filter(Boolean);
 }
 
@@ -173,7 +186,7 @@ export async function registerCatalog(app: FastifyInstance) {
       params,
     );
     return {
-      items: await Promise.all(rows.slice(0, 40).map((r) => mapItem(r))),
+      items: await mapItems(rows.slice(0, 40)),
       nextCursor:
         rows.length > 40
           ? Buffer.from(String(offset + 40)).toString("base64url")
@@ -284,7 +297,7 @@ export async function registerCatalog(app: FastifyInstance) {
       "SELECT i.*,EXISTS(SELECT 1 FROM inventory_claim c WHERE c.item_id=i.id) claimed FROM items i WHERE ($1='' OR i.title ILIKE $1 OR i.sku ILIKE $1) AND ($2='' OR i.publication=$2 OR i.physical=$2) ORDER BY i.created_at DESC LIMIT 300",
       [q.q ? "%" + q.q + "%" : "", q.state ?? ""],
     );
-    return { items: await Promise.all(rows.map((r) => mapItem(r, true))) };
+    return { items: await mapItems(rows, true) };
   });
   app.get("/staff/items/:id", async (req) => {
     const { id } = uuidParam.parse(req.params),
