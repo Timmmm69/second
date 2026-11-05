@@ -4,7 +4,7 @@ import type { PoolClient } from "pg";
 import { tx } from "./db.js";
 import { config } from "./config.js";
 import { expireOrder, getSettings } from "./orders.js";
-import { lockItems, releaseClaims, issue, event, audit } from "./inventory.js";
+import { lockItems, releaseClaims, issue, event } from "./inventory.js";
 import { localDate, hoursFor, atLocal } from "./calendar.js";
 import { decrypt } from "./crypto.js";
 export type DeliveryResult = {
@@ -529,7 +529,6 @@ export async function tick(
     await c.query(
       "INSERT INTO jobs(name,last_run_at) VALUES('maintenance',clock_timestamp()) ON CONFLICT(name) DO UPDATE SET last_run_at=clock_timestamp()",
     );
-    await audit(c, null, "worker.tick", "job", "maintenance");
   });
   await sweepOrphanMedia();
   if (!options.skipOutbox) await processOutbox(options.deliver);

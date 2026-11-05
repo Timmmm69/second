@@ -138,6 +138,66 @@ after(async () => {
   await app.close();
   await pool.end();
 });
+test("maintenance keeps heartbeat, lag detection and ten-minute contact cleanup without tick audit noise", async () => {
+  const expired = users[100], fresh = users[101];
+  await pool.query(
+    "UPDATE users SET contact_phone_enc='synthetic',contact_phone_at=clock_timestamp()-interval '11 minutes' WHERE id=$1",
+    [expired.id],
+  );
+  await pool.query(
+    "UPDATE users SET contact_phone_enc='synthetic',contact_phone_at=clock_timestamp()-interval '1 minute' WHERE id=$1",
+    [fresh.id],
+  );
+  await pool.query(
+    "INSERT INTO jobs(name,last_run_at) VALUES('maintenance',clock_timestamp()-interval '3 minutes') ON CONFLICT(name) DO UPDATE SET last_run_at=excluded.last_run_at",
+  );
+  const auditCount = (await pool.query(
+    "SELECT count(*)::int AS n FROM audit_events WHERE command='worker.tick'",
+  )).rows[0].n;
+  await tick({ skipOutbox: true });
+  const first = (await pool.query(
+    "SELECT last_run_at FROM jobs WHERE name='maintenance'",
+  )).rows[0].last_run_at;
+  assert.ok(Date.now() - first.getTime() < 5000);
+  assert.equal((await pool.query(
+    "SELECT count(*)::int AS n FROM operation_issues WHERE kind='WORKER_LAG' AND entity_id=$1 AND state='OPEN'",
+    [owner.id],
+  )).rows[0].n, 1);
+  assert.equal((await pool.query(
+    "SELECT contact_phone_enc FROM users WHERE id=$1", [expired.id],
+  )).rows[0].contact_phone_enc, null);
+  assert.equal((await pool.query(
+    "SELECT contact_phone_enc FROM users WHERE id=$1", [fresh.id],
+  )).rows[0].contact_phone_enc, 'synthetic');
+  await tick({ skipOutbox: true });
+  const second = (await pool.query(
+    "SELECT last_run_at FROM jobs WHERE name='maintenance'",
+  )).rows[0].last_run_at;
+  assert.ok(second > first);
+  assert.equal((await pool.query(
+    "SELECT count(*)::int AS n FROM audit_events WHERE command='worker.tick'",
+  )).rows[0].n, auditCount);
+  assert.equal((await pool.query(
+    "SELECT count(*)::int AS n FROM operation_issues WHERE kind='WORKER_LAG' AND entity_id=$1 AND state='OPEN'",
+    [owner.id],
+  )).rows[0].n, 1);
+});
+test("fifteen concurrent independent buyers complete with the small connection pool", async () => {
+  const itemIds = await Promise.all(Array.from({ length: 15 }, () => item()));
+  const orders = await Promise.all(itemIds.map(async (id, n) => {
+    const actor = users[n + 4];
+    const lease = await createLease(actor, randomUUID(), { itemIds: [id] });
+    return confirmOrder(actor, randomUUID(), {
+      leaseId: lease.id,
+      method: "PICKUP",
+      phone: "+375291234567",
+      termsAccepted: true,
+    });
+  }));
+  assert.equal(new Set(orders.map((order) => order.id)).size, 15);
+  assert.ok(orders.every((order) => order.status === "CHECKING"));
+  assert.ok(pool.totalCount <= 5);
+});
 test("T03 real PostgreSQL: 100 buyers race one SKU, exactly one claim", async () => {
   const id = await item();
   const results = await Promise.allSettled(

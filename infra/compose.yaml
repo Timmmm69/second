@@ -7,13 +7,14 @@ x-app: &app
   env_file: .env
   restart: unless-stopped
   init: true
-  environment:
+  environment: &app-environment
     NODE_ENV: production
     HOST: 0.0.0.0
     PORT: 3000
     DATABASE_URL: postgresql://veshi:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in infra/.env}@db:5432/veshi
     MEDIA_DIR: /data/media
     APP_MODE: production
+    PG_POOL_MAX: "5"
   volumes:
     - media:/data/media
   networks: [internal, edge]
@@ -28,6 +29,17 @@ x-app: &app
 services:
   db:
     image: postgres:17-bookworm
+    # Small VPS; maintenance_work_mem also bounds each autovacuum worker.
+    command:
+      - postgres
+      - -c
+      - max_connections=30
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=16MB
     restart: unless-stopped
     environment:
       POSTGRES_DB: veshi
@@ -67,6 +79,9 @@ services:
 
   worker:
     <<: *app
+    environment:
+      <<: *app-environment
+      PG_POOL_MAX: "2"
     command: [node, dist-server/server/worker.js]
     healthcheck:
       test:
