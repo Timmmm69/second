@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo, useSyncExternalStore, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, useMemo, useSyncExternalStore, type FormEvent } from "react";
 import {
   api,
   ApiError,
@@ -241,6 +241,15 @@ function Catalog() {
     (!draft.minMeasure ||
       !draft.maxMeasure ||
       Number(draft.minMeasure) <= Number(draft.maxMeasure));
+  const searchId = useId();
+  const measurementOptions = [
+    { value: "", label: "Без фильтра по замеру" },
+    ...(categories.find((c) => c.id === draft.category)?.measurements ||
+      Object.keys(measurementNames)).map((key) => ({
+      value: key,
+      label: measurementNames[key] || key,
+    })),
+  ];
   const appliedCount = Object.entries(filters).filter(
     ([k, v]) => !["q", "sort"].includes(k) && v,
   ).length;
@@ -248,28 +257,28 @@ function Catalog() {
     <div className="page catalog-page">
       <p className="catalog-kicker">Секонд-хенд · Минск</p>
       <div className="search-row">
-        <label className="search-pill">
+        <div className="search-pill">
           <Icon name="search" />
-          <span>
-            <strong>Что ищем?</strong>
+          <div>
+            <label htmlFor={searchId}>Что ищем?</label>
             <input
+              id={searchId}
               type="search"
               placeholder="Название, бренд, артикул"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              aria-label="Поиск вещей"
             />
-          </span>
+          </div>
           {q && (
             <button
-              className="icon-button small"
+              className="icon-button search-clear"
               aria-label="Очистить поиск"
               onClick={() => setQ("")}
             >
               <Icon name="close" size={18} />
             </button>
           )}
-        </label>
+        </div>
         <button
           className="search-cta"
           aria-label="Найти вещи"
@@ -426,40 +435,32 @@ function Catalog() {
             <Select
               label="Сначала показывать"
               value={draft.sort || "new"}
-              onChange={(e) =>
-                setDraft((v) => ({ ...v, sort: e.target.value }))
-              }
-            >
-              <option value="new">Новые поступления</option>
-              <option value="price_asc">Дешевле</option>
-              <option value="price_desc">Дороже</option>
-            </Select>
+              onValueChange={(sort) => setDraft((v) => ({ ...v, sort }))}
+              options={[
+                { value: "new", label: "Новые поступления" },
+                { value: "price_asc", label: "Дешевле" },
+                { value: "price_desc", label: "Дороже" },
+              ]}
+            />
             <Select
               label="Категория"
               value={draft.category || ""}
-              onChange={(e) =>
-                setDraft((v) => ({ ...v, category: e.target.value }))
-              }
-            >
-              <option value="">Все категории</option>
-              {categories.map((c) => (
-                <option value={c.id} key={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
+              onValueChange={(category) => setDraft((v) => ({ ...v, category }))}
+              searchPlaceholder="Найти категорию"
+              options={[
+                { value: "", label: "Все категории" },
+                ...categories.map((c) => ({ value: c.id, label: c.name })),
+              ]}
+            />
             <Select
               label="Назначение"
               value={draft.audience || ""}
-              onChange={(e) =>
-                setDraft((v) => ({ ...v, audience: e.target.value }))
-              }
-            >
-              <option value="">Любое</option>
-              {["Женское", "Мужское", "Унисекс", "Детское"].map((a) => (
-                <option key={a}>{a}</option>
-              ))}
-            </Select>
+              onValueChange={(audience) => setDraft((v) => ({ ...v, audience }))}
+              options={[
+                { value: "", label: "Любое" },
+                ...["Женское", "Мужское", "Унисекс", "Детское"].map((value) => ({ value, label: value })),
+              ]}
+            />
             <div className="form-pair">
               <Field
                 label="Цена от, BYN"
@@ -486,15 +487,12 @@ function Catalog() {
               <Select
                 label="Система размера"
                 value={draft.sizeSystem || ""}
-                onChange={(e) =>
-                  setDraft((v) => ({ ...v, sizeSystem: e.target.value }))
-                }
-              >
-                <option value="">Любая</option>
-                {["INT", "EU", "RU", "US", "Без бирки"].map((a) => (
-                  <option key={a}>{a}</option>
-                ))}
-              </Select>
+                onValueChange={(sizeSystem) => setDraft((v) => ({ ...v, sizeSystem }))}
+                options={[
+                  { value: "", label: "Любая" },
+                  ...["INT", "EU", "RU", "US", "Без бирки"].map((value) => ({ value, label: value })),
+                ]}
+              />
               <Field
                 label="Размер на бирке"
                 value={draft.sizeLabel || ""}
@@ -540,20 +538,10 @@ function Catalog() {
             <Select
               label="Фактический замер"
               value={draft.measurement || ""}
-              onChange={(e) =>
-                setDraft((v) => ({ ...v, measurement: e.target.value }))
-              }
-            >
-              <option value="">Без фильтра по замеру</option>
-              {(
-                categories.find((c) => c.id === draft.category)?.measurements ||
-                Object.keys(measurementNames)
-              ).map((key) => (
-                <option key={key} value={key}>
-                  {measurementNames[key] || key}
-                </option>
-              ))}
-            </Select>
+              onValueChange={(measurement) => setDraft((v) => ({ ...v, measurement }))}
+              searchPlaceholder={measurementOptions.length >= 7 ? "Найти замер" : undefined}
+              options={measurementOptions}
+            />
             {draft.measurement && (
               <>
                 <div className="form-pair">
