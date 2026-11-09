@@ -1,12 +1,14 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useId,
   type ReactNode,
   type InputHTMLAttributes,
-  type SelectHTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type TextareaHTMLAttributes,
 } from "react";
 import { ApiError, api } from "./api";
 import type { Media } from "./types";
@@ -31,6 +33,7 @@ export function Icon({ name, size = 22 }: { name: string; size?: number }) {
     ),
     back: <path d="m15 5-7 7 7 7" />,
     next: <path d="m9 5 7 7-7 7" />,
+    down: <path d="m6 9 6 6 6-6" />,
     close: <path d="m6 6 12 12M18 6 6 18" />,
     filter: (
       <>
@@ -154,78 +157,338 @@ export function Button({
     </button>
   );
 }
-export function Field({
+type FieldLabel = { label: string; error?: string; hint?: string };
+
+function FieldFrame({
+  id,
   label,
-  error,
   hint,
-  ...props
-}: {
-  label: string;
-  error?: string;
-  hint?: string;
-} & InputHTMLAttributes<HTMLInputElement>) {
-  const automaticId = useId();
-  const id = props.id || automaticId;
+  error,
+  children,
+}: FieldLabel & { id: string; children: ReactNode }) {
   return (
-    <label className="field" htmlFor={id}>
-      <span>{label}</span>
-      <input
-        {...props}
-        id={id}
-        aria-invalid={Boolean(error)}
-        aria-describedby={
-          error ? `${id}-error` : hint ? `${id}-hint` : undefined
-        }
-      />
+    <div className="field">
+      <label id={`${id}-label`} htmlFor={id}>{label}</label>
+      {children}
       {hint && <small id={`${id}-hint`}>{hint}</small>}
       {error && (
         <span role="alert" className="field-error" id={`${id}-error`}>
           {error}
         </span>
       )}
-    </label>
+    </div>
   );
 }
+
+function fieldDescription(id: string, hint?: string, error?: string, extra?: string) {
+  return [extra, hint && `${id}-hint`, error && `${id}-error`].filter(Boolean).join(" ") || undefined;
+}
+
+export function Field({
+  label,
+  error,
+  hint,
+  id: providedId,
+  className = "",
+  ...props
+}: FieldLabel & InputHTMLAttributes<HTMLInputElement>) {
+  const automaticId = useId();
+  const id = providedId || automaticId;
+  return (
+    <FieldFrame id={id} label={label} hint={hint} error={error}>
+      <input
+        {...props}
+        id={id}
+        className={`field-control ${className}`}
+        aria-invalid={error ? true : props["aria-invalid"]}
+        aria-describedby={fieldDescription(id, hint, error, props["aria-describedby"])}
+      />
+    </FieldFrame>
+  );
+}
+
+type SelectOption = { value: string; label: string };
+
+function searchText(text: string) {
+  return text.trim().toLocaleLowerCase("ru").replaceAll("ё", "е");
+}
+
 export function Select({
   label,
-  children,
-  ...props
+  value,
+  options,
+  onValueChange,
+  searchPlaceholder,
+  disabled = false,
 }: {
   label: string;
-  children: ReactNode;
-} & SelectHTMLAttributes<HTMLSelectElement>) {
+  value: string;
+  options: readonly SelectOption[];
+  onValueChange: (value: string) => void;
+  searchPlaceholder?: string;
+  disabled?: boolean;
+}) {
+  const id = useId();
+  const listId = `${id}-list`;
+  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const search = useRef<HTMLInputElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const focusSearch = useRef(false);
+  const [expanded, setExpanded] = useState(false);
+  const [query, setQuery] = useState("");
+  const [activeValue, setActiveValue] = useState<string | null>(null);
+  const open = expanded && !disabled;
+  const nativePopover = typeof HTMLElement.prototype.showPopover === "function";
+  const selected = options.find((option) => option.value === value);
+  const filter = searchText(query);
+  const visible = searchPlaceholder && filter
+    ? options.filter((option) => searchText(option.label).includes(filter))
+    : options;
+  const activeIndex = visible.findIndex((option) => option.value === activeValue);
+  const activeId = open && activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined;
+
+  const close = useCallback(() => setExpanded(false), []);
+
+  useLayoutEffect(() => {
+    const anchor = trigger.current;
+    const popup = panel.current;
+    if (!anchor || !popup) return;
+    if (!open) {
+      if (nativePopover && popup.matches(":popover-open")) popup.hidePopover();
+      return;
+    }
+
+    const viewport = window.visualViewport;
+    const place = () => {
+      const rect = anchor.getBoundingClientRect();
+      const gutter = 8;
+      const gap = 6;
+      const left = (viewport?.offsetLeft ?? 0) + gutter;
+      const right = left + (viewport?.width ?? document.documentElement.clientWidth) - 2 * gutter;
+      const top = (viewport?.offsetTop ?? 0) + gutter;
+      const bottom = top + (viewport?.height ?? window.innerHeight) - 2 * gutter;
+      const width = Math.min(Math.max(rect.width, 200), right - left);
+      const below = bottom - rect.bottom - gap;
+      const above = rect.top - gap - top;
+      const desired = Math.min(308, 14 + (searchPlaceholder ? 54 : 0) + options.length * 44);
+      const flip = below < desired && above > below;
+      // Keep search and at least one row usable when the keyboard leaves little room.
+      const height = Math.min(bottom - top, Math.max(Math.min(desired, 118), flip ? above : below));
+      const edge = flip
+        ? Math.max(top + height, Math.min(rect.top - gap, bottom))
+        : Math.min(bottom - height, Math.max(rect.bottom + gap, top));
+      popup.dataset.above = String(flip);
+      Object.assign(popup.style, {
+        left: `${Math.max(left, Math.min(rect.left, right - width))}px`,
+        top: `${edge}px`,
+        width: `${width}px`,
+        maxHeight: `${Math.min(height, 308)}px`,
+      });
+    };
+    place();
+    if (nativePopover && !popup.matches(":popover-open")) popup.showPopover();
+    if (focusSearch.current) {
+      search.current?.focus({ preventScroll: true });
+      focusSearch.current = false;
+    }
+    const dismiss = (event: PointerEvent) => {
+      if (event.target instanceof Node && !root.current?.contains(event.target)) close();
+    };
+    const onScroll = (event: Event) => {
+      if (!(event.target instanceof Node && popup.contains(event.target))) place();
+    };
+    document.addEventListener("pointerdown", dismiss, true);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", onScroll, true);
+    viewport?.addEventListener("resize", place);
+    viewport?.addEventListener("scroll", place);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss, true);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", onScroll, true);
+      viewport?.removeEventListener("resize", place);
+      viewport?.removeEventListener("scroll", place);
+    };
+  }, [open, options.length, searchPlaceholder, nativePopover, close]);
+
+  useLayoutEffect(() => {
+    const rows = list.current;
+    const option = rows?.children[activeIndex];
+    if (!open || !rows || !option) return;
+    const view = rows.getBoundingClientRect();
+    const row = option.getBoundingClientRect();
+    if (row.top < view.top) rows.scrollTop += row.top - view.top;
+    else if (row.bottom > view.bottom) rows.scrollTop += row.bottom - view.bottom;
+  }, [open, activeIndex]);
+
+  function show(key?: "ArrowDown" | "ArrowUp", keyboard = false) {
+    setQuery("");
+    setActiveValue(selected?.value ?? (key === "ArrowUp" ? options.at(-1)?.value : options[0]?.value) ?? null);
+    focusSearch.current = keyboard && Boolean(searchPlaceholder);
+    setExpanded(true);
+  }
+
+  function choose(option: SelectOption) {
+    trigger.current?.focus({ preventScroll: true });
+    close();
+    if (option.value !== value) onValueChange(option.value);
+  }
+
+  function handleKey(event: ReactKeyboardEvent<HTMLElement>) {
+    const key = event.key;
+    const isSearch = event.target === search.current;
+    if (key === "Escape" && open) {
+      event.preventDefault();
+      event.stopPropagation();
+      trigger.current?.focus({ preventScroll: true });
+      close();
+    } else if (key === "ArrowDown" || key === "ArrowUp") {
+      event.preventDefault();
+      if (!open) {
+        show(key, true);
+        return;
+      }
+      if (!isSearch && searchPlaceholder) search.current?.focus({ preventScroll: true });
+      const step = key === "ArrowDown" ? 1 : -1;
+      const next = activeIndex < 0
+        ? (step > 0 ? 0 : visible.length - 1)
+        : Math.max(0, Math.min(visible.length - 1, activeIndex + step));
+      setActiveValue(visible[next]?.value ?? null);
+    } else if (open && !isSearch && (key === "Home" || key === "End")) {
+      event.preventDefault();
+      setActiveValue((key === "Home" ? visible[0] : visible.at(-1))?.value ?? null);
+    } else if (open && (isSearch || !searchPlaceholder) && !event.nativeEvent.isComposing &&
+      (key === "Enter" || (!isSearch && key === " "))) {
+      event.preventDefault();
+      const option = visible[activeIndex] ?? visible[0];
+      if (option) choose(option);
+    }
+  }
+
   return (
-    <label className="field">
-      <span>{label}</span>
-      <select {...props}>{children}</select>
-    </label>
+    <FieldFrame id={id} label={label}>
+      <div
+        className="select-control"
+        ref={root}
+        onKeyDown={handleKey}
+        onBlur={(event) => {
+          if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) close();
+        }}
+      >
+        <button
+          ref={trigger}
+          id={id}
+          type="button"
+          className="field-control select-trigger"
+          role={searchPlaceholder ? undefined : "combobox"}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-controls={listId}
+          aria-activedescendant={searchPlaceholder ? undefined : activeId}
+          aria-labelledby={`${id}-label ${id}-value`}
+          disabled={disabled || !options.length}
+          onClick={(event) => {
+            if (open) close();
+            else {
+              event.currentTarget.focus({ preventScroll: true });
+              show(undefined, event.detail === 0);
+            }
+          }}
+        >
+          <span id={`${id}-value`} data-placeholder={!selected && !value ? "" : undefined}>
+            {selected?.label ?? (value || "Выберите вариант")}
+          </span>
+          <Icon name="down" size={18} />
+        </button>
+        <div
+          ref={panel}
+          className="select-panel"
+          popover={nativePopover ? "manual" : undefined}
+          data-fallback={!nativePopover ? "" : undefined}
+          data-open={open ? "" : undefined}
+          aria-hidden={!open || undefined}
+          inert={!open}
+        >
+          {searchPlaceholder && (
+            <div className="select-search">
+              <Icon name="search" size={18} />
+              <input
+                ref={search}
+                type="search"
+                role="combobox"
+                className="field-control"
+                aria-label={searchPlaceholder}
+                aria-autocomplete="list"
+                aria-expanded={open}
+                aria-controls={listId}
+                aria-activedescendant={activeId}
+                placeholder={searchPlaceholder}
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setActiveValue(null);
+                  if (list.current) list.current.scrollTop = 0;
+                }}
+              />
+            </div>
+          )}
+          <div className="select-options" id={listId} role="listbox" aria-labelledby={`${id}-label`} ref={list}>
+            {visible.map((option, index) => (
+              <div
+                key={option.value}
+                id={`${listId}-${index}`}
+                role="option"
+                aria-selected={option.value === value}
+                data-active={index === activeIndex ? "" : undefined}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => choose(option)}
+              >
+                <span>{option.label}</span>
+                {option.value === value && <Icon name="check" size={18} />}
+              </div>
+            ))}
+          </div>
+          {!visible.length && <p className="select-empty" role="status">Ничего не найдено. Попробуйте другой запрос.</p>}
+        </div>
+      </div>
+    </FieldFrame>
   );
 }
+
 export function Textarea({
   label,
   value,
   onChange,
   rows = 4,
   hint,
-}: {
-  label: string;
+  error,
+  id: providedId,
+  className = "",
+  ...props
+}: FieldLabel & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChange"> & {
   value: string;
-  onChange: (v: string) => void;
-  rows?: number;
-  hint?: string;
+  onChange: (value: string) => void;
 }) {
+  const automaticId = useId();
+  const id = providedId || automaticId;
   return (
-    <label className="field">
-      <span>{label}</span>
+    <FieldFrame id={id} label={label} hint={hint} error={error}>
       <textarea
+        {...props}
+        id={id}
+        className={`field-control ${className}`}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(event) => onChange(event.target.value)}
         rows={rows}
+        aria-invalid={error ? true : props["aria-invalid"]}
+        aria-describedby={fieldDescription(id, hint, error, props["aria-describedby"])}
       />
-      {hint && <small>{hint}</small>}
-    </label>
+    </FieldFrame>
   );
 }
+
 export function ErrorBox({
   error,
   retry,
@@ -377,16 +640,32 @@ export function Sheet({
     const prev = document.activeElement as HTMLElement;
     const old = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    const backdrop = ref.current?.parentElement;
+    const viewport = window.visualViewport;
+    const syncViewport = () => {
+      if (!backdrop || !viewport) return;
+      const top = viewport.scale === 1 ? viewport.offsetTop : 0;
+      const bottom = viewport.scale === 1 ? Math.max(0, window.innerHeight - viewport.height - top) : 0;
+      backdrop.style.setProperty("--sheet-top", `${top}px`);
+      backdrop.style.setProperty("--sheet-bottom", `${bottom}px`);
+    };
+    syncViewport();
+    viewport?.addEventListener("resize", syncViewport);
+    viewport?.addEventListener("scroll", syncViewport);
     ref.current?.focus();
     const handler = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
       if (e.key === "Escape") close();
       if (e.key === "Tab") {
-        const els = ref.current?.querySelectorAll<HTMLElement>(
-          "button,input,select,textarea,a[href]",
+        const elements = ref.current?.querySelectorAll<HTMLElement>(
+          "button,input,select,textarea,a[href],summary,[tabindex]",
         );
-        if (!els?.length) return;
-        const first = els[0],
-          last = els[els.length - 1];
+        const tabbable = Array.from(elements ?? []).filter((element) =>
+          element.tabIndex >= 0 && !element.matches(":disabled") &&
+          !element.closest("[inert]") && element.getClientRects().length > 0,
+        );
+        if (!tabbable.length) return;
+        const first = tabbable[0], last = tabbable[tabbable.length - 1];
         if (e.shiftKey && document.activeElement === first) {
           e.preventDefault();
           last.focus();
@@ -399,6 +678,8 @@ export function Sheet({
     document.addEventListener("keydown", handler);
     return () => {
       document.body.style.overflow = old;
+      viewport?.removeEventListener("resize", syncViewport);
+      viewport?.removeEventListener("scroll", syncViewport);
       document.removeEventListener("keydown", handler);
       window.__veshiCloseSheet = previousClose;
       if (

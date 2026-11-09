@@ -378,10 +378,18 @@ function StoreSettings() {
       </section>
       <section className="detail-section">
         <h2>Условия получения и документы</h2>
-        <Select label="Статус документов" value={form.documentStatus || "DRAFT"} onChange={e => { set("documentStatus", e.target.value); if (e.target.value === "DRAFT") set("acceptingOrders", false); }}>
-          <option value="DRAFT">Черновик — не утверждено для публикации</option>
-          <option value="APPROVED">Проверено и утверждено владельцем для публикации</option>
-        </Select>
+        <Select
+          label="Статус документов"
+          value={form.documentStatus || "DRAFT"}
+          onValueChange={(value) => {
+            set("documentStatus", value);
+            if (value === "DRAFT") set("acceptingOrders", false);
+          }}
+          options={[
+            { value: "DRAFT", label: "Черновик — не утверждено для публикации" },
+            { value: "APPROVED", label: "Проверено и утверждено владельцем для публикации" },
+          ]}
+        />
         <p className="small-text">Изменённый текст сначала сохраните как черновик. После проверки утвердите отдельным сохранением.</p>
         <p>
           Не публикуйте непроверенные правовые тексты. Бронь и подача заявки

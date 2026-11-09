@@ -562,14 +562,12 @@ function ItemEditor({ id }: { id: string }) {
         <Select
           label="Категория"
           value={form.category}
-          onChange={(e) => set("category", e.target.value)}
-        >
-          {categories.filter((c) => !c.archived || c.id === form.category).map((c) => (
-            <option value={c.id} key={c.id}>
-              {c.name}{c.archived ? " (в архиве)" : ""}
-            </option>
-          ))}
-        </Select>
+          onValueChange={(value) => set("category", value)}
+          searchPlaceholder="Найти категорию"
+          options={categories
+            .filter((c) => !c.archived || c.id === form.category)
+            .map((c) => ({ value: c.id, label: c.archived ? `${c.name} (в архиве)` : c.name }))}
+        />
         <Field
           label="Цена, BYN"
           value={price}
@@ -600,22 +598,25 @@ function ItemEditor({ id }: { id: string }) {
         <Select
           label="Назначение"
           value={String(form.attributes.audience || "Унисекс")}
-          onChange={(e) => attr("audience", e.target.value)}
-        >
-          {["Женское", "Мужское", "Унисекс", "Детское"].map((s) => (
-            <option key={s}>{s}</option>
-          ))}
-        </Select>
+          onValueChange={(value) => attr("audience", value)}
+          options={["Женское", "Мужское", "Унисекс", "Детское"].map((value) => ({ value, label: value }))}
+        />
         </fieldset>
         <fieldset><legend>Состояние вещи</legend>
         <label className="checkbox-row">
           <input type="checkbox" checked={form.hasDefect} onChange={e => set("hasDefect", e.target.checked)} />
           Есть дефект
         </label>
-        {form.hasDefect && <label className="field">Описание дефекта
-          <textarea required maxLength={4000} value={form.defectDescription} onChange={e => set("defectDescription", e.target.value)} />
-          <small>Укажите конкретную особенность. Добавьте фото дефекта ниже. При выключении флага текст удалится после сохранения.</small>
-        </label>}
+        {form.hasDefect && (
+          <Textarea
+            label="Описание дефекта"
+            required
+            maxLength={4000}
+            value={form.defectDescription}
+            onChange={(value) => set("defectDescription", value)}
+            hint="Укажите конкретную особенность. Добавьте фото дефекта ниже. При выключении флага текст удалится после сохранения."
+          />
+        )}
         </fieldset>
         <fieldset><legend>Сведения с бирки</legend>
         <p className="small-text">Указывайте только известные сведения. Не заменяйте отсутствующую маркировку предположениями.</p>
@@ -687,22 +688,17 @@ function ItemEditor({ id }: { id: string }) {
               <Select
                 label={`Тип фото ${index + 1}`}
                 value={media.role || "FRONT"}
-                onChange={(e) =>
-                  mediaAction(media, { role: e.target.value, position: index })
-                }
-              >
-                {media.role === "MEASUREMENT" && <option value="MEASUREMENT" disabled>Архивный тип</option>}
-                {[
-                  ["FRONT", "Общий вид"],
-                  ["BACK", "Сзади"],
-                  ["LABEL", "Бирка"],
-                  ["DETAIL", "Деталь"],
-                ].map(([v, l]) => (
-                  <option key={v} value={v}>
-                    {l}
-                  </option>
-                ))}
-              </Select>
+                onValueChange={(role) => mediaAction(media, { role, position: index })}
+                options={[
+                  ...(media.role === "MEASUREMENT"
+                    ? [{ value: "MEASUREMENT", label: "Архивный тип" }]
+                    : []),
+                  { value: "FRONT", label: "Общий вид" },
+                  { value: "BACK", label: "Сзади" },
+                  { value: "LABEL", label: "Бирка" },
+                  { value: "DETAIL", label: "Деталь" },
+                ]}
+              />
               <div className="photo-actions">
                 <button
                   className="icon-button"
@@ -1340,21 +1336,16 @@ function StaffOrder({ id }: { id: string }) {
               <Select
                 label="Подтверждённый статус"
                 value={shipmentState}
-                onChange={(e) => setShipmentState(e.target.value)}
-              >
-                {[
+                onValueChange={setShipmentState}
+                options={[
                   "IN_TRANSIT",
                   "AT_OFFICE",
                   "DELIVERED",
                   "RETURN_IN_TRANSIT",
                   "RETURN_RECEIVED",
                   "LOST_OR_DAMAGED",
-                ].map((s) => (
-                  <option key={s} value={s}>
-                    {statusNames[s]}
-                  </option>
-                ))}
-              </Select>
+                ].map((value) => ({ value, label: statusNames[value] }))}
+              />
               {shipmentState === "DELIVERED" && (
                 <>
                   <p>
@@ -1606,16 +1597,13 @@ function Search() {
           setSearch(q);
         }}
       >
-        <label className="search-pill">
-          <Icon name="search" />
-          <input
-            type="search"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Артикул, номер, имя, телефон"
-            aria-label="Поиск по магазину"
-          />
-        </label>
+        <Field
+          label="Поиск по магазину"
+          type="search"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Артикул, номер, имя, телефон"
+        />
         <button className="search-cta" type="submit" aria-label="Найти">
           <Icon name="search" />
         </button>

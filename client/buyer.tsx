@@ -1,5 +1,5 @@
 import { productColor, productSize } from "../shared/catalog-attributes.js";
-import { useEffect, useRef, useState, useMemo, useSyncExternalStore, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, useMemo, useSyncExternalStore, type FormEvent } from "react";
 import {
   api,
   ApiError,
@@ -238,6 +238,7 @@ function Catalog() {
   const validRange =
     !draft.minPrice || !draft.maxPrice ||
     Number(draft.minPrice) <= Number(draft.maxPrice);
+  const searchId = useId();
   const appliedCount = Object.entries(filters).filter(
     ([k, v]) => !["q", "sort"].includes(k) && v,
   ).length;
@@ -245,28 +246,28 @@ function Catalog() {
     <div className="page catalog-page">
       <p className="catalog-kicker">Секонд-хенд · Минск</p>
       <div className="search-row">
-        <label className="search-pill">
+        <div className="search-pill">
           <Icon name="search" />
-          <span>
-            <strong>Что ищем?</strong>
+          <div>
+            <label htmlFor={searchId}>Что ищем?</label>
             <input
+              id={searchId}
               type="search"
               placeholder="Название, бренд, цвет, артикул"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              aria-label="Поиск вещей"
             />
-          </span>
+          </div>
           {q && (
             <button
-              className="icon-button small"
+              className="icon-button search-clear"
               aria-label="Очистить поиск"
               onClick={() => setQ("")}
             >
               <Icon name="close" size={18} />
             </button>
           )}
-        </label>
+        </div>
         <button
           className="search-cta"
           aria-label="Найти вещи"
@@ -418,40 +419,32 @@ function Catalog() {
             <Select
               label="Сначала показывать"
               value={draft.sort || "new"}
-              onChange={(e) =>
-                setDraft((v) => ({ ...v, sort: e.target.value }))
-              }
-            >
-              <option value="new">Новые поступления</option>
-              <option value="price_asc">Дешевле</option>
-              <option value="price_desc">Дороже</option>
-            </Select>
+              onValueChange={(sort) => setDraft((v) => ({ ...v, sort }))}
+              options={[
+                { value: "new", label: "Новые поступления" },
+                { value: "price_asc", label: "Дешевле" },
+                { value: "price_desc", label: "Дороже" },
+              ]}
+            />
             <Select
               label="Категория"
               value={draft.category || ""}
-              onChange={(e) =>
-                setDraft((v) => ({ ...v, category: e.target.value }))
-              }
-            >
-              <option value="">Все категории</option>
-              {categories.map((c) => (
-                <option value={c.id} key={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
+              onValueChange={(category) => setDraft((v) => ({ ...v, category }))}
+              searchPlaceholder="Найти категорию"
+              options={[
+                { value: "", label: "Все категории" },
+                ...categories.map((c) => ({ value: c.id, label: c.name })),
+              ]}
+            />
             <Select
               label="Назначение"
               value={draft.audience || ""}
-              onChange={(e) =>
-                setDraft((v) => ({ ...v, audience: e.target.value }))
-              }
-            >
-              <option value="">Любое</option>
-              {["Женское", "Мужское", "Унисекс", "Детское"].map((a) => (
-                <option key={a}>{a}</option>
-              ))}
-            </Select>
+              onValueChange={(audience) => setDraft((v) => ({ ...v, audience }))}
+              options={[
+                { value: "", label: "Любое" },
+                ...["Женское", "Мужское", "Унисекс", "Детское"].map((value) => ({ value, label: value })),
+              ]}
+            />
             <div className="form-pair">
               <Field
                 label="Цена от, BYN"
