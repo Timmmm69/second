@@ -40,7 +40,7 @@ test("owner creates a category without code; staff assigns items; rename/order p
   const item=await app.inject({method:"POST",url:"/api/staff/items",headers:{cookie:cookies.STAFF,"idempotency-key":randomUUID()},payload:{title:"Куртка для собаки",category:category.id,priceMinor:2500}});
   assert.equal(item.statusCode,200,item.body);
   assert.equal(item.json().category,category.id);
-  const edited=await app.inject({method:"PATCH",url:"/api/owner/categories/"+category.id,headers:headers(),payload:{...base,name:"Для собак",sortOrder:0,version:category.version}});
+  const edited=await app.inject({method:"PATCH",url:"/api/owner/categories/"+category.id,headers:headers(),payload:{name:"Для собак",sortOrder:0,archived:false,version:category.version}});
   assert.equal(edited.statusCode,200,edited.body);
   const stale=await app.inject({method:"PATCH",url:"/api/owner/categories/"+category.id,headers:headers(),payload:{...base,version:category.version}});
   assert.equal(stale.statusCode,409,stale.body);
@@ -59,7 +59,7 @@ test("owner creates a category without code; staff assigns items; rename/order p
 });
 
 test("empty category archive/restore updates public list and rejects new assignments; duplicates and invalid input fail",async () => {
-  const b={...base,name:"Архивируемая категория",measurements:[]};
+  const b={name:"Архивируемая категория",sortOrder:1,archived:false};
   const r=await app.inject({method:"POST",url:"/api/owner/categories",headers:headers(),payload:b});
   assert.equal(r.statusCode,200,r.body);
   const created=r.json();

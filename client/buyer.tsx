@@ -1,3 +1,4 @@
+import { productColor, productSize } from "../shared/catalog-attributes.js";
 import { useEffect, useRef, useState, useMemo, useSyncExternalStore, type FormEvent } from "react";
 import {
   api,
@@ -27,7 +28,6 @@ import {
   date,
   itemCount,
   type Settings,
-  measurementNames,
   methodNames,
   money,
   statusNames,
@@ -75,9 +75,15 @@ export default function Buyer() {
 }
 function Catalog() {
   const { categories, go, selectionIds, setSelection, toast, settings } = useApp();
-  const [filters, setFilters] = useState<Record<string, string>>(() =>
-      readLocal("catalogFilters", { sort: "new" }),
-    ),
+  const [filters, setFilters] = useState<Record<string, string>>(() => {
+      const saved = readLocal<Record<string, string>>("catalogFilters", { sort: "new" });
+      const allowed = ["sort", "q", "category", "audience", "minPrice", "maxPrice", "sizeLabel", "brand", "color", "material", "season"];
+      return Object.fromEntries(Object.entries(saved).filter(([key, value]) => {
+        if (key === "sizeLabel" && saved.sizeSystem && saved.sizeSystem !== "RU") return false;
+        if (key === "color" && !productColor(value)) return false;
+        return allowed.includes(key);
+      }));
+    }),
     [q, setQ] = useState(filters.q || ""),
     [filterOpen, setFilterOpen] = useState(false),
     [draft, setDraft] = useState(filters),
@@ -158,9 +164,7 @@ function Catalog() {
         key,
         ["minPrice", "maxPrice"].includes(key)
           ? String(Math.round(Number(value.replace(",", ".")) * 100))
-          : ["minMeasure", "maxMeasure"].includes(key)
-            ? String(Math.round(Number(value.replace(",", ".")) * 10))
-            : value,
+          : value.trim(),
       ]),
   );
   if (cursor) query.set("cursor", cursor);
@@ -232,15 +236,8 @@ function Catalog() {
     setFilters((v) => ({ ...v, [key]: value }));
   };
   const validRange =
-    (!draft.minPrice ||
-      !draft.maxPrice ||
-      Number(draft.minPrice) <= Number(draft.maxPrice)) &&
-    (!draft.minHeight ||
-      !draft.maxHeight ||
-      Number(draft.minHeight) <= Number(draft.maxHeight)) &&
-    (!draft.minMeasure ||
-      !draft.maxMeasure ||
-      Number(draft.minMeasure) <= Number(draft.maxMeasure));
+    !draft.minPrice || !draft.maxPrice ||
+    Number(draft.minPrice) <= Number(draft.maxPrice);
   const appliedCount = Object.entries(filters).filter(
     ([k, v]) => !["q", "sort"].includes(k) && v,
   ).length;
@@ -254,7 +251,7 @@ function Catalog() {
             <strong>Что ищем?</strong>
             <input
               type="search"
-              placeholder="Название, бренд, артикул"
+              placeholder="Название, бренд, цвет, артикул"
               value={q}
               onChange={(e) => setQ(e.target.value)}
               aria-label="Поиск вещей"
@@ -353,18 +350,13 @@ function Catalog() {
                 onClick={() => go(`/items/${item.id}`)}
               >
                 <Photo
-                  media={item.media?.[0]}
+                  media={item.media?.find((photo) => photo.role !== "MEASUREMENT")}
                   alt={item.title}
                   priority={i < 4}
                 />
                 <h2>{item.title}</h2>
                 <p className="muted">
-                  {item.attributes.sizeLabel
-                    ? `${item.attributes.sizeSystem || ""} ${item.attributes.sizeLabel}`
-                    : categories.find((c) => c.id === item.category)?.name}
-                  {item.attributes.height
-                    ? ` · рост ${item.attributes.height} см`
-                    : ""}
+                  {productSize(item.attributes) || categories.find((c) => c.id === item.category)?.name}
                 </p>
                 {item.hasDefect && <span className="defect-badge">Есть дефект</span>}
                 <strong className="price">{money(item.priceMinor)}</strong>
@@ -482,28 +474,14 @@ function Catalog() {
                 }
               />
             </div>
-            <div className="form-pair">
-              <Select
-                label="Система размера"
-                value={draft.sizeSystem || ""}
-                onChange={(e) =>
-                  setDraft((v) => ({ ...v, sizeSystem: e.target.value }))
-                }
-              >
-                <option value="">Любая</option>
-                {["INT", "EU", "RU", "US", "Без бирки"].map((a) => (
-                  <option key={a}>{a}</option>
-                ))}
-              </Select>
-              <Field
-                label="Размер на бирке"
-                value={draft.sizeLabel || ""}
-                placeholder="Например, M"
-                onChange={(e) =>
-                  setDraft((v) => ({ ...v, sizeLabel: e.target.value }))
-                }
-              />
-            </div>
+            <Field
+              label="Размер"
+              value={draft.sizeLabel || ""}
+              placeholder="Например, 44 или 110"
+              onChange={(e) =>
+                setDraft((v) => ({ ...v, sizeLabel: e.target.value }))
+              }
+            />
             {[
               ["brand", "Бренд"],
               ["color", "Цвет"],
@@ -519,66 +497,6 @@ function Catalog() {
                 }
               />
             ))}
-            <div className="form-pair">
-              <Field
-                label="Рост от, см"
-                type="number"
-                value={draft.minHeight || ""}
-                onChange={(e) =>
-                  setDraft((v) => ({ ...v, minHeight: e.target.value }))
-                }
-              />
-              <Field
-                label="Рост до, см"
-                type="number"
-                value={draft.maxHeight || ""}
-                onChange={(e) =>
-                  setDraft((v) => ({ ...v, maxHeight: e.target.value }))
-                }
-              />
-            </div>
-            <Select
-              label="Фактический замер"
-              value={draft.measurement || ""}
-              onChange={(e) =>
-                setDraft((v) => ({ ...v, measurement: e.target.value }))
-              }
-            >
-              <option value="">Без фильтра по замеру</option>
-              {(
-                categories.find((c) => c.id === draft.category)?.measurements ||
-                Object.keys(measurementNames)
-              ).map((key) => (
-                <option key={key} value={key}>
-                  {measurementNames[key] || key}
-                </option>
-              ))}
-            </Select>
-            {draft.measurement && (
-              <>
-                <div className="form-pair">
-                  <Field
-                    label="От, см"
-                    type="number"
-                    value={draft.minMeasure || ""}
-                    onChange={(e) =>
-                      setDraft((v) => ({ ...v, minMeasure: e.target.value }))
-                    }
-                  />
-                  <Field
-                    label="До, см"
-                    type="number"
-                    value={draft.maxMeasure || ""}
-                    onChange={(e) =>
-                      setDraft((v) => ({ ...v, maxMeasure: e.target.value }))
-                    }
-                  />
-                </div>
-                <small>
-                  Вещи без указанного замера в результаты не попадут.
-                </small>
-              </>
-            )}
             {!validRange && (
               <p className="field-error">
                 Значение «от» не может быть больше значения «до».
@@ -605,36 +523,15 @@ function Catalog() {
     </div>
   );
 }
-function measurementEntries(item: Item): [string, number][] {
-  const order =
-    item.category === "bags"
-      ? ["width", "height", "depth", "strap"]
-      : item.category === "trousers"
-        ? ["waist", "rise", "length", "inseam"]
-        : [
-            "chest",
-            "waist",
-            "hips",
-            "length",
-            "sleeve",
-            "shoulders",
-            "width",
-            "height",
-          ];
-  return Object.entries(item.measurements || {}).sort(
-    ([a], [b]) =>
-      (order.indexOf(a) < 0 ? 99 : order.indexOf(a)) -
-      (order.indexOf(b) < 0 ? 99 : order.indexOf(b)),
-  );
-}
 function ItemPage({ id }: { id: string }) {
   const { go, selectionIds, setSelection, settings, toast } = useApp();
   const { data: item, error, loading, reload } = useLoad<Item>(`/items/${id}`);
   const [gallery, setGallery] = useState(false),
-    [measurements, setMeasurements] = useState(false),
     [index, setIndex] = useState(0),
     [zoom, setZoom] = useState(1),
     [actionError, setActionError] = useState<unknown>(null);
+  const size = productSize(item?.attributes);
+  const media = item?.media.filter((photo) => photo.role !== "MEASUREMENT") ?? [];
   if (loading && !item) return <Loading cards />;
   if (!item)
     return (
@@ -650,21 +547,22 @@ function ItemPage({ id }: { id: string }) {
           <button
             className="gallery-cover"
             onClick={() => setGallery(true)}
+            disabled={!media.length}
             aria-label="Открыть фотогалерею"
           >
             <Photo
-              media={item.media[index]}
+              media={media[index]}
               alt={item.title}
               contain
               priority
             />
             <span className="photo-counter">
-              {item.media.length ? index + 1 : 0} / {item.media.length}
+              {media.length ? index + 1 : 0} / {media.length}
             </span>
           </button>
-          {item.media.length > 1 && (
+          {media.length > 1 && (
             <div className="photo-thumbs">
-              {item.media.map((m, i) => (
+              {media.map((m, i) => (
                 <button
                   key={m.id}
                   className={index === i ? "selected" : ""}
@@ -680,9 +578,7 @@ function ItemPage({ id }: { id: string }) {
         <div className="item-details">
           <h1>{item.title}</h1>
           <p className="muted">
-            {item.attributes.sizeLabel
-              ? `Размер ${item.attributes.sizeSystem || ""} ${item.attributes.sizeLabel} на бирке · `
-              : ""}
+            {size ? `Размер ${size} · ` : ""}
             арт. {item.sku}
           </p>
           <p className="item-price">{money(item.priceMinor)}</p>
@@ -696,19 +592,6 @@ function ItemPage({ id }: { id: string }) {
               </p>
             </div>
           )}
-          <button className="detail-row" onClick={() => setMeasurements(true)}>
-            <div>
-              <h2>Замеры</h2>
-              <p>
-                {measurementEntries(item)
-                  .slice(0, 2)
-                  .map(([k, v]) => `${measurementNames[k] || k} ${v / 10} см`)
-                  .join(" · ") || "Уточните замеры у магазина"}
-              </p>
-              <small>Как измеряем · сантиметры</small>
-            </div>
-            <Icon name="next" />
-          </button>
           <section className="detail-section">
             <h2>Детали вещи</h2>
             <p>Единственный экземпляр.</p>
@@ -718,18 +601,18 @@ function ItemPage({ id }: { id: string }) {
                 ["material", "Состав"],
                 ["color", "Цвет"],
                 ["season", "Сезон"],
-                ["height", "Рост, см"],
                 ["care", "Уход"],
                 ["manufacturer", "Изготовитель"],
                 ["importer", "Импортёр"],
                 ["origin", "Страна происхождения"],
                 ["documents", "Сведения о документах"],
               ]
-                .filter(([key]) => item.attributes[key])
-                .map(([key, label]) => (
-                  <div key={key}>
+                .map(([key, label]) => [label, key === "color" ? productColor(item.attributes.color) : item.attributes[key]])
+                .filter(([, value]) => value)
+                .map(([label, value]) => (
+                  <div key={label}>
                     <dt>{label}</dt>
-                    <dd>{item.attributes[key]}</dd>
+                    <dd>{value}</dd>
                   </div>
                 ))}
             </dl>
@@ -772,9 +655,9 @@ function ItemPage({ id }: { id: string }) {
           </div>
         </div>
       </div>
-      {gallery && (
+      {gallery && media.length > 0 && (
         <Sheet
-          title={`Фото ${index + 1} из ${item.media.length}`}
+          title={`Фото ${index + 1} из ${media.length}`}
           onClose={() => setGallery(false)}
         >
           <div
@@ -789,8 +672,8 @@ function ItemPage({ id }: { id: string }) {
               if (Math.abs(delta) > 60 && zoom === 1)
                 setIndex(
                   (i) =>
-                    (i + (delta < 0 ? 1 : -1) + item.media.length) %
-                    item.media.length,
+                    (i + (delta < 0 ? 1 : -1) + media.length) %
+                    media.length,
                 );
             }}
           >
@@ -800,13 +683,13 @@ function ItemPage({ id }: { id: string }) {
             >
               <Photo
                 media={
-                  zoom > 1 && item.media[index]?.variants?.["1600"]
+                  zoom > 1 && media[index]?.variants?.["1600"]
                     ? {
-                        ...item.media[index],
-                        url: item.media[index].variants!["1600"],
+                        ...media[index],
+                        url: media[index].variants!["1600"],
                         variants: undefined,
                       }
-                    : item.media[index]
+                    : media[index]
                 }
                 alt={item.title}
                 contain
@@ -840,7 +723,7 @@ function ItemPage({ id }: { id: string }) {
             <button
               className="icon-button"
               aria-label="Следующее фото"
-              disabled={index === item.media.length - 1}
+              disabled={index === media.length - 1}
               onClick={() => {
                 setIndex((i) => i + 1);
                 setZoom(1);
@@ -849,47 +732,6 @@ function ItemPage({ id }: { id: string }) {
               <Icon name="next" />
             </button>
           </div>
-        </Sheet>
-      )}
-      {measurements && (
-        <Sheet title="Замеры вещи" onClose={() => setMeasurements(false)}>
-          <svg
-            className="measurement-diagram"
-            viewBox="0 0 240 190"
-            role="img"
-            aria-label="Ширина измеряется горизонтально, длина — вертикально"
-          >
-            <path
-              d={
-                item.category === "bags"
-                  ? "M60 65H180L190 165H50ZM90 65V42Q120 12 150 42V65"
-                  : item.category === "trousers"
-                    ? "M75 25H165L175 165H130L120 85L110 165H65Z"
-                    : "m80 25-45 25 20 35 25-10v95h80V75l25 10 20-35-45-25c-15 20-25 20-40 0Z"
-              }
-              fill="#f7f7f7"
-              stroke="#222"
-              strokeWidth="2"
-            />
-            <path
-              d="M90 90h60m-60 0 6-5m-6 5 6 5m54-5-6-5m6 5-6 5M171 90v70m0-70-5 6m5-6 5 6m-5 64-5-6m5 6 5-6"
-              stroke="#222"
-              strokeWidth="2"
-              fill="none"
-            />
-          </svg>
-          <dl className="measurement-table">
-            {measurementEntries(item).map(([key, value]) => (
-              <div key={key}>
-                <dt>{measurementNames[key] || key}</dt>
-                <dd>{value / 10} см</dd>
-              </div>
-            ))}
-          </dl>
-          <p className="muted">
-            Измеряем вручную на ровной поверхности. Полуобхват — ширина вещи с
-            одной стороны, не полный обхват. Допуск уточняйте у магазина.
-          </p>
         </Sheet>
       )}
     </div>
@@ -953,7 +795,7 @@ function Selection() {
                   className="row-photo"
                   onClick={() => go(`/items/${item.id}`)}
                 >
-                  <Photo media={item.media[0]} alt={item.title} />
+                  <Photo media={item.media.find((photo) => photo.role !== "MEASUREMENT")} alt={item.title} />
                 </button>
                 <div className="row-content">
                   <button
@@ -963,7 +805,7 @@ function Selection() {
                     <strong>{item.title}</strong>
                   </button>
                   <p className="muted">
-                    {item.attributes.sizeLabel} · арт. {item.sku}
+                    {[productSize(item.attributes), `арт. ${item.sku}`].filter(Boolean).join(" · ")}
                   </p>
                   <Defect item={item} />
                   <strong>{money(item.priceMinor)}</strong>
@@ -1449,11 +1291,11 @@ function Checkout() {
           <div className="compact-lines">
             {(lease?.items || selection).map((i) => (
               <div className="item-row" key={i.id}>
-                <Photo media={i.media[0]} alt={i.title} />
+                <Photo media={i.media.find((photo) => photo.role !== "MEASUREMENT")} alt={i.title} />
                 <div>
                   <strong>{i.title}</strong>
                   <p className="muted">
-                    {i.attributes.sizeLabel} · {i.sku}
+                    {[productSize(i.attributes), i.sku].filter(Boolean).join(" · ")}
                   </p>
                   <Defect item={i} expanded />
                   <strong>{money(i.priceMinor)}</strong>
@@ -1547,7 +1389,7 @@ export function OrderCard({
       <div className="order-card-content">
         <div className="mini-photos">
           {order.lines.slice(0, 3).map((line) => (
-            <Photo key={line.id} media={line.media?.[0]} alt={line.title} />
+            <Photo key={line.id} media={line.media?.find((photo) => photo.role !== "MEASUREMENT")} alt={line.title} />
           ))}
         </div>
         <strong>{money(order.totalMinor)}</strong>
@@ -1875,12 +1717,12 @@ function OrderPage({ id }: { id: string }) {
         <div className="item-list">
           {order.lines.map((line) => (
             <div className="item-row" key={line.id}>
-              <Photo media={line.media?.[0]} alt={line.title} />
+              <Photo media={line.media?.find((photo) => photo.role !== "MEASUREMENT")} alt={line.title} />
               <div>
                 <strong>{line.title}</strong>
                 <Defect item={line} />
                 <p className="muted">
-                  {line.attributes?.sizeLabel} · {line.sku}
+                  {[productSize(line.attributes), line.sku].filter(Boolean).join(" · ")}
                 </p>
                 <strong>{money(line.priceMinor)}</strong>
                 <p className="small-text">

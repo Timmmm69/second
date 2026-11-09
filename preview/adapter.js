@@ -8,6 +8,10 @@
   const synthetic = { method: 'PICKUP', phone: '+375 00 000 00 00', fullName: 'Тестов Тест Тестович', city: 'Минск', office: 'Тестовый пункт №1', officeAddress: 'Тестовая улица, 1', postalCode: '', comment: '' };
   const identity = { id: '00000000-0000-4000-8000-000000000001', telegramId: '900000000001', displayName: 'Тестовый покупатель', username: null };
   const clone = value => JSON.parse(JSON.stringify(value));
+  const productColor = value => {
+    const color = typeof value === 'string' ? value.trim() : '';
+    return !color.includes('#') && !/^(?:[\da-f]{6}|[\da-f]{8})$/i.test(color) && /\p{L}/u.test(color) ? color : '';
+  };
   const uuid = () => {
     if (crypto.randomUUID) return crypto.randomUUID();
     const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -28,7 +32,12 @@
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
       if (saved?.schema === 5 && Array.isArray(saved.items) && Array.isArray(saved.categories) && saved.settings) {
-        state = { items: saved.items, categories: saved.categories, settings: saved.settings };
+        const items = saved.items.map(item => {
+          const fixture = initial.items.find(sample => sample.id === item.id && sample.version === item.version);
+          if (!fixture || !String(item.attributes.color).startsWith('#')) return item;
+          return { ...item, attributes: { ...item.attributes, color: fixture.attributes.color } };
+        });
+        state = { items, categories: saved.categories, settings: saved.settings };
       }
     } catch { /* Storage is optional; a private browser may disallow it. */ }
   });
@@ -147,7 +156,7 @@
       if (method === 'PATCH') { ensure(existing, 404, 'NOT_FOUND', 'Категория не найдена'); checkVersion(existing, body); }
       ensure(String(body.name || '').trim(), 422, 'VALIDATION', 'Укажите название категории');
       ensure(!body.archived || !state.items.some(item => item.category === id), 409, 'CATEGORY_IN_USE', 'Сначала перенесите вещи в другую категорию');
-      const category = { id: id || `demo-${uuid().slice(0, 8)}`, name: body.name.trim(), sortOrder: Number(body.sortOrder) || 0, measurements: clone(body.measurements || []), archived: !!body.archived, version: (existing?.version || 0) + 1 };
+      const category = { id: id || `demo-${uuid().slice(0, 8)}`, name: body.name.trim(), sortOrder: Number(body.sortOrder) || 0, measurements: clone(body.measurements ?? existing?.measurements ?? []), archived: !!body.archived, version: (existing?.version || 0) + 1 };
       if (existing) Object.assign(existing, category); else state.categories.push(category);
       record('demo.category', category.id); persist(); return category;
     }
@@ -158,11 +167,15 @@
     if (path === '/catalog' && method === 'GET') {
       let items = state.items.map(itemView).filter(item => item.available).filter(item => {
         const a = item.attributes;
-        if (query.get('q') && ![item.title, item.sku, a.brand].join(' ').toLowerCase().includes(query.get('q').trim().toLowerCase())) return false;
+        if (query.get('q') && ![item.title, item.sku, a.brand, productColor(a.color)].join(' ').toLowerCase().replace(/\s+/g, ' ').includes(query.get('q').trim().toLowerCase().replace(/\s+/g, ' '))) return false;
         if (query.get('category') && item.category !== query.get('category')) return false;
-        for (const key of ['brand', 'color', 'material', 'season', 'audience', 'sizeSystem', 'sizeLabel'])
+        for (const key of ['brand', 'material', 'season', 'audience'])
           if (query.get(key) && String(a[key] ?? '').toLowerCase() !== query.get(key).toLowerCase()) return false;
-        for (const [key, value, min] of [['minPrice', item.priceMinor, true], ['maxPrice', item.priceMinor, false], ['minHeight', a.height, true], ['maxHeight', a.height, false], ['minMeasure', item.measurements[query.get('measurement')], true], ['maxMeasure', item.measurements[query.get('measurement')], false]])
+        const color = query.get('color')?.trim().toLowerCase();
+        if (color && productColor(a.color).toLowerCase() !== color) return false;
+        const size = query.get('sizeLabel')?.trim().toLowerCase();
+        if (size && (a.sizeSystem !== 'RU' || String(a.sizeLabel ?? '').trim().toLowerCase() !== size)) return false;
+        for (const [key, value, min] of [['minPrice', item.priceMinor, true], ['maxPrice', item.priceMinor, false]])
           if (query.get(key) && (value == null || (min ? value < +query.get(key) : value > +query.get(key)))) return false;
         return true;
       });
@@ -323,6 +336,15 @@
       ensure(state.categories.some(category => category.id === body.category && !category.archived), 422, 'CATEGORY', 'Выберите действующую категорию');
       ensure(!body.hasDefect || String(body.defectDescription || '').trim(), 422, 'VALIDATION', 'Опишите дефект', { fieldErrors: { defectDescription: 'Опишите конкретный дефект' } });
       const item = { ...(existing || { id: uuid(), sku: `DEMO-${state.items.length + 1}`, media: [], publication: 'DRAFT', physical: 'AVAILABLE' }), ...clone(body), version: (existing?.version || 0) + 1 };
+      item.measurements = body.measurements ?? existing?.measurements ?? {};
+      item.attributes ??= {};
+      const color = item.attributes.color, namedColor = productColor(color), previousColor = existing?.attributes.color;
+      if (!namedColor && previousColor && !productColor(previousColor) && (color === previousColor || color === undefined || (typeof color === 'string' && !color.trim()))) {
+        item.attributes.color = previousColor;
+      } else if (color !== undefined) {
+        ensure(namedColor || (typeof color === 'string' && !color.trim()), 422, 'COLOR', 'Укажите название цвета словами');
+        item.attributes.color = namedColor;
+      }
       if (!body.sku) item.sku = existing?.sku || `DEMO-${state.items.length + 1}`;
       if (!item.hasDefect) item.defectDescription = '';
       if (existing) Object.assign(existing, item); else state.items.unshift(item);
@@ -330,7 +352,11 @@
     }
     if (/^\/staff\/items\/[^/]+\/(publish|hide|inspect|write-off)$/.test(path) && method === 'POST') {
       const item = findItem(path.split('/')[3]), action = path.split('/')[4]; checkVersion(item, body); ensure(!claimed(item.id), 409, 'CLAIMED', 'Вещь закреплена обращением');
-      if (action === 'publish') { ensure(body.checked && item.media.length && item.title && item.priceMinor && item.storageLocation, 422, 'PUBLISH', 'Заполните данные, фото и подтвердите проверку вещи'); item.publication = 'PUBLISHED'; }
+      if (action === 'publish') {
+        ensure(body.checked && item.media.length && item.title && item.priceMinor && item.storageLocation, 422, 'PUBLISH', 'Заполните данные, фото и подтвердите проверку вещи');
+        ensure(['bags', 'accessories'].includes(item.category) || String(item.attributes.sizeLabel ?? '').trim(), 422, 'PUBLISH', 'Укажите размер');
+        item.publication = 'PUBLISHED';
+      }
       if (action === 'hide') item.publication = 'HIDDEN';
       if (action === 'inspect') { ensure(item.physical === 'INSPECTION' && body.suitable, 409, 'INSPECTION', 'Сначала подтвердите осмотр'); item.physical = 'AVAILABLE'; }
       if (action === 'write-off') { owner(); item.physical = 'WRITTEN_OFF'; item.publication = 'ARCHIVED'; }

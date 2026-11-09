@@ -21,7 +21,6 @@ import {
   date,
   methodNames,
   type Category,
-  measurementNames,
   type Carrier,
   type Settings,
   type User,
@@ -74,7 +73,7 @@ export default function Owner() {
           </button>
         ))}
       </div>
-      <div className="workspace-intro"><Icon name={{settings:"pin",categories:"bag",staff:"person",audit:"orders",operations:"settings"}[tab] || "settings"} /><div><h2>{{settings:"Сведения и правила",categories:"Структура каталога",staff:"Команда магазина",audit:"История действий",operations:"Состояние сервисов"}[tab]}</h2><p>{{settings:"Проверяйте изменения перед сохранением. Утверждение документов выполняется отдельно.",categories:"Категории и замеры используются в каталоге и редакторе вещей.",staff:"Приглашайте сотрудников по проверенному Telegram ID и управляйте доступом.",audit:"Найдите действие по сотруднику, объекту или дате.",operations:"Проверьте диск, уведомления и открытые проблемы."}[tab]}</p></div></div>
+      <div className="workspace-intro"><Icon name={{settings:"pin",categories:"bag",staff:"person",audit:"orders",operations:"settings"}[tab] || "settings"} /><div><h2>{{settings:"Сведения и правила",categories:"Структура каталога",staff:"Команда магазина",audit:"История действий",operations:"Состояние сервисов"}[tab]}</h2><p>{{settings:"Проверяйте изменения перед сохранением. Утверждение документов выполняется отдельно.",categories:"Категории используются в каталоге и редакторе вещей.",staff:"Приглашайте сотрудников по проверенному Telegram ID и управляйте доступом.",audit:"Найдите действие по сотруднику, объекту или дате.",operations:"Проверьте диск, уведомления и открытые проблемы."}[tab]}</p></div></div>
       {tab === "settings" ? (
         <StoreSettings />
       ) : tab === "categories" ? (
@@ -513,7 +512,7 @@ function StoreSettings() {
 function CategorySettings() {
   const { ownerCode, setOwnerCode, refreshCategories, toast } = useApp();
   const { data, error, loading, reload } = useLoad<Category[]>("/owner/categories");
-  const blank = { name: "", sortOrder: 100, measurements: [] as string[], archived: false };
+  const blank = { name: "", sortOrder: 100, archived: false };
   const [form, setForm] = useState<Category | typeof blank>(blank);
   const [editing, setEditing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -524,7 +523,7 @@ function CategorySettings() {
     setError(null);
     try {
       const result = await mutation.run<Category>(editing ? `/owner/categories/${editing}` : "/owner/categories",
-        { name: form.name, measurements: form.measurements, sortOrder: form.sortOrder,
+        { name: form.name, sortOrder: form.sortOrder,
           archived: form.archived, ...(editing && "version" in form ? { version: form.version } : {}) },
         editing ? "PATCH" : "POST");
       if (!result) return;
@@ -552,15 +551,6 @@ function CategorySettings() {
         placeholder="Например, Одежда для собак" onChange={e => setForm(v => ({...v,name:e.target.value}))} />
       <Field label="Порядок отображения" type="number" min="0" max="1000000" required
         value={form.sortOrder} onChange={e => setForm(v => ({...v,sortOrder:Number(e.target.value)}))} />
-      <fieldset><legend>Замеры в редакторе вещей</legend>
-        <p className="small-text">Выберите подходящие замеры. Значения вводятся в сантиметрах в карточке вещи.</p>
-        {Object.entries(measurementNames).map(([key,label]) => <label className="check-row" key={key}>
-          <input type="checkbox" checked={form.measurements.includes(key)} onChange={e => {
-            const checked=e.target.checked;
-            setForm(v => ({...v,measurements:checked ? [...v.measurements,key] : v.measurements.filter(k => k!==key)}));
-          }} /><span>{label}</span>
-        </label>)}
-      </fieldset>
       <label className="check-row"><input type="checkbox" checked={form.archived}
         onChange={e => setForm(v => ({...v,archived:e.target.checked}))} /><span>В архиве</span></label>
       <OwnerSecurity code={ownerCode} onChange={setOwnerCode} />

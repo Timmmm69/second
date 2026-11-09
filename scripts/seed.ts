@@ -40,65 +40,73 @@ export async function seedDemo(env = process.env) {
       title: "Бомбер карамельного цвета",
       category: "outerwear",
       price: 4500,
-      color: "#b8794f",
+      color: "Карамельный",
+      artColor: "#b8794f",
+      sizeLabel: "46",
       shape: "jacket",
-      measurements: { chest: 560, length: 650, sleeve: 610 },
     },
     {
       title: "Прямые джинсы",
       category: "trousers",
       price: 3500,
-      color: "#536b86",
+      color: "Серо-синий",
+      artColor: "#536b86",
+      sizeLabel: "44",
       shape: "pants",
-      measurements: { waist: 380, rise: 280, length: 1030, inseam: 760 },
     },
     {
       title: "Джемпер песочного цвета",
       category: "knit",
       price: 5200,
-      color: "#d7c5a9",
+      color: "Песочный",
+      artColor: "#d7c5a9",
+      sizeLabel: "46",
       shape: "jacket",
-      measurements: { chest: 540, length: 630, sleeve: 600 },
     },
     {
       title: "Голубая рубашка",
       category: "shirts",
       price: 4200,
-      color: "#c5d3d9",
+      color: "Светло-голубой",
+      artColor: "#c5d3d9",
+      sizeLabel: "44",
       shape: "shirt",
-      measurements: { chest: 520, length: 690, sleeve: 620 },
     },
     {
       title: "Детская кофта",
       category: "children",
       price: 2800,
-      color: "#d2b6b5",
+      color: "Пыльно-розовый",
+      artColor: "#d2b6b5",
+      sizeLabel: "110",
       shape: "jacket",
-      measurements: { chest: 350, length: 430 },
     },
     {
       title: "Сумка на плечо",
       category: "bags",
       price: 6900,
-      color: "#97715a",
+      color: "Коричневый",
+      artColor: "#97715a",
+      sizeLabel: "",
       shape: "bag",
-      measurements: { width: 310, height: 240, depth: 120, strap: 980 },
     },
     {
       title: "Шарф шалфейного цвета",
       category: "accessories",
       price: 1900,
-      color: "#a9b6a1",
+      color: "Шалфейный",
+      artColor: "#a9b6a1",
+      sizeLabel: "",
       shape: "scarf",
-      measurements: { length: 1600, width: 300 },
     },
     {
       title: "Платье свободного кроя",
       category: "dresses",
       price: 6200,
-      color: "#b4ad99",
+      color: "Серо-бежевый",
+      artColor: "#b4ad99",
+      sizeLabel: "46",
       shape: "dress",
-      measurements: { chest: 470, waist: 380, length: 1020 },
     },
   ];
   const owner = (
@@ -112,7 +120,7 @@ export async function seedDemo(env = process.env) {
   for (const [index, f] of fixtures.entries()) {
     const itemId = randomUUID(),
       mediaId = randomUUID();
-    const svg = fixtureSvg(f.shape, f.color);
+    const svg = fixtureSvg(f.shape, f.artColor);
     const original = await sharp(Buffer.from(svg))
       .rotate()
       .toColourspace("srgb")
@@ -140,13 +148,12 @@ export async function seedDemo(env = process.env) {
       documents: [""],
       season: "Всесезон",
       audience: f.category === "children" ? "Детское" : "Унисекс",
-      sizeSystem: "INT",
-      sizeLabel: f.category === "children" ? "110" : "M",
-      ...(f.category === "children" ? { height: 110 } : {}),
+      sizeSystem: "RU",
+      sizeLabel: f.sizeLabel,
     };
     await tx(async (c) => {
       await c.query(
-        "INSERT INTO items(id,sku,title,category,price_minor,attributes,measurements,storage_location) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
+        "INSERT INTO items(id,sku,title,category,price_minor,attributes,storage_location) VALUES($1,$2,$3,$4,$5,$6,$7)",
         [
           itemId,
           "TEST-" + String(index + 1).padStart(4, "0"),
@@ -154,7 +161,6 @@ export async function seedDemo(env = process.env) {
           f.category,
           f.price,
           attributes,
-          f.measurements,
           "Тестовая стойка " + (index + 1),
         ],
       );
@@ -187,7 +193,7 @@ export async function seedDemo(env = process.env) {
             title: f.title,
             priceMinor: f.price,
             attributes,
-            measurements: f.measurements,
+            measurements: {},
           },
         ],
       );

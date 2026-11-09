@@ -13,7 +13,7 @@ const measurementKeys = [
 const input = z.object({
   name: z.string().trim().min(1).max(100),
   measurements: z.array(z.enum(measurementKeys)).max(12)
-    .refine(v => new Set(v).size === v.length, "Замеры не должны повторяться"),
+    .refine(v => new Set(v).size === v.length, "Замеры не должны повторяться").optional(),
   sortOrder: z.number().int().min(0).max(1000000),
   archived: z.boolean(),
 }).strict();
@@ -38,7 +38,7 @@ export async function registerCategories(app: FastifyInstance) {
     return idem(req.actor, req.headers["idempotency-key"], "categories.create", b, async c => {
       const row = (await c.query(
         `INSERT INTO categories(id,name,measurements,sort_order,archived) VALUES($1,$2,$3,$4,$5) RETURNING ${columns}`,
-        [randomUUID(),b.name,b.measurements,b.sortOrder,b.archived],
+        [randomUUID(),b.name,b.measurements ?? [],b.sortOrder,b.archived],
       )).rows[0];
       await audit(c,req.actor.id,"CATEGORY_CREATE","CATEGORY",row.id,{name:row.name});
       return row;
@@ -57,7 +57,7 @@ export async function registerCategories(app: FastifyInstance) {
       );
       const row = (await c.query(
         `UPDATE categories SET name=$2,measurements=$3,sort_order=$4,archived=$5,version=version+1,updated_at=now() WHERE id=$1 RETURNING ${columns}`,
-        [id,b.name,b.measurements,b.sortOrder,b.archived],
+        [id,b.name,b.measurements ?? old.measurements,b.sortOrder,b.archived],
       )).rows[0];
       await audit(c,req.actor.id,"CATEGORY_EDIT","CATEGORY",id,{previousVersion:old.version,version:row.version,name:row.name,archived:row.archived});
       return row;

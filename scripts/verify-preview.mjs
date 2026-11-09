@@ -37,6 +37,9 @@ assert.equal((await get('/auth/me')).user.role, 'BUYER');
 assert.equal((await get('/catalog')).items.length, 8);
 assert.equal((await get('/catalog?category=bags')).items.length, 1);
 assert.equal((await get('/catalog?q=джинсы')).items.length, 1);
+assert.equal((await get('/catalog?sizeLabel=110')).items[0].category, 'children');
+assert.equal((await get('/catalog?color=' + encodeURIComponent('СВЕТЛО-ГОЛУБОЙ'))).items[0].category, 'shirts');
+assert.equal((await get('/catalog?q=' + encodeURIComponent('голубой'))).items.length, 1);
 assert.equal((await get('/catalog?minPrice=5000')).items.length, 3);
 assert.equal((await get('/items/' + data.items[0].id)).id, data.items[0].id);
 assert.equal((await one.request('/owner/settings')).status, 403);
@@ -115,7 +118,7 @@ console.log('PASS: delivery validates recipient/office address; tracking registr
 
 await one.ok('/demo/role', 'POST', { role: 'OWNER' });
 const categories = await get('/owner/categories');
-const category = await one.ok('/owner/categories', 'POST', { name: 'Тестовая категория', sortOrder: 1, measurements: ['width'], archived: false });
+const category = await one.ok('/owner/categories', 'POST', { name: 'Тестовая категория', sortOrder: 1, archived: false });
 let editable = await get('/staff/items/' + data.items[2].id);
 editable = await one.ok('/staff/items/' + editable.id, 'PATCH', { ...editable, title: 'Название изменено', category: category.id, priceMinor: 12345, hasDefect: true, defectDescription: 'Тестовый дефект', version: editable.version });
 assert.equal(editable.priceMinor, 12345);
@@ -125,6 +128,19 @@ const uploadResult = await one.window.fetch('https://preview.example/api/staff/m
 assert.equal(uploadResult.status, 200);
 const uploaded = await uploadResult.json();
 assert.ok(uploaded.url.startsWith('data:image/png'));
+const attributes = { sizeSystem: 'RU', sizeLabel: '116', color: ' Светло-голубой ' };
+const newItem = { title: 'Новая детская вещь', category: 'children', priceMinor: 2000, storageLocation: 'Полка', attributes };
+assert.equal((await one.request('/staff/items', 'POST', { ...newItem, attributes: { ...attributes, color: '#aabbcc' } })).status, 422);
+const draftItem = await one.ok('/staff/items', 'POST', newItem);
+assert.deepEqual(draftItem.measurements, {});
+assert.equal(draftItem.attributes.color, 'Светло-голубой');
+formData.set('itemId', draftItem.id);
+const newPhoto = await one.window.fetch('https://preview.example/api/staff/media/uploads', { method: 'POST', body: formData });
+assert.equal(newPhoto.status, 200);
+const readyItem = await get('/staff/items/' + draftItem.id);
+const published = await one.ok('/staff/items/' + draftItem.id + '/publish', 'POST', { version: readyItem.version, checked: true });
+assert.equal(published.publication, 'PUBLISHED');
+assert.equal((await get('/catalog?sizeLabel=116')).items[0].id, published.id);
 const originalSettings = await get('/owner/settings');
 await one.ok('/owner/settings', 'PATCH', { ...originalSettings, name: 'Лучок локально', about: 'Отредактированное описание', calendar: { ...originalSettings.calendar, week: { ...originalSettings.calendar.week, 2: ['11:00', '19:00'] } }, phone: '+375299999999', telegramUsername: 'arbitrary_real_username', documentStatus: 'APPROVED' });
 assert.equal((await get('/settings')).name, 'Лучок локально');

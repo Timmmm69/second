@@ -152,11 +152,11 @@
       "publication": "PUBLISHED",
       "version": 2,
       "attributes": {
-        "color": "#b4ad99",
+        "color": "Серо-бежевый",
         "season": "Всесезон",
         "audience": "Унисекс",
-        "sizeLabel": "M",
-        "sizeSystem": "INT"
+        "sizeLabel": "46",
+        "sizeSystem": "RU"
       },
       "measurements": {
         "chest": 470,
@@ -192,11 +192,11 @@
       "publication": "PUBLISHED",
       "version": 2,
       "attributes": {
-        "color": "#a9b6a1",
+        "color": "Шалфейный",
         "season": "Всесезон",
         "audience": "Унисекс",
-        "sizeLabel": "M",
-        "sizeSystem": "INT"
+        "sizeLabel": "",
+        "sizeSystem": "RU"
       },
       "measurements": {
         "width": 300,
@@ -231,11 +231,11 @@
       "publication": "PUBLISHED",
       "version": 2,
       "attributes": {
-        "color": "#97715a",
+        "color": "Коричневый",
         "season": "Всесезон",
         "audience": "Унисекс",
-        "sizeLabel": "M",
-        "sizeSystem": "INT"
+        "sizeLabel": "",
+        "sizeSystem": "RU"
       },
       "measurements": {
         "depth": 120,
@@ -272,12 +272,11 @@
       "publication": "PUBLISHED",
       "version": 2,
       "attributes": {
-        "color": "#d2b6b5",
-        "height": 110,
+        "color": "Пыльно-розовый",
         "season": "Всесезон",
         "audience": "Детское",
         "sizeLabel": "110",
-        "sizeSystem": "INT"
+        "sizeSystem": "RU"
       },
       "measurements": {
         "chest": 350,
@@ -312,11 +311,11 @@
       "publication": "PUBLISHED",
       "version": 2,
       "attributes": {
-        "color": "#c5d3d9",
+        "color": "Светло-голубой",
         "season": "Всесезон",
         "audience": "Унисекс",
-        "sizeLabel": "M",
-        "sizeSystem": "INT"
+        "sizeLabel": "44",
+        "sizeSystem": "RU"
       },
       "measurements": {
         "chest": 520,
@@ -352,11 +351,11 @@
       "publication": "PUBLISHED",
       "version": 2,
       "attributes": {
-        "color": "#d7c5a9",
+        "color": "Песочный",
         "season": "Всесезон",
         "audience": "Унисекс",
-        "sizeLabel": "M",
-        "sizeSystem": "INT"
+        "sizeLabel": "46",
+        "sizeSystem": "RU"
       },
       "measurements": {
         "chest": 540,
@@ -392,11 +391,11 @@
       "publication": "PUBLISHED",
       "version": 2,
       "attributes": {
-        "color": "#536b86",
+        "color": "Серо-синий",
         "season": "Всесезон",
         "audience": "Унисекс",
-        "sizeLabel": "M",
-        "sizeSystem": "INT"
+        "sizeLabel": "44",
+        "sizeSystem": "RU"
       },
       "measurements": {
         "rise": 280,
@@ -433,11 +432,11 @@
       "publication": "PUBLISHED",
       "version": 2,
       "attributes": {
-        "color": "#b8794f",
+        "color": "Карамельный",
         "season": "Всесезон",
         "audience": "Унисекс",
-        "sizeLabel": "M",
-        "sizeSystem": "INT"
+        "sizeLabel": "46",
+        "sizeSystem": "RU"
       },
       "measurements": {
         "chest": 560,

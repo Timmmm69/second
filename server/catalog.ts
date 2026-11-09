@@ -1,9 +1,10 @@
+import { productColor } from "../shared/catalog-attributes.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { pool } from "./db.js";
 import { assert } from "./errors.js";
 import { lockItems, setPhysical, audit, idem } from "./inventory.js";
-import { readCategories, assertActiveCategory } from "./categories.js";
+import { assertActiveCategory } from "./categories.js";
 const ids = z.array(z.uuid()).max(10000);
 const itemInput = z
   .object({
@@ -24,7 +25,7 @@ const itemInput = z
       .default({}),
     measurements: z
       .record(z.string(), z.number().int().min(0).max(20000))
-      .default({}),
+      .optional(),
     hasDefect: z.boolean().default(false),
     defectDescription: z.string().trim().max(4000).default(""),
     storageLocation: z.string().max(200).default(""),
@@ -32,6 +33,17 @@ const itemInput = z
   })
   .strict()
   .refine(b => !b.hasDefect || b.defectDescription.length > 0, { message: "Опишите конкретный дефект", path: ["defectDescription"] });
+function normalizeColor(attributes: z.infer<typeof itemInput>["attributes"], previousColor?: unknown) {
+  const value = attributes.color;
+  const color = productColor(value);
+  if (!color && previousColor && !productColor(previousColor) &&
+      (value === previousColor || value === undefined || (typeof value === "string" && !value.trim()))) {
+    return { ...attributes, color: previousColor };
+  }
+  if (value === undefined) return attributes;
+  assert(color || (typeof value === "string" && !value.trim()), 422, "COLOR", "Укажите название цвета словами");
+  return { ...attributes, color };
+}
 export async function mapItem(row: any, staff = false) {
   return (await mapItems([row], staff))[0];
 }
@@ -89,6 +101,7 @@ export async function readItems(itemIds: string[], staff = false) {
 const uuidParam = z.object({ id: z.uuid() });
 export async function registerCatalog(app: FastifyInstance) {
   app.get("/catalog", async (req) => {
+    const namedColor = "CASE WHEN btrim(i.attributes->>'color') !~* '(#|^[0-9a-f]{6}$|^[0-9a-f]{8}$)' THEN btrim(i.attributes->>'color') END";
     const q = z.record(z.string(), z.string()).parse(req.query),
       where = [
         "i.publication='PUBLISHED'",
@@ -103,25 +116,22 @@ export async function registerCatalog(app: FastifyInstance) {
     };
     if (q.q)
       add(
-        "lower(regexp_replace(i.title||' '||i.sku||' '||coalesce(i.attributes->>'brand',''),'\\s+',' ','g')) LIKE ?",
+        `lower(regexp_replace(concat_ws(' ',i.title,i.sku,i.attributes->>'brand',${namedColor}),'\\s+',' ','g')) LIKE ?`,
         "%" + q.q.toLowerCase().trim().replace(/\s+/g, " ") + "%",
       );
     if (q.category) add("i.category=?", q.category);
     for (const key of [
       "brand",
-      "color",
       "material",
       "season",
       "audience",
-      "sizeSystem",
-      "sizeLabel",
     ])
       if (q[key]) add(`lower(i.attributes->>'${key}')=lower(?)`, q[key]);
-    for (const [key, col, op] of [
-      ["minPrice", "price_minor", ">="],
-      ["maxPrice", "price_minor", "<="],
-      ["minHeight", "(attributes->>'height')::numeric", ">="],
-      ["maxHeight", "(attributes->>'height')::numeric", "<="],
+    if (q.color) add(`lower(${namedColor})=lower(?)`, q.color.trim());
+    if (q.sizeLabel?.trim()) add("i.attributes->>'sizeSystem'='RU' AND lower(btrim(i.attributes->>'sizeLabel'))=lower(?)", q.sizeLabel.trim());
+    for (const [key, op] of [
+      ["minPrice", ">="],
+      ["maxPrice", "<="],
     ] as const) {
       if (q[key]) {
         const val = Number(q[key]);
@@ -131,7 +141,7 @@ export async function registerCatalog(app: FastifyInstance) {
           "FILTER",
           "Укажите корректный диапазон",
         );
-        add(`${col.startsWith("(") ? col : "i." + col}${op}?`, val);
+        add(`i.price_minor${op}?`, val);
       }
     }
     if (q.minPrice && q.maxPrice)
@@ -141,30 +151,6 @@ export async function registerCatalog(app: FastifyInstance) {
         "FILTER",
         "Минимальная цена больше максимальной",
       );
-    if (q.measurement) {
-      assert(
-        (await readCategories()).some((c) => c.measurements.includes(q.measurement)),
-        422,
-        "FILTER",
-        "Неизвестный замер",
-      );
-      params.push(q.measurement);
-      const k = params.length;
-      for (const [key, op] of [
-        ["minMeasure", ">="],
-        ["maxMeasure", "<="],
-      ])
-        if (q[key]) {
-          const n = Number(q[key]);
-          assert(
-            Number.isFinite(n) && n >= 0,
-            422,
-            "FILTER",
-            "Укажите замер в миллиметрах",
-          );
-          add(`(i.measurements->>$${k})::numeric${op}?`, n);
-        }
-    }
     // Cursor is an opaque offset scoped to currently applied query; stock always comes from PostgreSQL.
     const offset = q.cursor
       ? Number(Buffer.from(q.cursor, "base64url").toString())
@@ -321,8 +307,8 @@ export async function registerCatalog(app: FastifyInstance) {
             b.title,
             b.category,
             b.priceMinor,
-            b.attributes,
-            b.measurements,
+            normalizeColor(b.attributes),
+            b.measurements ?? {},
             b.storageLocation,
             b.hasDefect,
             b.hasDefect ? b.defectDescription : "",
@@ -369,11 +355,11 @@ export async function registerCatalog(app: FastifyInstance) {
               b.title,
               b.category,
               b.priceMinor,
-              b.attributes,
-              b.measurements,
+              normalizeColor(b.attributes, old.attributes.color),
+              b.measurements ?? old.measurements,
               b.storageLocation,
-            b.hasDefect,
-            b.hasDefect ? b.defectDescription : "",
+              b.hasDefect,
+              b.hasDefect ? b.defectDescription : "",
             ],
           )
         ).rows[0];
@@ -440,17 +426,8 @@ export async function registerCatalog(app: FastifyInstance) {
             if (!item.storage_location)
               fields.storageLocation = "Укажите место хранения";
             if (!b.checked) fields.checked = "Подтвердите физическую проверку";
-            if (item.category === "children" && !item.attributes.height)
-              fields.height = "Укажите рост";
-            if (item.category === "bags") {
-              for (const k of ["width", "height", "depth"])
-                if (!item.measurements[k]) fields[k] = "Укажите замер сумки";
-            } else if (item.category !== "accessories") {
-              for (const k of ["sizeSystem", "sizeLabel"])
-                if (!item.attributes[k]) fields[k] = "Укажите размер и систему";
-              if (!Object.keys(item.measurements).length)
-                fields.measurements = "Добавьте замеры";
-            }
+            if (!["bags", "accessories"].includes(item.category) && !String(item.attributes.sizeLabel ?? "").trim())
+              fields.sizeLabel = "Укажите размер";
             if (
               !(
                 await c.query(

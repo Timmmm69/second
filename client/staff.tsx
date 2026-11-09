@@ -1,3 +1,4 @@
+import { productColor, productSize } from "../shared/catalog-attributes.js";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { api, readLocal, saveLocal } from "./api";
 import { useApp } from "./context";
@@ -22,7 +23,6 @@ import {
 import {
   date,
   itemCount,
-  measurementNames,
   methodNames,
   money,
   statusNames,
@@ -371,7 +371,6 @@ const initialItem = {
   category: "outerwear",
   priceMinor: 0,
   attributes: {
-    sizeSystem: "INT",
     sizeLabel: "",
     brand: "",
     material: "",
@@ -384,7 +383,6 @@ const initialItem = {
     origin: "",
     documents: "",
   } as Record<string, string | number>,
-  measurements: {} as Record<string, number>,
   storageLocation: "",
 };
 function ItemEditor({ id }: { id: string }) {
@@ -405,6 +403,10 @@ function ItemEditor({ id }: { id: string }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [checked, setChecked] = useState(false);
   const [price, setPrice] = useState("");
+  const [size, setSize] = useState("");
+  const previousSize = item?.attributes.sizeSystem !== "RU" ? productSize(item?.attributes) : "";
+  const previousColor = item?.attributes.color;
+  const legacyColor = previousColor && !productColor(previousColor) ? String(previousColor) : "";
   useEffect(() => {
     if (id === "new" && !dirty && categories.length && !categories.some(c => c.id === form.category && !c.archived))
       setForm(v => ({...v, category: categories.find(c => !c.archived)?.id || ""}));
@@ -419,10 +421,10 @@ function ItemEditor({ id }: { id: string }) {
         category: item.category,
         priceMinor: item.priceMinor,
         attributes: { ...initialItem.attributes, ...item.attributes },
-        measurements: item.measurements || {},
         storageLocation: item.storageLocation || "",
       });
       setPrice(String(item.priceMinor / 100));
+      setSize(item.attributes.sizeSystem === "RU" ? productSize(item.attributes) : "");
       setDirty(false);
     }
   }, [item]);
@@ -444,9 +446,13 @@ function ItemEditor({ id }: { id: string }) {
     setForm((v) => ({ ...v, attributes: { ...v.attributes, [key]: value } }));
     setDirty(true);
   };
+  const attributes = previousSize && !size.trim()
+    ? form.attributes
+    : { ...form.attributes, sizeSystem: "RU", sizeLabel: size.trim() };
   const save = async () => {
     const data = {
       ...form,
+      attributes,
       sku: form.sku.trim() || undefined,
       priceMinor: Math.round(Number(price.replace(",", ".")) * 100),
       ...(item ? { version: item.version } : {}),
@@ -500,9 +506,6 @@ function ItemEditor({ id }: { id: string }) {
     reload();
   };
   if (loading && !item) return <Loading />;
-  const measurementKeys =
-    categories.find((c) => c.id === form.category)?.measurements ||
-    Object.keys(measurementNames);
   const missing = [
     !form.title ? "Название" : "",
     !Number(price) ? "Цена" : "",
@@ -525,7 +528,7 @@ function ItemEditor({ id }: { id: string }) {
   return (
     <div className="page narrow item-editor">
       <h1>{id === "new" ? "Новая вещь" : "Карточка вещи"}</h1>
-      <nav className="editor-shortcuts" aria-label="Разделы карточки"><a href="#editor-basic" onClick={e => { e.preventDefault(); document.getElementById("editor-basic")?.scrollIntoView(); }}>Данные</a><a href="#editor-measurements" onClick={e => { e.preventDefault(); document.getElementById("editor-measurements")?.scrollIntoView(); }}>Замеры</a><a href="#editor-photos" onClick={e => { e.preventDefault(); document.getElementById("editor-photos")?.scrollIntoView(); }}>Фото</a></nav>
+      <nav className="editor-shortcuts" aria-label="Разделы карточки"><a href="#editor-basic" onClick={e => { e.preventDefault(); document.getElementById("editor-basic")?.scrollIntoView(); }}>Данные</a><a href="#editor-photos" onClick={e => { e.preventDefault(); document.getElementById("editor-photos")?.scrollIntoView(); }}>Фото</a></nav>
       <p className="muted">Одна карточка — один физический экземпляр</p>
       <ErrorBox error={error} retry={reload} />
       {mutation.recovery}
@@ -584,30 +587,14 @@ function ItemEditor({ id }: { id: string }) {
           placeholder="Например, зал · рейл 2"
         />
         {!["bags", "accessories"].includes(form.category) && (
-          <div className="form-pair">
-            <Select
-              label="Размерная система"
-              value={String(form.attributes.sizeSystem || "INT")}
-              onChange={(e) => attr("sizeSystem", e.target.value)}
-            >
-              {["INT", "EU", "RU", "US", "Без бирки"].map((s) => (
-                <option key={s}>{s}</option>
-              ))}
-            </Select>
-            <Field
-              label="Размер на бирке"
-              value={String(form.attributes.sizeLabel || "")}
-              onChange={(e) => attr("sizeLabel", e.target.value)}
-            />
-          </div>
-        )}
-        {form.category === "children" && (
           <Field
-            label="Рост, см"
-            type="number"
-            min="1"
-            value={form.attributes.height || ""}
-            onChange={(e) => attr("height", Number(e.target.value))}
+            label="Размер"
+            value={size}
+            placeholder={form.category === "children" ? "Например, 110 или 116" : "Например, 44"}
+            hint={previousSize
+              ? `Сейчас указан размер ${previousSize}. Оставьте поле пустым, чтобы сохранить его, или введите размер в российской маркировке.`
+              : undefined}
+            onChange={(e) => { setSize(e.target.value); setDirty(true); }}
           />
         )}
         <Select
@@ -620,31 +607,7 @@ function ItemEditor({ id }: { id: string }) {
           ))}
         </Select>
         </fieldset>
-        <fieldset id="editor-measurements"><legend>Замеры и особенности</legend>
-        <h2>Замеры, см</h2>
-        <p className="small-text">
-          Введите фактические размеры. Грудь, талия и бёдра — полуобхват.
-        </p>
-        <div className="form-pair">
-          {measurementKeys.map((key) => (
-            <Field
-              key={key}
-              label={measurementNames[key] || key}
-              type="number"
-              min="0"
-              step="0.1"
-              value={form.measurements[key] ? form.measurements[key] / 10 : ""}
-              onChange={(e) => {
-                const value = Math.round(Number(e.target.value) * 10);
-                setForm((v) => ({
-                  ...v,
-                  measurements: { ...v.measurements, [key]: value },
-                }));
-                setDirty(true);
-              }}
-            />
-          ))}
-        </div>
+        <fieldset><legend>Состояние вещи</legend>
         <label className="checkbox-row">
           <input type="checkbox" checked={form.hasDefect} onChange={e => set("hasDefect", e.target.checked)} />
           Есть дефект
@@ -670,8 +633,9 @@ function ItemEditor({ id }: { id: string }) {
           <Field
             key={key}
             label={label}
-            value={String(form.attributes[key] || "")}
-            onChange={(e) => attr(key, e.target.value)}
+            value={key === "color" && String(form.attributes.color) === legacyColor ? "" : String(form.attributes[key] || "")}
+            hint={key === "color" && legacyColor ? `Сохранён цветовой код ${legacyColor}. Введите известное название цвета. Пустое поле сохранит код.` : undefined}
+            onChange={(e) => attr(key, e.target.value || (key === "color" ? legacyColor : ""))}
           />
         ))}
         </fieldset>
@@ -727,11 +691,11 @@ function ItemEditor({ id }: { id: string }) {
                   mediaAction(media, { role: e.target.value, position: index })
                 }
               >
+                {media.role === "MEASUREMENT" && <option value="MEASUREMENT" disabled>Архивный тип</option>}
                 {[
                   ["FRONT", "Общий вид"],
                   ["BACK", "Сзади"],
                   ["LABEL", "Бирка"],
-                  ["MEASUREMENT", "Замер"],
                   ["DETAIL", "Деталь"],
                 ].map(([v, l]) => (
                   <option key={v} value={v}>
@@ -877,22 +841,11 @@ function ItemEditor({ id }: { id: string }) {
       )}
       {preview && (
         <Sheet title="Предпросмотр" onClose={() => setPreview(false)}>
-          <Photo media={item?.media[0]} alt={form.title} contain />
+          <Photo media={item?.media.find((photo) => photo.role !== "MEASUREMENT")} alt={form.title} contain />
           <h1>{form.title || "Название не заполнено"}</h1>
-          <p>
-            {form.attributes.sizeSystem} {form.attributes.sizeLabel}
-          </p>
+          {productSize(attributes) && <p>{productSize(attributes)}</p>}
           <strong>{money(Math.round(Number(price) * 100))}</strong>
-          <dl className="details-list">
-            {Object.entries(form.measurements)
-              .filter(([, v]) => v)
-              .map(([k, v]) => (
-                <div key={k}>
-                  <dt>{measurementNames[k] || k}</dt>
-                  <dd>{v / 10} см</dd>
-                </div>
-              ))}
-          </dl>
+          {productColor(attributes.color) && <p>{productColor(attributes.color)}</p>}
           <p>{form.attributes.material}</p>
           {form.hasDefect && <div className="defect-notice"><strong>Есть дефект</strong><p className="pre-wrap">{form.defectDescription}</p></div>}
           {missing.length > 0 && (
@@ -1042,7 +995,7 @@ function StaffOrder({ id }: { id: string }) {
               <div className="row-content">
                 <strong>{line.title}</strong>
                 <p className="muted">
-                  {line.sku} · {line.attributes?.sizeLabel}
+                  {[line.sku, productSize(line.attributes)].filter(Boolean).join(" · ")}
                 </p>
                 <p className="small-text">
                   {line.storageLocation || "Место хранения — в карточке вещи"}

@@ -153,6 +153,7 @@ test("D05 category validation, publish checklist and version conflicts", async (
     priceMinor: 4567,
     storageLocation: "ТЕСТ",
     attributes: {
+      color: "Тёмно-зелёный",
       material: "Ткань",
       care: "По ярлыку",
       manufacturer: "Тест",
@@ -160,7 +161,6 @@ test("D05 category validation, publish checklist and version conflicts", async (
       origin: "BY",
       documents: "Тестовый документ",
     },
-    measurements: { width: 300, height: 240, depth: 80 },
   };
   const bad = await app.inject({
     method: "POST",
@@ -358,20 +358,18 @@ test("upload and rotation share admission; overload is rejected before buffering
     if (pending) await pending;
   }
 });
-test("B03 numeric/measurement/category search filters return real items, invalid range 422", async () => {
-  const r = await app.inject(
-    "/api/catalog?category=bags&minPrice=4500&maxPrice=4600&measurement=width&minMeasure=250",
-  );
+test("B03 price, color and category filters return real items, invalid range 422", async () => {
+  const catalog = "/api/catalog?category=bags&minPrice=4500&maxPrice=4600";
+  const r = await app.inject(catalog + "&color=" + encodeURIComponent("ТЁМНО-ЗЕЛЁНЫЙ"));
   assert.equal(r.statusCode, 200, r.body);
-  assert.ok(r.json().items.length >= 1);
+  assert.ok(r.json().items.some((item: { attributes: { color: string } }) => item.attributes.color === "Тёмно-зелёный"));
   assert.equal(
     (await app.inject("/api/catalog?minPrice=500&maxPrice=100")).statusCode,
     422,
   );
-  assert.equal(
-    (await app.inject("/api/catalog?minHeight=100")).statusCode,
-    200,
-  );
+  const legacy = await app.inject(catalog + "&measurement=width&minMeasure=250&minHeight=100");
+  assert.equal(legacy.statusCode, 200, legacy.body);
+  assert.deepEqual(legacy.json().items, (await app.inject(catalog)).json().items);
 });
 test("B07/B10 server draft encryption, selection persistence, phone request webhook verified identity", async () => {
   const i = (await pool.query("SELECT id FROM items LIMIT 1")).rows[0];

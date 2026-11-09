@@ -886,29 +886,10 @@ button:focus:not(:focus-visible) {
 .detail-section > p {
   line-height: 1.6;
 }
-.detail-row {
-  padding: 20px 0;
-  border-top: 1px solid #e7e7e7;
-  border-bottom: 1px solid #e7e7e7;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  text-align: left;
-  width: 100%;
-}
-.detail-row p {
-  margin-bottom: 4px;
-}
-.detail-row > svg {
-  flex-shrink: 0;
-}
-.details-list,
-.measurement-table {
+.details-list {
   margin: 16px 0 0;
 }
-.details-list > div,
-.measurement-table > div {
+.details-list > div {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
   gap: 16px;
@@ -920,13 +901,9 @@ button:focus:not(:focus-visible) {
 .details-list dt {
   color: var(--mute);
 }
-.details-list dd,
-.measurement-table dd {
+.details-list dd {
   margin: 0;
   text-align: right;
-}
-.measurement-table dd {
-  font-weight: 700;
 }
 .item-cta {
   border-top: 1px solid var(--line);
@@ -971,11 +948,6 @@ button:focus:not(:focus-visible) {
   max-width: 180px;
   flex: 1;
   text-align: center;
-}
-.measurement-diagram {
-  width: 100%;
-  max-height: 190px;
-  margin-bottom: 16px;
 }
 .item-row {
   display: flex;
@@ -1714,7 +1686,7 @@ button > svg, .button > svg { flex-shrink: 0; display: block; }
 .editor-form fieldset > p { margin: 0; }
 .editor-shortcuts { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
 .editor-shortcuts a { display: inline-flex; min-height: 44px; align-items: center; padding: 8px 16px; border: 1px solid var(--line); border-radius: 50px; font-size: .875rem; text-decoration: none; }
-#editor-basic, #editor-measurements, #editor-photos { scroll-margin-top: 100px; }
+#editor-basic, #editor-photos { scroll-margin-top: 100px; }
 .checkbox-row { display:flex; gap:12px; align-items:center; min-height:44px; }
 .defect-notice summary { min-height: 44px; padding: 10px 0; }
 .bulk-select { min-width: 44px; }
