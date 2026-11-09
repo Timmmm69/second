@@ -38,6 +38,8 @@ assert.equal((await get('/catalog')).items.length, 8);
 assert.equal((await get('/catalog?category=bags')).items.length, 1);
 assert.equal((await get('/catalog?q=джинсы')).items.length, 1);
 assert.equal((await get('/catalog?sizeLabel=110')).items[0].category, 'children');
+assert.equal((await get('/catalog?sizeLabel=xl')).items[0].attributes.sizeLabel, 'XL');
+assert.ok(data.items.every(item => item.category === 'children' || !/^[0-9]+$/.test(item.attributes.sizeLabel)));
 assert.equal((await get('/catalog?color=' + encodeURIComponent('СВЕТЛО-ГОЛУБОЙ'))).items[0].category, 'shirts');
 assert.equal((await get('/catalog?q=' + encodeURIComponent('голубой'))).items.length, 1);
 assert.equal((await get('/catalog?minPrice=5000')).items.length, 3);

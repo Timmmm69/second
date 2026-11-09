@@ -34,8 +34,14 @@
       if (saved?.schema === 5 && Array.isArray(saved.items) && Array.isArray(saved.categories) && saved.settings) {
         const items = saved.items.map(item => {
           const fixture = initial.items.find(sample => sample.id === item.id && sample.version === item.version);
-          if (!fixture || !String(item.attributes.color).startsWith('#')) return item;
-          return { ...item, attributes: { ...item.attributes, color: fixture.attributes.color } };
+          if (!fixture) return item;
+          const attributes = { ...item.attributes };
+          if (String(attributes.color).startsWith('#')) attributes.color = fixture.attributes.color;
+          if (fixture.attributes.sizeSystem === 'INT' && attributes.sizeSystem === 'RU' && ['44', '46'].includes(attributes.sizeLabel)) {
+            attributes.sizeSystem = fixture.attributes.sizeSystem;
+            attributes.sizeLabel = fixture.attributes.sizeLabel;
+          }
+          return { ...item, attributes };
         });
         state = { items, categories: saved.categories, settings: saved.settings };
       }
@@ -174,7 +180,7 @@
         const color = query.get('color')?.trim().toLowerCase();
         if (color && productColor(a.color).toLowerCase() !== color) return false;
         const size = query.get('sizeLabel')?.trim().toLowerCase();
-        if (size && (a.sizeSystem !== 'RU' || String(a.sizeLabel ?? '').trim().toLowerCase() !== size)) return false;
+        if (size && (!['INT', 'RU'].includes(a.sizeSystem) || String(a.sizeLabel ?? '').trim().toLowerCase() !== size)) return false;
         for (const [key, value, min] of [['minPrice', item.priceMinor, true], ['maxPrice', item.priceMinor, false]])
           if (query.get(key) && (value == null || (min ? value < +query.get(key) : value > +query.get(key)))) return false;
         return true;

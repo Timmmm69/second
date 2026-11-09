@@ -42,7 +42,7 @@ export async function seedDemo(env = process.env) {
       price: 4500,
       color: "Карамельный",
       artColor: "#b8794f",
-      sizeLabel: "46",
+      sizeLabel: "L",
       shape: "jacket",
     },
     {
@@ -51,7 +51,7 @@ export async function seedDemo(env = process.env) {
       price: 3500,
       color: "Серо-синий",
       artColor: "#536b86",
-      sizeLabel: "44",
+      sizeLabel: "M",
       shape: "pants",
     },
     {
@@ -60,7 +60,7 @@ export async function seedDemo(env = process.env) {
       price: 5200,
       color: "Песочный",
       artColor: "#d7c5a9",
-      sizeLabel: "46",
+      sizeLabel: "M",
       shape: "jacket",
     },
     {
@@ -69,7 +69,7 @@ export async function seedDemo(env = process.env) {
       price: 4200,
       color: "Светло-голубой",
       artColor: "#c5d3d9",
-      sizeLabel: "44",
+      sizeLabel: "S",
       shape: "shirt",
     },
     {
@@ -105,7 +105,7 @@ export async function seedDemo(env = process.env) {
       price: 6200,
       color: "Серо-бежевый",
       artColor: "#b4ad99",
-      sizeLabel: "46",
+      sizeLabel: "XL",
       shape: "dress",
     },
   ];
@@ -148,7 +148,7 @@ export async function seedDemo(env = process.env) {
       documents: [""],
       season: "Всесезон",
       audience: f.category === "children" ? "Детское" : "Унисекс",
-      sizeSystem: "RU",
+      sizeSystem: f.category === "children" ? "RU" : "INT",
       sizeLabel: f.sizeLabel,
     };
     await tx(async (c) => {

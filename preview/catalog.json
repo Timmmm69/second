@@ -155,8 +155,8 @@
         "color": "Серо-бежевый",
         "season": "Всесезон",
         "audience": "Унисекс",
-        "sizeLabel": "46",
-        "sizeSystem": "RU"
+        "sizeLabel": "XL",
+        "sizeSystem": "INT"
       },
       "measurements": {
         "chest": 470,
@@ -314,8 +314,8 @@
         "color": "Светло-голубой",
         "season": "Всесезон",
         "audience": "Унисекс",
-        "sizeLabel": "44",
-        "sizeSystem": "RU"
+        "sizeLabel": "S",
+        "sizeSystem": "INT"
       },
       "measurements": {
         "chest": 520,
@@ -354,8 +354,8 @@
         "color": "Песочный",
         "season": "Всесезон",
         "audience": "Унисекс",
-        "sizeLabel": "46",
-        "sizeSystem": "RU"
+        "sizeLabel": "M",
+        "sizeSystem": "INT"
       },
       "measurements": {
         "chest": 540,
@@ -394,8 +394,8 @@
         "color": "Серо-синий",
         "season": "Всесезон",
         "audience": "Унисекс",
-        "sizeLabel": "44",
-        "sizeSystem": "RU"
+        "sizeLabel": "M",
+        "sizeSystem": "INT"
       },
       "measurements": {
         "rise": 280,
@@ -435,8 +435,8 @@
         "color": "Карамельный",
         "season": "Всесезон",
         "audience": "Унисекс",
-        "sizeLabel": "46",
-        "sizeSystem": "RU"
+        "sizeLabel": "L",
+        "sizeSystem": "INT"
       },
       "measurements": {
         "chest": 560,

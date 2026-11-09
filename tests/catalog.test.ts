@@ -109,4 +109,9 @@ test("catalog pagination/filters and staff visibility use one item and one media
   assert.deepEqual(last, { ...page.items[0], physical: "AVAILABLE", storageLocation: "Полка" });
   const hidden = await list(`/api/staff/items?q=${marker}&state=HIDDEN`, true);
   assert.deepEqual(hidden.items.map((i: any) => i.id), [itemIds[41]]);
+  await pool.query("UPDATE items SET attributes=$2 WHERE id=$1", [
+    itemIds[0], { sizeSystem: "INT", sizeLabel: "XL" },
+  ]);
+  const sized = await list(`/api/catalog?q=${marker}&sizeLabel=xl`);
+  assert.deepEqual(sized.items.map((i: any) => i.id), [itemIds[0]]);
 });

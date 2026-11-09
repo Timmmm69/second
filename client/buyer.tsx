@@ -79,7 +79,7 @@ function Catalog() {
       const saved = readLocal<Record<string, string>>("catalogFilters", { sort: "new" });
       const allowed = ["sort", "q", "category", "audience", "minPrice", "maxPrice", "sizeLabel", "brand", "color", "material", "season"];
       return Object.fromEntries(Object.entries(saved).filter(([key, value]) => {
-        if (key === "sizeLabel" && saved.sizeSystem && saved.sizeSystem !== "RU") return false;
+        if (key === "sizeLabel" && saved.sizeSystem && !["RU", "INT"].includes(saved.sizeSystem)) return false;
         if (key === "color" && !productColor(value)) return false;
         return allowed.includes(key);
       }));
@@ -470,7 +470,7 @@ function Catalog() {
             <Field
               label="Размер"
               value={draft.sizeLabel || ""}
-              placeholder="Например, 44 или 110"
+              placeholder="Например, M, XL или 110"
               onChange={(e) =>
                 setDraft((v) => ({ ...v, sizeLabel: e.target.value }))
               }

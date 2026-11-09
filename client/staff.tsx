@@ -1,4 +1,4 @@
-import { productColor, productSize } from "../shared/catalog-attributes.js";
+import { isLetterSize, letterSizePattern, productColor, productSize } from "../shared/catalog-attributes.js";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { api, readLocal, saveLocal } from "./api";
 import { useApp } from "./context";
@@ -385,6 +385,12 @@ const initialItem = {
   } as Record<string, string | number>,
   storageLocation: "",
 };
+function editableSize(item: Item) {
+  const label = String(item.attributes.sizeLabel ?? "").trim();
+  const system = item.attributes.sizeSystem;
+  if (item.category === "children") return system === "RU" ? label : "";
+  return (system === "INT" || system === "RU") && isLetterSize(label) ? label.toUpperCase() : "";
+}
 function ItemEditor({ id }: { id: string }) {
   const { categories, go, toast, user, demo } = useApp();
   const {
@@ -404,7 +410,10 @@ function ItemEditor({ id }: { id: string }) {
   const [checked, setChecked] = useState(false);
   const [price, setPrice] = useState("");
   const [size, setSize] = useState("");
-  const previousSize = item?.attributes.sizeSystem !== "RU" ? productSize(item?.attributes) : "";
+  const childSize = form.category === "children";
+  const previousSize = item && (childSize !== (item.category === "children") || !editableSize(item))
+    ? productSize(item.attributes)
+    : "";
   const previousColor = item?.attributes.color;
   const legacyColor = previousColor && !productColor(previousColor) ? String(previousColor) : "";
   useEffect(() => {
@@ -424,7 +433,7 @@ function ItemEditor({ id }: { id: string }) {
         storageLocation: item.storageLocation || "",
       });
       setPrice(String(item.priceMinor / 100));
-      setSize(item.attributes.sizeSystem === "RU" ? productSize(item.attributes) : "");
+      setSize(editableSize(item));
       setDirty(false);
     }
   }, [item]);
@@ -448,7 +457,7 @@ function ItemEditor({ id }: { id: string }) {
   };
   const attributes = previousSize && !size.trim()
     ? form.attributes
-    : { ...form.attributes, sizeSystem: "RU", sizeLabel: size.trim() };
+    : { ...form.attributes, sizeSystem: childSize ? "RU" : "INT", sizeLabel: size.trim() };
   const save = async () => {
     const data = {
       ...form,
@@ -562,7 +571,12 @@ function ItemEditor({ id }: { id: string }) {
         <Select
           label="Категория"
           value={form.category}
-          onValueChange={(value) => set("category", value)}
+          onValueChange={(value) => {
+            if ((value === "children") !== childSize) {
+              setSize(item && (value === "children") === (item.category === "children") ? editableSize(item) : "");
+            }
+            set("category", value);
+          }}
           searchPlaceholder="Найти категорию"
           options={categories
             .filter((c) => !c.archived || c.id === form.category)
@@ -588,11 +602,12 @@ function ItemEditor({ id }: { id: string }) {
           <Field
             label="Размер"
             value={size}
-            placeholder={form.category === "children" ? "Например, 110 или 116" : "Например, 44"}
+            placeholder={childSize ? "Например, 110 или 116" : "Например, S, M, L или XL"}
+            pattern={childSize ? undefined : letterSizePattern}
             hint={previousSize
-              ? `Сейчас указан размер ${previousSize}. Оставьте поле пустым, чтобы сохранить его, или введите размер в российской маркировке.`
+              ? `Текущий размер: ${previousSize}. Оставьте поле пустым, чтобы сохранить его, или укажите размер по бирке.`
               : undefined}
-            onChange={(e) => { setSize(e.target.value); setDirty(true); }}
+            onChange={(e) => { setSize(childSize ? e.target.value : e.target.value.toUpperCase()); setDirty(true); }}
           />
         )}
         <Select

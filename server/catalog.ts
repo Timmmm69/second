@@ -128,7 +128,8 @@ export async function registerCatalog(app: FastifyInstance) {
     ])
       if (q[key]) add(`lower(i.attributes->>'${key}')=lower(?)`, q[key]);
     if (q.color) add(`lower(${namedColor})=lower(?)`, q.color.trim());
-    if (q.sizeLabel?.trim()) add("i.attributes->>'sizeSystem'='RU' AND lower(btrim(i.attributes->>'sizeLabel'))=lower(?)", q.sizeLabel.trim());
+    const size = q.sizeLabel?.trim();
+    if (size) add("i.attributes->>'sizeSystem' IN ('INT','RU') AND lower(btrim(i.attributes->>'sizeLabel'))=lower(?)", size);
     for (const [key, op] of [
       ["minPrice", ">="],
       ["maxPrice", "<="],
