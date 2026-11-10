@@ -373,8 +373,8 @@ function StoreSettings() {
       </section>
       <section className="detail-section">
         <h2>Понятные условия для покупателя</h2>
-        <p className="muted">Эти тексты показываются в подборке, оформлении и разделе о магазине. Изменение условий закрывает новые оформления до проверки и повторного утверждения.</p>
-        {(Object.keys(defaultBuyerGuide) as (keyof typeof defaultBuyerGuide)[]).map(key => <details className="document" key={key}><summary>{{selection:"Что сохраняет подборка",pickupSummary:"Подпись к брони",pickup:"Бронь и примерка",shippingSummary:"Подпись к доставке",shipping:"Доставка и расчёты",dispatch:"Срок и передача посылки",cancellation:"Отмена",returns:"Возвраты и обращения",privacy:"Данные для получения"}[key]}</summary><Textarea label="Текст для покупателя" rows={key.endsWith("Summary") ? 2 : 5} value={form.buyerGuide?.[key] || defaultBuyerGuide[key]} onChange={value => { set("buyerGuide", {...defaultBuyerGuide,...form.buyerGuide,[key]:value}); set("documentStatus","DRAFT"); set("acceptingOrders",false); }} /></details>)}
+        <p className="muted">Эти тексты показываются в корзине, оформлении и разделе о магазине. Изменение условий закрывает новые оформления до проверки и повторного утверждения.</p>
+        {(Object.keys(defaultBuyerGuide) as (keyof typeof defaultBuyerGuide)[]).map(key => <details className="document" key={key}><summary>{{selection:"Что сохраняет корзина",pickupSummary:"Подпись к брони",pickup:"Бронь и примерка",shippingSummary:"Подпись к доставке",shipping:"Доставка и расчёты",dispatch:"Срок и передача посылки",cancellation:"Отмена",returns:"Возвраты и обращения",privacy:"Данные для получения"}[key]}</summary><Textarea label="Текст для покупателя" rows={key.endsWith("Summary") ? 2 : 5} value={form.buyerGuide?.[key] || defaultBuyerGuide[key]} onChange={value => { set("buyerGuide", {...defaultBuyerGuide,...form.buyerGuide,[key]:value}); set("documentStatus","DRAFT"); set("acceptingOrders",false); }} /></details>)}
       </section>
       <section className="detail-section">
         <h2>Условия получения и документы</h2>

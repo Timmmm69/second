@@ -366,8 +366,8 @@ function Catalog() {
                 className={`save-item ${selectionIds.includes(item.id) ? "selected" : ""}`}
                 aria-label={
                   selectionIds.includes(item.id)
-                    ? `Убрать ${item.title} из подборки`
-                    : `Добавить ${item.title} в подборку`
+                    ? `Убрать ${item.title} из корзины`
+                    : `Добавить ${item.title} в корзину`
                 }
                 onClick={() =>
                   setSelection(
@@ -378,8 +378,8 @@ function Catalog() {
                     .then(() =>
                       toast(
                         selectionIds.includes(item.id)
-                          ? "Вещь убрана из подборки"
-                          : "В подборке. Закрепим при оформлении.",
+                          ? "Вещь убрана из корзины"
+                          : "В корзине. Закрепим при оформлении.",
                       ),
                     )
                     .catch(setError)
@@ -638,13 +638,13 @@ function ItemPage({ id }: { id: string }) {
                     ? selectionIds.filter((v) => v !== id)
                     : [...selectionIds, id],
                 )
-                  .then(() => toast(chosen ? "Вещь убрана" : "Вещь в подборке"))
+                  .then(() => toast(chosen ? "Вещь убрана" : "Вещь в корзине"))
                   .catch(setActionError)
               }
             >
-              {chosen ? "В подборке ✓" : "В подборку"}
+              {chosen ? "В корзине ✓" : "В корзину"}
             </Button>
-            <small>Добавление в подборку ещё не резервирует вещь</small>
+            <small>Добавление в корзину ещё не резервирует вещь</small>
           </div>
         </div>
       </div>
@@ -745,7 +745,7 @@ function Selection() {
   }, [refreshSelection]);
   return (
     <div className="page narrow selection-page">
-      <h1>Ваша подборка</h1>
+      <h1>Ваша корзина</h1>
       <p className="muted">
         {itemCount(selectionIds.length)} ·{" "}
         {money(selection.reduce((s, i) => s + i.priceMinor, 0))}
@@ -765,7 +765,7 @@ function Selection() {
         </Empty>
       ) : (
         <>
-          <section className="selection-checkout" aria-label="Оформление подборки">
+          <section className="selection-checkout" aria-label="Оформление корзины">
             <Summary label="Стоимость вещей">{money(selection.reduce((s, i) => s + i.priceMinor, 0))}</Summary>
             <div className="receiving-actions">
               <Button disabled={!selection.length || offline} onClick={() => { if (demo || authenticated()) go("/checkout/pickup"); }}>
@@ -1012,7 +1012,7 @@ function Checkout() {
     return (
       <div className="page">
         <Empty title="Откройте магазин через Telegram">
-          Для оформления нужна защищённая авторизация. Подборка сохранена на
+          Для оформления нужна защищённая авторизация. Корзина сохранена на
           этом устройстве.
         </Empty>
       </div>
@@ -1269,7 +1269,7 @@ function Checkout() {
             Оформить доступные: {itemCount(availableIds.length)}
           </Button>
           <Button secondary onClick={() => go("/selection")}>
-            Вернуться к подборке
+            Вернуться к корзине
           </Button>
         </section>
       )}
@@ -1929,7 +1929,7 @@ function About() {
     </section>
     <section className="about-section">
       <p className="eyebrow">Бесплатная бронь</p><h2>Сначала примерьте</h2>
-      <ol className="try-on-steps">{[["Выберите вещи", "Соберите подборку и подтвердите бронь."],["Дождитесь готовности", "Сотрудник найдёт и проверит каждую вещь."],["Приходите за своим", "Примерьте и оплатите только то, что подошло."]].map(([title,text],i)=><li key={title}><span>{i+1}</span><div><h3>{title}</h3><p>{text}</p></div></li>)}</ol>
+      <ol className="try-on-steps">{[["Выберите вещи", "Соберите корзину и подтвердите бронь."],["Дождитесь готовности", "Сотрудник найдёт и проверит каждую вещь."],["Приходите за своим", "Примерьте и оплатите только то, что подошло."]].map(([title,text],i)=><li key={title}><span>{i+1}</span><div><h3>{title}</h3><p>{text}</p></div></li>)}</ol>
       <p className="small-text">На примерке можно отказаться от части вещей. Точный срок брони появится после проверки.</p>
       <button className="text-link" onClick={()=>setDetails("pickup")}>Все условия бронирования</button>
     </section>

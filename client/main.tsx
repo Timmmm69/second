@@ -424,7 +424,7 @@ function App() {
               ]
             : [
                 ["/catalog", "search", "Каталог"],
-                ["/selection", "bag", "Подборка"],
+                ["/selection", "bag", "Корзина"],
                 ["/orders", "orders", "Мои обращения"],
               ]
           ).map(([to, icon, label]) => (
