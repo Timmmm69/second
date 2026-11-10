@@ -213,21 +213,16 @@ function searchText(text: string) {
   return text.trim().toLocaleLowerCase("ru").replaceAll("ё", "е");
 }
 
-export function Select({
-  label,
-  value,
-  options,
-  onValueChange,
-  searchPlaceholder,
-  disabled = false,
-}: {
+export function Select(props: {
   label: string;
-  value: string;
   options: readonly SelectOption[];
-  onValueChange: (value: string) => void;
   searchPlaceholder?: string;
   disabled?: boolean;
-}) {
+} & (
+  | { multiple?: false; value: string; onValueChange: (value: string) => void }
+  | { multiple: true; value: readonly string[]; onValueChange: (value: string[]) => void; allowCustom?: boolean }
+)) {
+  const { label, options, searchPlaceholder, disabled = false } = props;
   const id = useId();
   const listId = `${id}-list`;
   const root = useRef<HTMLDivElement>(null);
@@ -241,11 +236,23 @@ export function Select({
   const [activeValue, setActiveValue] = useState<string | null>(null);
   const open = expanded && !disabled;
   const nativePopover = typeof HTMLElement.prototype.showPopover === "function";
-  const selected = options.find((option) => option.value === value);
-  const filter = searchText(query);
-  const visible = searchPlaceholder && filter
-    ? options.filter((option) => searchText(option.label).includes(filter))
+  const selectedValues = props.multiple ? props.value : [props.value];
+  const matches = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+  const selected = selectedValues.map((value) => options.find((option) => matches(option.value, value))?.label ?? value);
+  const selectedLabel = selected.join(", ");
+  const choices = props.multiple
+    ? [...options, ...props.value.filter((value) => !options.some((option) => matches(option.value, value)))
+      .map((value) => ({ value, label: value }))]
     : options;
+  const filter = searchText(query);
+  const customValue = query.trim();
+  const custom = props.multiple && props.allowCustom && customValue &&
+    !choices.some((option) => matches(option.value, customValue))
+    ? { value: customValue, label: `Добавить «${customValue}»` }
+    : null;
+  const visible = searchPlaceholder && filter
+    ? [...choices.filter((option) => searchText(option.label).includes(filter)), ...(custom ? [custom] : [])]
+    : choices;
   const activeIndex = visible.findIndex((option) => option.value === activeValue);
   const activeId = open && activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined;
 
@@ -272,10 +279,10 @@ export function Select({
       const width = Math.min(Math.max(rect.width, 200), right - left);
       const below = bottom - rect.bottom - gap;
       const above = rect.top - gap - top;
-      const desired = Math.min(308, 14 + (searchPlaceholder ? 54 : 0) + options.length * 44);
+      const desired = Math.min(308, 14 + (searchPlaceholder ? 54 : 0) + Math.max(1, visible.length) * 44);
       const flip = below < desired && above > below;
-      // Keep search and at least one row usable when the keyboard leaves little room.
-      const height = Math.min(bottom - top, Math.max(Math.min(desired, 118), flip ? above : below));
+      // Constrain the panel to one side so its top layer never covers the trigger.
+      const height = Math.min(desired, Math.max(0, flip ? above : below));
       const edge = flip
         ? Math.max(top + height, Math.min(rect.top - gap, bottom))
         : Math.min(bottom - height, Math.max(rect.bottom + gap, top));
@@ -311,7 +318,7 @@ export function Select({
       viewport?.removeEventListener("resize", place);
       viewport?.removeEventListener("scroll", place);
     };
-  }, [open, options.length, searchPlaceholder, nativePopover, close]);
+  }, [open, visible.length, searchPlaceholder, nativePopover, close]);
 
   useLayoutEffect(() => {
     const rows = list.current;
@@ -325,15 +332,34 @@ export function Select({
 
   function show(key?: "ArrowDown" | "ArrowUp", keyboard = false) {
     setQuery("");
-    setActiveValue(selected?.value ?? (key === "ArrowUp" ? options.at(-1)?.value : options[0]?.value) ?? null);
+    setActiveValue(key
+      ? choices.find((option) => selectedValues.some((value) => matches(value, option.value)))?.value ??
+        (key === "ArrowUp" ? choices.at(-1)?.value : choices[0]?.value) ?? null
+      : null);
     focusSearch.current = keyboard && Boolean(searchPlaceholder);
     setExpanded(true);
   }
 
-  function choose(option: SelectOption) {
+  function closeFromTrigger() {
     trigger.current?.focus({ preventScroll: true });
     close();
-    if (option.value !== value) onValueChange(option.value);
+  }
+
+  function choose(option: SelectOption) {
+    if (props.multiple) {
+      const alreadySelected = props.value.some((value) => matches(value, option.value));
+      props.onValueChange(alreadySelected
+        ? props.value.filter((value) => !matches(value, option.value))
+        : [...props.value, option.value]);
+      if (query) {
+        setQuery("");
+        setActiveValue(null);
+        if (list.current) list.current.scrollTop = 0;
+      }
+      return;
+    }
+    closeFromTrigger();
+    if (option.value !== props.value) props.onValueChange(option.value);
   }
 
   function handleKey(event: ReactKeyboardEvent<HTMLElement>) {
@@ -342,8 +368,7 @@ export function Select({
     if (key === "Escape" && open) {
       event.preventDefault();
       event.stopPropagation();
-      trigger.current?.focus({ preventScroll: true });
-      close();
+      closeFromTrigger();
     } else if (key === "ArrowDown" || key === "ArrowUp") {
       event.preventDefault();
       if (!open) {
@@ -359,10 +384,10 @@ export function Select({
     } else if (open && !isSearch && (key === "Home" || key === "End")) {
       event.preventDefault();
       setActiveValue((key === "Home" ? visible[0] : visible.at(-1))?.value ?? null);
-    } else if (open && (isSearch || !searchPlaceholder) && !event.nativeEvent.isComposing &&
+    } else if (open && (isSearch || (!searchPlaceholder && activeIndex >= 0)) && !event.nativeEvent.isComposing &&
       (key === "Enter" || (!isSearch && key === " "))) {
       event.preventDefault();
-      const option = visible[activeIndex] ?? visible[0];
+      const option = visible[activeIndex] ?? visible.find((row) => matches(row.value, customValue)) ?? visible[0];
       if (option) choose(option);
     }
   }
@@ -388,17 +413,21 @@ export function Select({
           aria-controls={listId}
           aria-activedescendant={searchPlaceholder ? undefined : activeId}
           aria-labelledby={`${id}-label ${id}-value`}
-          disabled={disabled || !options.length}
+          disabled={disabled || (!props.multiple && !options.length)}
+          onPointerDown={(event) => {
+            if (open) event.preventDefault();
+          }}
           onClick={(event) => {
-            if (open) close();
+            if (open) closeFromTrigger();
             else {
               event.currentTarget.focus({ preventScroll: true });
               show(undefined, event.detail === 0);
             }
           }}
         >
-          <span id={`${id}-value`} data-placeholder={!selected && !value ? "" : undefined}>
-            {selected?.label ?? (value || "Выберите вариант")}
+          <span id={`${id}-value`} data-placeholder={!selectedLabel ? "" : undefined}
+            className={props.multiple ? "select-multiple-summary" : undefined} title={props.multiple ? selectedLabel : undefined}>
+            {selectedLabel || "Выберите вариант"}
           </span>
           <Icon name="down" size={18} />
         </button>
@@ -425,6 +454,7 @@ export function Select({
                 aria-controls={listId}
                 aria-activedescendant={activeId}
                 placeholder={searchPlaceholder}
+                maxLength={props.multiple && props.allowCustom ? 200 : undefined}
                 value={query}
                 onChange={(event) => {
                   setQuery(event.target.value);
@@ -434,23 +464,28 @@ export function Select({
               />
             </div>
           )}
-          <div className="select-options" id={listId} role="listbox" aria-labelledby={`${id}-label`} ref={list}>
-            {visible.map((option, index) => (
-              <div
-                key={option.value}
-                id={`${listId}-${index}`}
-                role="option"
-                aria-selected={option.value === value}
-                data-active={index === activeIndex ? "" : undefined}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => choose(option)}
-              >
-                <span>{option.label}</span>
-                {option.value === value && <Icon name="check" size={18} />}
-              </div>
-            ))}
+          <div className="select-options" id={listId} role="listbox" aria-multiselectable={props.multiple || undefined} aria-labelledby={`${id}-label`} ref={list}>
+            {visible.map((option, index) => {
+              const checked = selectedValues.some((value) => matches(option.value, value));
+              return (
+                <div
+                  key={option.value}
+                  id={`${listId}-${index}`}
+                  role="option"
+                  aria-selected={checked}
+                  data-active={index === activeIndex ? "" : undefined}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => choose(option)}
+                >
+                  <span>{option.label}</span>
+                  {checked && <Icon name="check" size={18} />}
+                </div>
+              );
+            })}
           </div>
-          {!visible.length && <p className="select-empty" role="status">Ничего не найдено. Попробуйте другой запрос.</p>}
+          {!visible.length && <p className="select-empty" role="status">
+            {filter ? "Ничего не найдено. Попробуйте другой запрос." : "Пока нет вариантов."}
+          </p>}
         </div>
       </div>
     </FieldFrame>

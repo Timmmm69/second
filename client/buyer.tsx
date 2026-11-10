@@ -73,17 +73,38 @@ export default function Buyer() {
   if (path === "/invite") return <Invite />;
   return <Catalog />;
 }
+const catalogOptionFields = [
+  ["sizeLabel", "Размер", "Найти или добавить размер"],
+  ["brand", "Бренд", "Найти или добавить бренд"],
+  ["color", "Цвет"],
+  ["material", "Материал"],
+  ["season", "Сезон"],
+] as const;
+type CatalogOptionKey = typeof catalogOptionFields[number][0];
+type CatalogOptions = Record<CatalogOptionKey, string[]>;
+type CatalogFilters = Partial<CatalogOptions & Record<"sort" | "q" | "category" | "audience" | "minPrice" | "maxPrice", string>>;
+
+function readCatalogFilters(): CatalogFilters {
+  const saved = readLocal<Record<string, string | string[]>>("catalogFilters", { sort: "new" });
+  const filters: CatalogFilters = {};
+  for (const key of ["sort", "q", "category", "audience", "minPrice", "maxPrice"] as const) {
+    const value = saved[key];
+    if (typeof value === "string") filters[key] = value;
+  }
+  for (const [key] of catalogOptionFields) {
+    const raw = saved[key];
+    if (key === "sizeLabel" && typeof saved.sizeSystem === "string" &&
+      saved.sizeSystem && !["RU", "INT"].includes(saved.sizeSystem)) continue;
+    const values = (Array.isArray(raw) ? raw : [raw]).filter((value) => typeof value === "string")
+      .map((value) => key === "color" ? productColor(value) : value.trim()).filter(Boolean);
+    if (values.length) filters[key] = values;
+  }
+  return filters;
+}
+
 function Catalog() {
   const { categories, go, selectionIds, setSelection, toast, settings } = useApp();
-  const [filters, setFilters] = useState<Record<string, string>>(() => {
-      const saved = readLocal<Record<string, string>>("catalogFilters", { sort: "new" });
-      const allowed = ["sort", "q", "category", "audience", "minPrice", "maxPrice", "sizeLabel", "brand", "color", "material", "season"];
-      return Object.fromEntries(Object.entries(saved).filter(([key, value]) => {
-        if (key === "sizeLabel" && saved.sizeSystem && !["RU", "INT"].includes(saved.sizeSystem)) return false;
-        if (key === "color" && !productColor(value)) return false;
-        return allowed.includes(key);
-      }));
-    }),
+  const [filters, setFilters] = useState(readCatalogFilters),
     [q, setQ] = useState(filters.q || ""),
     [filterOpen, setFilterOpen] = useState(false),
     [draft, setDraft] = useState(filters),
@@ -105,6 +126,7 @@ function Catalog() {
     [refresh, setRefresh] = useState(0),
     [error, setError] = useState<unknown>(null),
     [loading, setLoading] = useState(true);
+  const catalogOptions = useLoad<CatalogOptions>(filterOpen ? "/catalog/options" : null);
   useEffect(() => {
     const timer = setTimeout(() => {
       setFilters((v) => {
@@ -157,16 +179,16 @@ function Catalog() {
       if (frame !== null) cancelAnimationFrame(frame);
     };
   }, []);
-  const query = new URLSearchParams(
-    Object.entries(filters)
-      .filter(([, v]) => v !== "")
-      .map(([key, value]) => [
-        key,
-        ["minPrice", "maxPrice"].includes(key)
-          ? String(Math.round(Number(value.replace(",", ".")) * 100))
-          : value.trim(),
-      ]),
-  );
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (Array.isArray(value)) {
+      for (const choice of value) query.append(key, choice);
+    } else if (value) {
+      query.set(key, key === "minPrice" || key === "maxPrice"
+        ? String(Math.round(Number(value.replace(",", ".")) * 100))
+        : value.trim());
+    }
+  }
   if (cursor) query.set("cursor", cursor);
   const queryString = query.toString();
   useEffect(() => {
@@ -231,7 +253,7 @@ function Catalog() {
       window.removeEventListener("focus", update);
     };
   }, []);
-  const change = (key: string, value: string) => {
+  const change = (key: "q" | "category", value: string) => {
     setCursor("");
     setFilters((v) => ({ ...v, [key]: value }));
   };
@@ -240,7 +262,7 @@ function Catalog() {
     Number(draft.minPrice) <= Number(draft.maxPrice);
   const searchId = useId();
   const appliedCount = Object.entries(filters).filter(
-    ([k, v]) => !["q", "sort"].includes(k) && v,
+    ([key, value]) => !["q", "sort"].includes(key) && (Array.isArray(value) ? value.length : value),
   ).length;
   return (
     <div className="page catalog-page">
@@ -467,27 +489,18 @@ function Catalog() {
                 }
               />
             </div>
-            <Field
-              label="Размер"
-              value={draft.sizeLabel || ""}
-              placeholder="Например, M, XL или 110"
-              onChange={(e) =>
-                setDraft((v) => ({ ...v, sizeLabel: e.target.value }))
-              }
-            />
-            {[
-              ["brand", "Бренд"],
-              ["color", "Цвет"],
-              ["material", "Материал"],
-              ["season", "Сезон"],
-            ].map(([key, label]) => (
-              <Field
+            {Boolean(catalogOptions.error) && <ErrorBox error={catalogOptions.error} retry={catalogOptions.reload} />}
+            {catalogOptionFields.map(([key, label, searchPlaceholder]) => (
+              <Select
                 key={key}
                 label={label}
-                value={draft[key] || ""}
-                onChange={(e) =>
-                  setDraft((v) => ({ ...v, [key]: e.target.value }))
-                }
+                multiple
+                value={draft[key] ?? []}
+                options={(catalogOptions.data?.[key] ?? []).map((value) => ({ value, label: value }))}
+                searchPlaceholder={searchPlaceholder}
+                allowCustom={Boolean(searchPlaceholder)}
+                disabled={catalogOptions.loading && !searchPlaceholder}
+                onValueChange={(values) => setDraft((v) => ({ ...v, [key]: values.length ? values : undefined }))}
               />
             ))}
             {!validRange && (
@@ -594,13 +607,15 @@ function ItemPage({ id }: { id: string }) {
                 ["material", "Состав"],
                 ["color", "Цвет"],
                 ["season", "Сезон"],
+                ["sizeLabel", "Размер"],
                 ["care", "Уход"],
                 ["manufacturer", "Изготовитель"],
                 ["importer", "Импортёр"],
                 ["origin", "Страна происхождения"],
                 ["documents", "Сведения о документах"],
               ]
-                .map(([key, label]) => [label, key === "color" ? productColor(item.attributes.color) : item.attributes[key]])
+                .map(([key, label]) => [label, key === "sizeLabel" ? size : key === "color"
+                  ? productColor(item.attributes.color) : item.attributes[key]])
                 .filter(([, value]) => value)
                 .map(([label, value]) => (
                   <div key={label}>

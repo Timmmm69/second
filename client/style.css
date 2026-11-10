@@ -636,12 +636,20 @@ button:focus:not(:focus-visible) {
   line-height: 1.45;
   scroll-margin-block: 72px;
 }
+input.field-control {
+  padding-block: 12px;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
 textarea.field-control {
   resize: vertical;
 }
 .field-control::placeholder,
 .search-pill input::placeholder {
   color: var(--mute);
+  font: inherit;
+  letter-spacing: inherit;
   opacity: 1;
 }
 @media (hover: hover) {
@@ -711,6 +719,12 @@ textarea.field-control {
 }
 .select-trigger [data-placeholder] {
   color: var(--mute);
+}
+.select-multiple-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .select-panel {
   display: none;

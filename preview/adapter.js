@@ -12,6 +12,11 @@
     const color = typeof value === 'string' ? value.trim() : '';
     return !color.includes('#') && !/^(?:[\da-f]{6}|[\da-f]{8})$/i.test(color) && /\p{L}/u.test(color) ? color : '';
   };
+  const catalogOption = (attributes, key) => {
+    if (key === 'color') return productColor(attributes.color);
+    if (key === 'sizeLabel' && !['INT', 'RU'].includes(attributes.sizeSystem)) return '';
+    return String(attributes[key] ?? '').trim();
+  };
   const uuid = () => {
     if (crypto.randomUUID) return crypto.randomUUID();
     const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -170,17 +175,27 @@
     if (path === '/owner/staff' && method === 'GET') return { staff: [] };
     if (path === '/owner/operations' && method === 'GET') fail(403, 'DEMO_BOUNDARY', 'В демонстрации нет сервера, диска магазина, worker и реальных уведомлений.');
     if (path.startsWith('/owner/')) fail(403, 'DEMO_BOUNDARY', 'Эта системная операция доступна только в рабочем приложении. В демонстрации нет сервера, договоров и сотрудников.');
+    if (path === '/catalog/options' && method === 'GET') {
+      const items = state.items.filter(item => itemView(item).available);
+      return Object.fromEntries(['brand', 'color', 'material', 'season', 'sizeLabel'].map(key => {
+        const values = new Map();
+        for (const { attributes } of items) {
+          const value = catalogOption(attributes, key);
+          if (value && !values.has(value.toLowerCase())) values.set(value.toLowerCase(), value);
+        }
+        return [key, [...values.values()].sort((a, b) => a.localeCompare(b, 'ru', { numeric: true }))];
+      }));
+    }
     if (path === '/catalog' && method === 'GET') {
+      const filters = ['brand', 'color', 'material', 'season', 'sizeLabel'].map(key =>
+        [key, query.getAll(key).map(value => value.trim().toLowerCase()).filter(Boolean)]);
       let items = state.items.map(itemView).filter(item => item.available).filter(item => {
         const a = item.attributes;
         if (query.get('q') && ![item.title, item.sku, a.brand, productColor(a.color)].join(' ').toLowerCase().replace(/\s+/g, ' ').includes(query.get('q').trim().toLowerCase().replace(/\s+/g, ' '))) return false;
         if (query.get('category') && item.category !== query.get('category')) return false;
-        for (const key of ['brand', 'material', 'season', 'audience'])
-          if (query.get(key) && String(a[key] ?? '').toLowerCase() !== query.get(key).toLowerCase()) return false;
-        const color = query.get('color')?.trim().toLowerCase();
-        if (color && productColor(a.color).toLowerCase() !== color) return false;
-        const size = query.get('sizeLabel')?.trim().toLowerCase();
-        if (size && (!['INT', 'RU'].includes(a.sizeSystem) || String(a.sizeLabel ?? '').trim().toLowerCase() !== size)) return false;
+        if (query.get('audience') && String(a.audience ?? '').toLowerCase() !== query.get('audience').toLowerCase()) return false;
+        for (const [key, values] of filters)
+          if (values.length && !values.includes(catalogOption(a, key).toLowerCase())) return false;
         for (const [key, value, min] of [['minPrice', item.priceMinor, true], ['maxPrice', item.priceMinor, false]])
           if (query.get(key) && (value == null || (min ? value < +query.get(key) : value > +query.get(key)))) return false;
         return true;

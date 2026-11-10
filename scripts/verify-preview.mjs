@@ -39,6 +39,14 @@ assert.equal((await get('/catalog?category=bags')).items.length, 1);
 assert.equal((await get('/catalog?q=джинсы')).items.length, 1);
 assert.equal((await get('/catalog?sizeLabel=110')).items[0].category, 'children');
 assert.equal((await get('/catalog?sizeLabel=xl')).items[0].attributes.sizeLabel, 'XL');
+const facets = await get('/catalog/options');
+assert.deepEqual(facets.brand, ['Линия', 'Маяк', 'Север']);
+assert.ok(facets.material.includes('Хлопок'));
+assert.ok(facets.season.includes('Лето'));
+const multiple = await get('/catalog?' + new URLSearchParams([
+  ['sizeLabel', 'xl'], ['sizeLabel', 'S'], ['brand', 'Линия'], ['brand', 'Маяк'], ['season', 'Лето'],
+]));
+assert.deepEqual(multiple.items.map(item => item.attributes.sizeLabel), ['XL', 'S']);
 assert.ok(data.items.every(item => item.category === 'children' || !/^[0-9]+$/.test(item.attributes.sizeLabel)));
 assert.equal((await get('/catalog?color=' + encodeURIComponent('СВЕТЛО-ГОЛУБОЙ'))).items[0].category, 'shirts');
 assert.equal((await get('/catalog?q=' + encodeURIComponent('голубой'))).items.length, 1);

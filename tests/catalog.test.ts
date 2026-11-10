@@ -114,4 +114,18 @@ test("catalog pagination/filters and staff visibility use one item and one media
   ]);
   const sized = await list(`/api/catalog?q=${marker}&sizeLabel=xl`);
   assert.deepEqual(sized.items.map((i: any) => i.id), [itemIds[0]]);
+  await pool.query("UPDATE items SET attributes=$2 WHERE id=$1", [
+    itemIds[1], { brand: marker, material: "Хлопок", sizeSystem: "INT", sizeLabel: "M" },
+  ]);
+  await pool.query("UPDATE items SET attributes=$2 WHERE id=$1", [
+    itemIds[41], { brand: marker + "-hidden" },
+  ]);
+  const multiple = await list(`/api/catalog?q=${marker}&sizeLabel=xl&sizeLabel=m&sort=price_asc`);
+  assert.deepEqual(multiple.items.map((i: any) => i.id), itemIds.slice(0, 2));
+  const intersected = await list(`/api/catalog?q=${marker}&sizeLabel=XL&sizeLabel=M&brand=${marker}`);
+  assert.deepEqual(intersected.items.map((i: any) => i.id), [itemIds[1]]);
+  const options = await app.inject("/api/catalog/options");
+  assert.equal(options.statusCode, 200, options.body);
+  assert.ok(options.json().brand.includes(marker));
+  assert.ok(!options.json().brand.includes(marker + "-hidden"));
 });

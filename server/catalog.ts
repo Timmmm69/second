@@ -99,16 +99,46 @@ export async function readItems(itemIds: string[], staff = false) {
 }
 
 const uuidParam = z.object({ id: z.uuid() });
+const optionValues = z.union([z.string(), z.array(z.string())]).optional();
+const catalogQuery = z.object({
+  brand: optionValues,
+  color: optionValues,
+  material: optionValues,
+  season: optionValues,
+  sizeLabel: optionValues,
+}).catchall(z.string());
+const availableCatalog = [
+  "i.publication='PUBLISHED'",
+  "i.physical='AVAILABLE'",
+  "NOT EXISTS(SELECT 1 FROM inventory_claim c WHERE c.item_id=i.id AND (c.owner_type<>'CHECKOUT' OR c.expires_at>clock_timestamp()))",
+  "NOT EXISTS(SELECT 1 FROM operation_issues oi WHERE oi.item_id=i.id AND oi.state='OPEN' AND oi.kind IN ('NOT_FOUND','QUALITY','QUALITY_CHECK','INSPECTION','RETURN_INSPECTION'))",
+];
+
 export async function registerCatalog(app: FastifyInstance) {
+  app.get("/catalog/options", async () => {
+    const { rows: [options] } = await pool.query<Record<string, (string | null)[] | null>>(
+      `SELECT array_agg(DISTINCT i.attributes->>'brand') AS brand,
+              array_agg(DISTINCT i.attributes->>'color') AS color,
+              array_agg(DISTINCT i.attributes->>'material') AS material,
+              array_agg(DISTINCT i.attributes->>'season') AS season,
+              array_agg(DISTINCT CASE WHEN i.attributes->>'sizeSystem' IN ('INT','RU')
+                THEN i.attributes->>'sizeLabel' END) AS "sizeLabel"
+         FROM items i WHERE ${availableCatalog.join(" AND ")}`,
+    );
+    return Object.fromEntries(Object.entries(options).map(([key, raw]) => {
+      const values = new Map<string, string>();
+      for (const value of raw ?? []) {
+        const label = key === "color" ? productColor(value) : value?.trim();
+        if (label && !values.has(label.toLowerCase())) values.set(label.toLowerCase(), label);
+      }
+      return [key, [...values.values()].sort((a, b) => a.localeCompare(b, "ru", { numeric: true }))];
+    }));
+  });
+
   app.get("/catalog", async (req) => {
     const namedColor = "CASE WHEN btrim(i.attributes->>'color') !~* '(#|^[0-9a-f]{6}$|^[0-9a-f]{8}$)' THEN btrim(i.attributes->>'color') END";
-    const q = z.record(z.string(), z.string()).parse(req.query),
-      where = [
-        "i.publication='PUBLISHED'",
-        "i.physical='AVAILABLE'",
-        "NOT EXISTS(SELECT 1 FROM inventory_claim c WHERE c.item_id=i.id AND (c.owner_type<>'CHECKOUT' OR c.expires_at>clock_timestamp()))",
-        "NOT EXISTS(SELECT 1 FROM operation_issues oi WHERE oi.item_id=i.id AND oi.state='OPEN' AND oi.kind IN ('NOT_FOUND','QUALITY','QUALITY_CHECK','INSPECTION','RETURN_INSPECTION'))",
-      ],
+    const q = catalogQuery.parse(req.query),
+      where = [...availableCatalog],
       params: any[] = [];
     const add = (sql: string, value: any) => {
       params.push(value);
@@ -120,16 +150,16 @@ export async function registerCatalog(app: FastifyInstance) {
         "%" + q.q.toLowerCase().trim().replace(/\s+/g, " ") + "%",
       );
     if (q.category) add("i.category=?", q.category);
-    for (const key of [
-      "brand",
-      "material",
-      "season",
-      "audience",
-    ])
-      if (q[key]) add(`lower(i.attributes->>'${key}')=lower(?)`, q[key]);
-    if (q.color) add(`lower(${namedColor})=lower(?)`, q.color.trim());
-    const size = q.sizeLabel?.trim();
-    if (size) add("i.attributes->>'sizeSystem' IN ('INT','RU') AND lower(btrim(i.attributes->>'sizeLabel'))=lower(?)", size);
+    if (q.audience) add("lower(i.attributes->>'audience')=lower(?)", q.audience);
+    for (const key of ["brand", "material", "season", "color", "sizeLabel"] as const) {
+      const raw = q[key];
+      const values = (Array.isArray(raw) ? raw : [raw ?? ""])
+        .map((value) => value.trim().toLowerCase()).filter(Boolean);
+      if (!values.length) continue;
+      const field = key === "color" ? namedColor : `btrim(i.attributes->>'${key}')`;
+      const sizeSystem = key === "sizeLabel" ? "i.attributes->>'sizeSystem' IN ('INT','RU') AND " : "";
+      add(`${sizeSystem}lower(${field})=ANY(?::text[])`, values);
+    }
     for (const [key, op] of [
       ["minPrice", ">="],
       ["maxPrice", "<="],

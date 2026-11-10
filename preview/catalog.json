@@ -152,8 +152,10 @@
       "publication": "PUBLISHED",
       "version": 2,
       "attributes": {
+        "brand": "Линия",
         "color": "Серо-бежевый",
-        "season": "Всесезон",
+        "material": "Вискоза",
+        "season": "Лето",
         "audience": "Унисекс",
         "sizeLabel": "XL",
         "sizeSystem": "INT"
@@ -192,8 +194,10 @@
       "publication": "PUBLISHED",
       "version": 2,
       "attributes": {
+        "brand": "Север",
         "color": "Шалфейный",
-        "season": "Всесезон",
+        "material": "Шерсть",
+        "season": "Зима",
         "audience": "Унисекс",
         "sizeLabel": "",
         "sizeSystem": "RU"
@@ -231,7 +235,9 @@
       "publication": "PUBLISHED",
       "version": 2,
       "attributes": {
+        "brand": "Маяк",
         "color": "Коричневый",
+        "material": "Экокожа",
         "season": "Всесезон",
         "audience": "Унисекс",
         "sizeLabel": "",
@@ -272,8 +278,10 @@
       "publication": "PUBLISHED",
       "version": 2,
       "attributes": {
+        "brand": "Линия",
         "color": "Пыльно-розовый",
-        "season": "Всесезон",
+        "material": "Хлопок",
+        "season": "Демисезон",
         "audience": "Детское",
         "sizeLabel": "110",
         "sizeSystem": "RU"
@@ -311,8 +319,10 @@
       "publication": "PUBLISHED",
       "version": 2,
       "attributes": {
+        "brand": "Маяк",
         "color": "Светло-голубой",
-        "season": "Всесезон",
+        "material": "Хлопок",
+        "season": "Лето",
         "audience": "Унисекс",
         "sizeLabel": "S",
         "sizeSystem": "INT"
@@ -351,8 +361,10 @@
       "publication": "PUBLISHED",
       "version": 2,
       "attributes": {
+        "brand": "Север",
         "color": "Песочный",
-        "season": "Всесезон",
+        "material": "Шерсть",
+        "season": "Зима",
         "audience": "Унисекс",
         "sizeLabel": "M",
         "sizeSystem": "INT"
@@ -391,7 +403,9 @@
       "publication": "PUBLISHED",
       "version": 2,
       "attributes": {
+        "brand": "Маяк",
         "color": "Серо-синий",
+        "material": "Деним",
         "season": "Всесезон",
         "audience": "Унисекс",
         "sizeLabel": "M",
@@ -432,8 +446,10 @@
       "publication": "PUBLISHED",
       "version": 2,
       "attributes": {
+        "brand": "Север",
         "color": "Карамельный",
-        "season": "Всесезон",
+        "material": "Хлопок",
+        "season": "Демисезон",
         "audience": "Унисекс",
         "sizeLabel": "L",
         "sizeSystem": "INT"
