@@ -25,11 +25,13 @@ export interface Item {
   physical: string;
   version: number;
   attributes: Record<string, string | number>;
+  measurements?: Record<string, number>;
   media: Media[];
   available: boolean;
   storageLocation?: string;
 }
 export interface Category {
+  measurements?: string[];
   sortOrder: number;
   archived: boolean;
   version: number;
@@ -218,6 +220,20 @@ export const statusNames: Record<string, string> = {
   OPEN: "Открыто",
   RECEIVED: "Получено для осмотра",
   RESOLVED: "Решение принято",
+};
+export const measurementNames: Record<string, string> = {
+  chest: "Грудь, полуобхват",
+  waist: "Талия, полуобхват",
+  hips: "Бёдра, полуобхват",
+  length: "Длина",
+  sleeve: "Рукав",
+  inseam: "Шаговый шов",
+  rise: "Посадка",
+  width: "Ширина",
+  height: "Высота",
+  depth: "Глубина",
+  strap: "Длина ремня",
+  shoulders: "Плечи",
 };
 export const money = (n: number) =>
   new Intl.NumberFormat("ru-BY", {

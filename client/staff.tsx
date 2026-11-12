@@ -12,6 +12,7 @@ import {
   ErrorBox,
   Field,
   Icon,
+  ItemMeasurements,
   Loading,
   Photo,
   Select,
@@ -23,6 +24,7 @@ import {
 import {
   date,
   itemCount,
+  measurementNames,
   methodNames,
   money,
   statusNames,
@@ -383,6 +385,7 @@ const initialItem = {
     origin: "",
     documents: "",
   } as Record<string, string | number>,
+  measurements: {} as Record<string, number>,
   storageLocation: "",
 };
 function editableSize(item: Item) {
@@ -430,6 +433,7 @@ function ItemEditor({ id }: { id: string }) {
         category: item.category,
         priceMinor: item.priceMinor,
         attributes: { ...initialItem.attributes, ...item.attributes },
+        measurements: item.measurements ?? {},
         storageLocation: item.storageLocation || "",
       });
       setPrice(String(item.priceMinor / 100));
@@ -515,6 +519,11 @@ function ItemEditor({ id }: { id: string }) {
     reload();
   };
   if (loading && !item) return <Loading />;
+  const categoryMeasurements = categories.find((category) => category.id === form.category)?.measurements;
+  const measurementKeys = [...new Set([
+    ...(categoryMeasurements?.length ? categoryMeasurements : Object.keys(measurementNames)),
+    ...Object.keys(form.measurements),
+  ])];
   const missing = [
     !form.title ? "Название" : "",
     !Number(price) ? "Цена" : "",
@@ -616,6 +625,34 @@ function ItemEditor({ id }: { id: string }) {
           onValueChange={(value) => attr("audience", value)}
           options={["Женское", "Мужское", "Унисекс", "Детское"].map((value) => ({ value, label: value }))}
         />
+        </fieldset>
+        <fieldset>
+          <legend>Замеры, см</legend>
+          <p className="small-text">Заполните известные замеры. Грудь, талия и бёдра — полуобхват. Пустые поля покупатель не увидит.</p>
+          <div className="form-pair">
+            {measurementKeys.map((key) => (
+              <Field
+                key={key}
+                label={measurementNames[key] || key}
+                type="number"
+                inputMode="decimal"
+                min="0"
+                max="2000"
+                step="0.1"
+                value={form.measurements[key] ? form.measurements[key] / 10 : ""}
+                onChange={(event) => {
+                  const raw = event.target.value;
+                  setForm((previous) => {
+                    const measurements = { ...previous.measurements };
+                    if (raw === "") delete measurements[key];
+                    else measurements[key] = Math.round(Number(raw) * 10);
+                    return { ...previous, measurements };
+                  });
+                  setDirty(true);
+                }}
+              />
+            ))}
+          </div>
         </fieldset>
         <fieldset><legend>Состояние вещи</legend>
         <label className="checkbox-row">
@@ -858,6 +895,7 @@ function ItemEditor({ id }: { id: string }) {
           <strong>{money(Math.round(Number(price) * 100))}</strong>
           {productColor(attributes.color) && <p>{productColor(attributes.color)}</p>}
           <p>{form.attributes.material}</p>
+          <ItemMeasurements measurements={form.measurements} />
           {form.hasDefect && <div className="defect-notice"><strong>Есть дефект</strong><p className="pre-wrap">{form.defectDescription}</p></div>}
           {missing.length > 0 && (
             <div className="notice">

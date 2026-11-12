@@ -11,7 +11,7 @@ import {
   type TextareaHTMLAttributes,
 } from "react";
 import { ApiError, api } from "./api";
-import type { Media } from "./types";
+import { measurementNames, type Media } from "./types";
 import { tg } from "./telegram";
 export function Icon({ name, size = 22 }: { name: string; size?: number }) {
   const paths: Record<string, ReactNode> = {
@@ -489,6 +489,24 @@ export function Select(props: {
         </div>
       </div>
     </FieldFrame>
+  );
+}
+
+export function ItemMeasurements({ measurements }: { measurements?: Record<string, number> }) {
+  const entries = Object.entries(measurements ?? {}).filter(([, value]) => Number.isFinite(value) && value > 0);
+  if (!entries.length) return null;
+  return (
+    <section className="detail-section">
+      <h2>Замеры</h2>
+      <dl className="details-list">
+        {entries.map(([key, value]) => (
+          <div key={key}>
+            <dt>{measurementNames[key] || key}</dt>
+            <dd>{(value / 10).toLocaleString("ru-BY")} см</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
   );
 }
 
