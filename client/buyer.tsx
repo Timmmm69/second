@@ -16,6 +16,7 @@ import {
   ErrorBox,
   Field,
   Icon,
+  ItemMeasurements,
   Loading,
   Photo,
   Select,
@@ -625,6 +626,7 @@ function ItemPage({ id }: { id: string }) {
                 ))}
             </dl>
           </section>
+          <ItemMeasurements measurements={item.measurements} />
           <section className="detail-section">
             <h2>Получение</h2>
             <p>
