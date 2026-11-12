@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Luchok backup at 04:00 Minsk time
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 Europe/Minsk
+Persistent=false
+Unit=luchok-backup.service
+
+[Install]
+WantedBy=timers.target
