@@ -419,9 +419,7 @@ function StoreSettings() {
       <section className="detail-section">
         <h2>Почтовые способы</h2>
         <p className="small-text">
-          Включайте способ после проверки действующего договора, наложенного
-          платежа, расходов и возвратов. Оформление посылок — вручную в кабинете
-          почты.
+          Включите способы, которыми магазин готов отправлять вещи вручную после проверки заявки.
         </p>
         {(["BELPOST", "EUROPOST"] as const).map((key) => (
           <section className="carrier-settings" key={key}>
@@ -434,62 +432,11 @@ function StoreSettings() {
               />
               <span>Доступна покупателям</span>
             </label>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={form.carriers[key]?.partialDelivery || false}
-                onChange={(e) =>
-                  carrier(key, { partialDelivery: e.target.checked })
-                }
-              />
-              <span>Договор допускает частичную выдачу</span>
-            </label>
-            <Field
-              label="Реквизиты договора"
-              value={form.carriers[key]?.contract || ""}
-              onChange={(e) => carrier(key, { contract: e.target.value })}
-            />
             <Textarea
-              label="Раскрываемые покупателю условия"
+              label="Условия для покупателя, если известны"
               value={form.carriers[key]?.terms || ""}
               onChange={(value) => carrier(key, { terms: value })}
             />
-            <Textarea
-              label="Проверенная схема расчётов и плательщики"
-              value={form.carriers[key]?.paymentScheme || ""}
-              onChange={(value) => carrier(key, { paymentScheme: value })}
-            />
-            <Textarea
-              label="Проверенные условия возврата посылки"
-              value={form.carriers[key]?.returnsScheme || ""}
-              onChange={(value) => carrier(key, { returnsScheme: value })}
-            />
-            <Field
-              label="Дата проверки договора и условий"
-              type="date"
-              value={form.carriers[key]?.verifiedAt?.slice(0, 10) || ""}
-              onChange={(e) => carrier(key, { verifiedAt: e.target.value })}
-            />
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={form.carriers[key]?.codConfirmed || false}
-                onChange={(e) =>
-                  carrier(key, { codConfirmed: e.target.checked })
-                }
-              />
-              <span>Наложенный платёж разрешён действующим договором</span>
-            </label>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={form.carriers[key]?.returnsConfirmed || false}
-                onChange={(e) =>
-                  carrier(key, { returnsConfirmed: e.target.checked })
-                }
-              />
-              <span>Проверены условия невостребованной посылки и возврата</span>
-            </label>
           </section>
         ))}
       </section>

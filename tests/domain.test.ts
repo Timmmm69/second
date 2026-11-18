@@ -138,6 +138,68 @@ after(async () => {
   await app.close();
   await pool.end();
 });
+test("single-form checkout claims unique stock, stores current prices and appears in the staff queue", async () => {
+  const itemIds = await Promise.all(Array.from({ length: 5 }, () => item()));
+  const { rows: items } = await pool.query<{ id: string; version: number }>(
+    "SELECT id,version FROM items WHERE id=ANY($1::uuid[]) ORDER BY id", [itemIds],
+  );
+  const { value, version: settingsVersion } = (await pool.query("SELECT value,version FROM store_settings")).rows[0];
+  const base = { items: items.slice(0, 2), settingsVersion, method: "PICKUP", phone: "+375291234567", termsAccepted: true };
+  const postal = { fullName: "Тест Получатель", city: "Минск" };
+
+  const closed = { ...value, acceptingOrders: false };
+  await pool.query("UPDATE store_settings SET value=$1", [closed]);
+  try {
+    const result = await api(buyer, "POST", "/orders", base);
+    assert.equal(result.status, 503);
+    assert.equal(result.body.code, "STORE_CLOSED");
+  } finally {
+    await pool.query("UPDATE store_settings SET value=$1", [value]);
+  }
+  assert.equal((await api(buyer, "POST", "/orders", { ...base, phone: "---------" })).status, 422);
+  const outdated = await api(buyer, "POST", "/orders", { ...base, items: [{ ...items[0], version: items[0].version + 1 }] });
+  assert.equal(outdated.body.code, "ITEM_CHANGED");
+  const rulesChanged = await api(buyer, "POST", "/orders", { ...base, settingsVersion: settingsVersion + 1 });
+  assert.equal(rulesChanged.body.code, "RULES_CHANGED");
+  assert.equal((await pool.query("SELECT 1 FROM order_lines WHERE item_id=ANY($1::uuid[])", [itemIds])).rowCount, 0);
+
+  const key = randomUUID();
+  const [accepted, duplicate] = await Promise.all([
+    api(buyer, "POST", "/orders", { ...base, totalMinor: 1 }, key),
+    api(buyer, "POST", "/orders", { ...base, totalMinor: 1 }, key),
+  ]);
+  assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+  assert.equal(duplicate.body.id, accepted.body.id);
+  assert.equal(accepted.body.totalMinor, 9000);
+  assert.equal(accepted.body.lines.length, 2);
+  assert.equal(accepted.body.status, "CHECKING");
+  assert.ok(accepted.body.lines.every((line: { checked: boolean }) => !line.checked));
+
+  const euro = await api(buyer, "POST", "/orders", { ...base, ...postal, items: [items[2]], method: "EUROPOST" });
+  assert.equal(euro.status, 200, JSON.stringify(euro.body));
+  assert.equal(euro.body.recipient.office, "");
+  const belpost = { ...base, ...postal, items: [items[3]], method: "BELPOST", office: "Отделение 7", postalCode: "220007" };
+  assert.equal((await api(buyer, "POST", "/orders", { ...belpost, office: "" })).body.code, "RECIPIENT_REQUIRED");
+  const bel = await api(buyer, "POST", "/orders", belpost);
+  assert.equal(bel.status, 200, JSON.stringify(bel.body));
+  assert.equal(bel.body.recipient.postalCode, "220007");
+  assert.equal(bel.body.totalMinor, 4500);
+  assert.equal(bel.body.shipment, undefined);
+
+  const sameItem = { ...base, items: [items[4]] };
+  const acquisitions = await Promise.all([buyer, users[3]].map(actor => api(actor, "POST", "/orders", sameItem)));
+  assert.deepEqual(acquisitions.map(result => result.status).sort(), [200, 409]);
+  assert.equal(acquisitions.find(result => result.status === 409)?.body.code, "AVAILABILITY_CONFLICT");
+
+  const queue = await api(staff, "GET", "/staff/queue?filter=checking");
+  for (const order of [accepted, euro, bel]) {
+    assert.ok(queue.body.orders.some((entry: { id: string }) => entry.id === order.body.id));
+    const detail = await api(staff, "GET", `/orders/${order.body.id}`);
+    assert.equal(detail.body.method, order.body.method);
+    assert.equal(detail.body.recipient.phone, "+375291234567");
+  }
+  assert.equal((await pool.query("SELECT 1 FROM order_lines WHERE item_id=ANY($1::uuid[])", [itemIds])).rowCount, 5);
+});
 test("maintenance keeps heartbeat, lag detection and ten-minute contact cleanup without tick audit noise", async () => {
   const expired = users[100], fresh = users[101];
   await pool.query(

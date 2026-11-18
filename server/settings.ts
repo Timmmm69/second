@@ -1,4 +1,4 @@
-import { publicSettings } from "./public-settings.js";
+import { launchSettingsReady, orderingIssue, publicSettings } from "./public-settings.js";
 import { randomBytes } from "node:crypto";
 import { statfs } from "node:fs/promises";
 import type { FastifyInstance } from "fastify";
@@ -29,10 +29,10 @@ const calendar = z
   );
 const carrier = z.object({
   enabled: z.boolean(),
-  codConfirmed: z.boolean().default(false),
-  returnsConfirmed: z.boolean().default(false),
-  terms: z.string().max(6000),
-  contract: z.string().max(1000),
+  codConfirmed: z.boolean().optional(),
+  returnsConfirmed: z.boolean().optional(),
+  terms: z.string().max(6000).optional(),
+  contract: z.string().max(1000).optional(),
   paymentScheme: z.string().max(3000).optional(),
   returnsScheme: z.string().max(3000).optional(),
   verifiedAt: z.string().optional(),
@@ -72,12 +72,13 @@ export async function registerSettings(app: FastifyInstance) {
   });
   app.get("/delivery/options", async () => {
     const s = await settings();
+    const open = !orderingIssue(s);
     return {
       options: [
-        { id: "PICKUP", name: "Самовывоз", enabled: s.acceptingOrders },
+        { id: "PICKUP", name: "Самовывоз", enabled: open },
         ...Object.entries(s.carriers as Record<string, any>).map(([id, v]) => ({
           id,
-          enabled: v.enabled,
+          enabled: open && v.enabled,
           terms: v.terms,
         })),
       ],
@@ -92,30 +93,9 @@ export async function registerSettings(app: FastifyInstance) {
   app.get("/owner/settings", settings);
   app.patch("/owner/settings", async (req) => {
     const next = settingsSchema.parse(req.body);
-    for (const [id, c] of Object.entries(next.carriers))
-      if (c.enabled)
-        assert(
-          c.codConfirmed &&
-            c.returnsConfirmed &&
-            c.contract.trim().length >= 5 &&
-            c.terms.trim().length >= 20 &&
-            (c.paymentScheme ?? "").trim().length >= 20 &&
-            (c.returnsScheme ?? "").trim().length >= 20 &&
-            !!c.verifiedAt,
-          422,
-          "CARRIER_CONTRACT",
-          `Для ${id} нужны реквизиты действующего договора, проверенные условия оплаты, возврата и дата сверки`,
-        );
     if (next.acceptingOrders)
       assert(
-        next.address.trim() &&
-          next.phone.trim() &&
-          !next.phoneIsTest &&
-          next.phone.replace(/\D/g, "") !== "375337777777" &&
-          next.documentStatus === "APPROVED" &&
-          next.seller.trim() &&
-          next.telegramUsername.trim() &&
-          Object.values(next.documents).every((v) => v.trim().length >= 20),
+        launchSettingsReady(next),
         422,
         "LAUNCH_SETTINGS",
         "Для реальных оформлений нужны рабочий телефон, поддержка, реквизиты и явно утверждённые документы",
@@ -135,6 +115,9 @@ export async function registerSettings(app: FastifyInstance) {
       assert(!guideChanged || next.documentStatus === "DRAFT", 422, "DOCUMENT_REVIEW", "Изменённые условия сначала сохраните как черновик и проверьте перед утверждением");
       assert(!documentsChanged || next.documentStatus === "DRAFT", 422, "DOCUMENT_REVIEW", "Сначала сохраните новый текст как черновик, затем проверьте и утвердите отдельным сохранением");
       const value = { ...next };
+      for (const method of ["BELPOST", "EUROPOST"] as const) {
+        value.carriers[method] = { terms: "", ...old.value.carriers?.[method], ...next.carriers[method] };
+      }
       delete (value as any).version;
       const version = old.version + 1;
       await c.query(

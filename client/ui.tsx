@@ -159,6 +159,13 @@ export function Button({
 }
 type FieldLabel = { label: string; error?: string; hint?: string };
 
+function emptyControl(markEmpty: boolean, disabled: boolean | undefined, value: unknown) {
+  if (!markEmpty || disabled) return undefined;
+  const empty = value == null || (typeof value === "string" && !value.trim()) ||
+    (Array.isArray(value) && value.length === 0);
+  return empty ? "" : undefined;
+}
+
 function FieldFrame({
   id,
   label,
@@ -190,8 +197,9 @@ export function Field({
   hint,
   id: providedId,
   className = "",
+  markEmpty = false,
   ...props
-}: FieldLabel & InputHTMLAttributes<HTMLInputElement>) {
+}: FieldLabel & InputHTMLAttributes<HTMLInputElement> & { markEmpty?: boolean }) {
   const automaticId = useId();
   const id = providedId || automaticId;
   return (
@@ -200,6 +208,7 @@ export function Field({
         {...props}
         id={id}
         className={`field-control ${className}`}
+        data-empty={emptyControl(markEmpty && !props.readOnly, props.disabled, props.value)}
         aria-invalid={error ? true : props["aria-invalid"]}
         aria-describedby={fieldDescription(id, hint, error, props["aria-describedby"])}
       />
@@ -214,7 +223,10 @@ function searchText(text: string) {
 }
 
 export function Select(props: {
+  id?: string;
   label: string;
+  error?: string;
+  markEmpty?: boolean;
   options: readonly SelectOption[];
   searchPlaceholder?: string;
   disabled?: boolean;
@@ -222,8 +234,9 @@ export function Select(props: {
   | { multiple?: false; value: string; onValueChange: (value: string) => void }
   | { multiple: true; value: readonly string[]; onValueChange: (value: string[]) => void; allowCustom?: boolean }
 )) {
-  const { label, options, searchPlaceholder, disabled = false } = props;
-  const id = useId();
+  const { label, error, options, searchPlaceholder, disabled = false } = props;
+  const automaticId = useId();
+  const id = props.id || automaticId;
   const listId = `${id}-list`;
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -393,7 +406,7 @@ export function Select(props: {
   }
 
   return (
-    <FieldFrame id={id} label={label}>
+    <FieldFrame id={id} label={label} error={error}>
       <div
         className="select-control"
         ref={root}
@@ -407,6 +420,9 @@ export function Select(props: {
           id={id}
           type="button"
           className="field-control select-trigger"
+          data-empty={emptyControl(Boolean(props.markEmpty), disabled || !options.length, props.value)}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={fieldDescription(id, undefined, error)}
           role={searchPlaceholder ? undefined : "combobox"}
           aria-haspopup="listbox"
           aria-expanded={open}
@@ -519,10 +535,12 @@ export function Textarea({
   error,
   id: providedId,
   className = "",
+  markEmpty = false,
   ...props
 }: FieldLabel & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChange"> & {
   value: string;
   onChange: (value: string) => void;
+  markEmpty?: boolean;
 }) {
   const automaticId = useId();
   const id = providedId || automaticId;
@@ -532,6 +550,7 @@ export function Textarea({
         {...props}
         id={id}
         className={`field-control ${className}`}
+        data-empty={emptyControl(markEmpty && !props.readOnly, props.disabled, value)}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         rows={rows}
@@ -554,7 +573,7 @@ export function ErrorBox({
   return (
     <div role="alert" className="error-box">
       <strong>
-        {err.status === 0 ? "Нет соединения" : err.status === 503 ? "Магазин временно недоступен" : err.status === 422 ? "Проверьте заполненные данные" : err.status === 409
+        {err.status === 0 ? "Нет соединения" : err.code === "STORE_CLOSED" || err.code === "LAUNCH_SETTINGS" ? "Приём заявок приостановлен" : err.status === 503 ? "Сервис временно недоступен" : err.status === 422 ? "Проверьте заполненные данные" : err.status === 409
           ? "Данные изменились"
           : err.status === 401
             ? "Откройте приложение через Telegram"

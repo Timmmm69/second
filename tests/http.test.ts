@@ -181,7 +181,7 @@ test("D05 category validation, publish checklist and version conflicts", async (
     method: "POST",
     url: `/api/staff/items/${i.id}/publish`,
     headers: headers(staff),
-    payload: { version: i.version, checked: true },
+    payload: { version: i.version, checked: false },
   });
   assert.equal(incomplete.statusCode, 422, incomplete.body);
   const stale = await app.inject({
@@ -191,6 +191,41 @@ test("D05 category validation, publish checklist and version conflicts", async (
     payload: { ...data, version: i.version + 1 },
   });
   assert.equal(stale.statusCode, 409);
+});
+test("a product can be created, edited and published with only title, category and price", async () => {
+  const command = (method: "POST" | "PATCH", url: string, payload: object) =>
+    app.inject({ method, url: "/api" + url, headers: headers(staff), payload });
+  const data = { title: "Тестовая карточка без характеристик", category: "outerwear", priceMinor: 0 };
+  for (const invalid of [{ ...data, title: " " }, { ...data, category: "" }, { ...data, priceMinor: undefined }]) {
+    assert.equal((await command("POST", "/staff/items", invalid)).statusCode, 422);
+  }
+  const created = await command("POST", "/staff/items", data);
+  assert.equal(created.statusCode, 200, created.body);
+  const item = created.json();
+  assert.ok(item.sku);
+  assert.deepEqual(item.attributes, {});
+  const patched = await command("PATCH", `/staff/items/${item.id}`, {
+    ...data, version: item.version, attributes: { origin: "BY", material: "Хлопок" },
+  });
+  assert.equal(patched.statusCode, 200, patched.body);
+  const renamed = await command("PATCH", `/staff/items/${item.id}`, {
+    ...data, title: "Исправленное название", version: patched.json().version,
+  });
+  assert.equal(renamed.statusCode, 200, renamed.body);
+  assert.deepEqual(renamed.json().attributes, { origin: "BY", material: "Хлопок" });
+  const cleared = await command("PATCH", `/staff/items/${item.id}`, {
+    ...data, version: renamed.json().version, attributes: {},
+  });
+  assert.equal(cleared.statusCode, 200, cleared.body);
+  const published = await command("POST", `/staff/items/${item.id}/publish`, {
+    version: cleared.json().version, checked: true,
+  });
+  assert.equal(published.statusCode, 200, published.body);
+  const publicItem = (await app.inject(`/api/items/${item.id}`)).json();
+  assert.equal(publicItem.available, true);
+  assert.equal(publicItem.priceMinor, 0);
+  assert.deepEqual(publicItem.attributes, {});
+  assert.deepEqual(publicItem.media, []);
 });
 test("T25/T35 upload signature decode, EXIF stripped variants, retry dedup and private originals", async () => {
   const i = (
@@ -456,47 +491,53 @@ test("B07/B10 server draft encryption, selection persistence, phone request webh
     "+375291111111",
   );
 });
-test("O08 owner cannot enable carrier with only a checkbox and no contract", async () => {
+test("O08 owner can enable both manual carriers without contract or payment details", async () => {
   const s = (
     await app.inject({ url: "/api/owner/settings", headers: { cookie: owner } })
   ).json();
-  s.carriers.BELPOST.enabled = true;
+  s.carriers = { BELPOST: { enabled: true }, EUROPOST: { enabled: true } };
+  s.acceptingOrders = false;
   const r = await app.inject({
     method: "PATCH",
     url: "/api/owner/settings",
     headers: headers(owner),
     payload: s,
   });
-  assert.equal(r.statusCode, 422, r.body);
+  assert.equal(r.statusCode, 200, r.body);
   const pub = (await app.inject("/api/settings")).json();
-  assert.equal(pub.carriers.BELPOST.contract, undefined);
+  for (const method of ["BELPOST", "EUROPOST"]) {
+    assert.equal(pub.carriers[method].enabled, true);
+    assert.equal(pub.carriers[method].contract, undefined);
+  }
+  const options = (await app.inject("/api/delivery/options")).json().options;
+  assert.ok(options.every((option: { enabled: boolean }) => option.enabled === pub.acceptingOrders));
 });
 test("T07 real HTTP disconnect after COMMIT restores exactly one order by original key", async () => {
   const fixture = (
     await pool.query(
-      "INSERT INTO items(sku,title,category,price_minor,publication,physical) VALUES($1,'Тест потери ответа','tops',2500,'PUBLISHED','AVAILABLE') RETURNING id",
+      "INSERT INTO items(sku,title,category,price_minor,publication,physical) VALUES($1,'Тест потери ответа','tops',2500,'PUBLISHED','AVAILABLE') RETURNING id,version",
       ["HTTP-" + key()],
     )
   ).rows[0];
   await pool.query(
     "UPDATE store_settings SET value=jsonb_set(value,'{acceptingOrders}','true') WHERE id=true",
   );
-  const lease = (
-    await app.inject({
-      method: "POST",
-      url: "/api/checkout/leases",
-      headers: headers(buyer),
-      payload: { itemIds: [fixture.id] },
-    })
-  ).json();
-  assert.ok(lease.id);
+  const { version: settingsVersion } = (await app.inject("/api/settings")).json();
   const operation = key(),
     body = {
-      leaseId: lease.id,
+      items: [fixture],
+      settingsVersion,
       method: "PICKUP",
       phone: "+375291234567",
       termsAccepted: true,
     };
+  const duplicates = await app.inject({
+    method: "POST",
+    url: "/api/orders",
+    headers: headers(buyer),
+    payload: { ...body, items: [fixture, fixture] },
+  });
+  assert.equal(duplicates.statusCode, 422, duplicates.body);
   const address = await app.listen({ host: "127.0.0.1", port: 0 });
   await assert.rejects(
     fetch(address + "/api/orders", {

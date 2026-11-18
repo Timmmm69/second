@@ -37,7 +37,7 @@ import {
 export default function Staff() {
   const { path } = useApp();
   if (path.startsWith("/staff/items/"))
-    return <ItemEditor id={path.split("/")[3]} />;
+    return <ItemEditor key={path} id={path.split("/")[3]} />;
   if (path.startsWith("/staff/orders/"))
     return <StaffOrder id={path.split("/")[3]} />;
   if (path === "/staff/items") return <Items />;
@@ -370,7 +370,7 @@ const initialItem = {
   defectDescription: "",
   title: "",
   sku: "",
-  category: "outerwear",
+  category: "",
   priceMinor: 0,
   attributes: {
     sizeLabel: "",
@@ -378,7 +378,7 @@ const initialItem = {
     material: "",
     color: "",
     season: "",
-    audience: "Унисекс",
+    audience: "",
     care: "",
     manufacturer: "",
     importer: "",
@@ -413,16 +413,15 @@ function ItemEditor({ id }: { id: string }) {
   const [checked, setChecked] = useState(false);
   const [price, setPrice] = useState("");
   const [size, setSize] = useState("");
+  const [attempted, setAttempted] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const showSize = Boolean(form.category) && !["bags", "accessories"].includes(form.category);
   const childSize = form.category === "children";
   const previousSize = item && (childSize !== (item.category === "children") || !editableSize(item))
     ? productSize(item.attributes)
     : "";
   const previousColor = item?.attributes.color;
   const legacyColor = previousColor && !productColor(previousColor) ? String(previousColor) : "";
-  useEffect(() => {
-    if (id === "new" && !dirty && categories.length && !categories.some(c => c.id === form.category && !c.archived))
-      setForm(v => ({...v, category: categories.find(c => !c.archived)?.id || ""}));
-  }, [id, dirty, categories, form.category]);
   useEffect(() => {
     if (item) {
       setForm({
@@ -459,15 +458,30 @@ function ItemEditor({ id }: { id: string }) {
     setForm((v) => ({ ...v, attributes: { ...v.attributes, [key]: value } }));
     setDirty(true);
   };
-  const attributes = previousSize && !size.trim()
-    ? form.attributes
-    : { ...form.attributes, sizeSystem: childSize ? "RU" : "INT", sizeLabel: size.trim() };
+  const attributes = { ...form.attributes };
+  if (showSize && !previousSize) {
+    delete attributes.sizeSystem;
+    delete attributes.sizeLabel;
+  }
+  if (showSize && size.trim()) {
+    attributes.sizeSystem = childSize ? "RU" : "INT";
+    attributes.sizeLabel = size.trim();
+  }
+  const priceInput = price.trim().replace(",", ".");
+  const priceMinor = Math.round(Number(priceInput) * 100);
+  const fieldErrors = {
+    title: form.title.trim() ? undefined : "Укажите название вещи",
+    category: form.category ? undefined : "Выберите категорию",
+    price: !priceInput ? "Укажите цену" :
+      !/^\d+(\.\d{1,2})?$/.test(priceInput) || priceMinor > 100000000 ? "Укажите цену от 0 до 1 000 000 BYN с точностью до копеек" : undefined,
+    defect: form.hasDefect && !form.defectDescription.trim() ? "Опишите конкретный дефект" : undefined,
+  };
   const save = async () => {
     const data = {
       ...form,
       attributes,
       sku: form.sku.trim() || undefined,
-      priceMinor: Math.round(Number(price.replace(",", ".")) * 100),
+      priceMinor,
       ...(item ? { version: item.version } : {}),
     };
     const result = await mutation.run<Item>(
@@ -521,33 +535,15 @@ function ItemEditor({ id }: { id: string }) {
   if (loading && !item) return <Loading />;
   const categoryMeasurements = categories.find((category) => category.id === form.category)?.measurements;
   const measurementKeys = [...new Set([
-    ...(categoryMeasurements?.length ? categoryMeasurements : Object.keys(measurementNames)),
+    ...(categoryMeasurements ?? []),
     ...Object.keys(form.measurements),
   ])];
-  const missing = [
-    !form.title ? "Название" : "",
-    !Number(price) ? "Цена" : "",
-    !form.storageLocation ? "Место хранения" : "",
-    !item?.media?.length ? "Фото" : "",
-    ...["material", "care", "manufacturer", "importer", "origin", "documents"]
-      .filter((k) => !form.attributes[k])
-      .map(
-        (k) =>
-          ({
-            material: "Состав",
-            care: "Уход",
-            manufacturer: "Изготовитель",
-            importer: "Импортёр",
-            origin: "Происхождение",
-            documents: "Документы",
-          })[k] || k,
-      ),
-  ].filter(Boolean);
+  const missing = Object.values(fieldErrors).filter(Boolean);
   return (
     <div className="page narrow item-editor">
       <h1>{id === "new" ? "Новая вещь" : "Карточка вещи"}</h1>
       <nav className="editor-shortcuts" aria-label="Разделы карточки"><a href="#editor-basic" onClick={e => { e.preventDefault(); document.getElementById("editor-basic")?.scrollIntoView(); }}>Данные</a><a href="#editor-photos" onClick={e => { e.preventDefault(); document.getElementById("editor-photos")?.scrollIntoView(); }}>Фото</a></nav>
-      <p className="muted">Одна карточка — один физический экземпляр</p>
+      <p className="muted">Красным отмечены незаполненные поля. Обязательные поля помечены *.</p>
       <ErrorBox error={error} retry={reload} />
       {mutation.recovery}
       {item && (
@@ -558,27 +554,40 @@ function ItemEditor({ id }: { id: string }) {
         </div>
       )}
       <form
+        ref={formRef}
         className="form-stack editor-form"
         onSubmit={(e) => {
           e.preventDefault();
+          setAttempted(true);
+          if (missing.length) {
+            requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+            return;
+          }
           save();
         }}
       >
         <fieldset id="editor-basic"><legend>Основное</legend>
         <Field
-          label="Название"
+          label="Название *"
+          markEmpty
+          aria-required
+          maxLength={180}
+          error={attempted ? fieldErrors.title : undefined}
           value={form.title}
           onChange={(e) => set("title", e.target.value)}
-          required
         />
         <Field
           label="Артикул"
+          markEmpty
+          maxLength={80}
           value={form.sku}
           onChange={(e) => set("sku", e.target.value)}
           hint="Оставьте пустым при создании для автоматического артикула."
         />
         <Select
-          label="Категория"
+          label="Категория *"
+          markEmpty
+          error={attempted ? fieldErrors.category : undefined}
           value={form.category}
           onValueChange={(value) => {
             if ((value === "children") !== childSize) {
@@ -592,10 +601,12 @@ function ItemEditor({ id }: { id: string }) {
             .map((c) => ({ value: c.id, label: c.archived ? `${c.name} (в архиве)` : c.name }))}
         />
         <Field
-          label="Цена, BYN"
+          label="Цена, BYN *"
+          markEmpty
+          aria-required
+          error={attempted ? fieldErrors.price : undefined}
           value={price}
           inputMode="decimal"
-          required
           onChange={(e) => {
             setPrice(e.target.value);
             setDirty(true);
@@ -603,13 +614,16 @@ function ItemEditor({ id }: { id: string }) {
         />
         <Field
           label="Место хранения"
+          markEmpty
+          maxLength={200}
           value={form.storageLocation}
           onChange={(e) => set("storageLocation", e.target.value)}
           placeholder="Например, зал · рейл 2"
         />
-        {!["bags", "accessories"].includes(form.category) && (
+        {showSize && (
           <Field
             label="Размер"
+            markEmpty={!previousSize}
             value={size}
             placeholder={childSize ? "Например, 110 или 116" : "Например, S, M, L или XL"}
             pattern={childSize ? undefined : letterSizePattern}
@@ -621,12 +635,13 @@ function ItemEditor({ id }: { id: string }) {
         )}
         <Select
           label="Назначение"
-          value={String(form.attributes.audience || "Унисекс")}
+          markEmpty
+          value={String(form.attributes.audience ?? "")}
           onValueChange={(value) => attr("audience", value)}
-          options={["Женское", "Мужское", "Унисекс", "Детское"].map((value) => ({ value, label: value }))}
+          options={[{ value: "", label: "Не указано" }, ...["Женское", "Мужское", "Унисекс", "Детское"].map((value) => ({ value, label: value }))]}
         />
         </fieldset>
-        <fieldset>
+        {measurementKeys.length > 0 && <fieldset>
           <legend>Замеры, см</legend>
           <p className="small-text">Заполните известные замеры. Грудь, талия и бёдра — полуобхват. Пустые поля покупатель не увидит.</p>
           <div className="form-pair">
@@ -634,12 +649,13 @@ function ItemEditor({ id }: { id: string }) {
               <Field
                 key={key}
                 label={measurementNames[key] || key}
+                markEmpty
                 type="number"
                 inputMode="decimal"
                 min="0"
                 max="2000"
                 step="0.1"
-                value={form.measurements[key] ? form.measurements[key] / 10 : ""}
+                value={form.measurements[key] === undefined ? "" : form.measurements[key] / 10}
                 onChange={(event) => {
                   const raw = event.target.value;
                   setForm((previous) => {
@@ -653,7 +669,7 @@ function ItemEditor({ id }: { id: string }) {
               />
             ))}
           </div>
-        </fieldset>
+        </fieldset>}
         <fieldset><legend>Состояние вещи</legend>
         <label className="checkbox-row">
           <input type="checkbox" checked={form.hasDefect} onChange={e => set("hasDefect", e.target.checked)} />
@@ -661,8 +677,10 @@ function ItemEditor({ id }: { id: string }) {
         </label>
         {form.hasDefect && (
           <Textarea
-            label="Описание дефекта"
-            required
+            label="Описание дефекта *"
+            markEmpty
+            aria-required
+            error={attempted ? fieldErrors.defect : undefined}
             maxLength={4000}
             value={form.defectDescription}
             onChange={(value) => set("defectDescription", value)}
@@ -686,7 +704,8 @@ function ItemEditor({ id }: { id: string }) {
           <Field
             key={key}
             label={label}
-            value={key === "color" && String(form.attributes.color) === legacyColor ? "" : String(form.attributes[key] || "")}
+            markEmpty={!(key === "color" && legacyColor && String(form.attributes.color) === legacyColor)}
+            value={key === "color" && String(form.attributes.color) === legacyColor ? "" : String(form.attributes[key] ?? "")}
             hint={key === "color" && legacyColor ? `Сохранён цветовой код ${legacyColor}. Введите известное название цвета. Пустое поле сохранит код.` : undefined}
             onChange={(e) => attr(key, e.target.value || (key === "color" ? legacyColor : ""))}
           />
@@ -706,6 +725,7 @@ function ItemEditor({ id }: { id: string }) {
           <h2 id="editor-photos">Фотографии</h2>
           <Button
             secondary
+            className={item && !item.media.length ? "empty-photo-control" : ""}
             disabled={!item || Boolean(uploadFiles.length)}
             onClick={() => fileInput.current?.click()}
           >
@@ -816,7 +836,7 @@ function ItemEditor({ id }: { id: string }) {
                     onChange={(e) => setChecked(e.target.checked)}
                   />
                   <span>
-                    Проверил вещь, маркировку и фактическое наличие в зале
+                    Проверил вещь и её наличие в зале
                   </span>
                 </label>
                 <Button
@@ -892,14 +912,14 @@ function ItemEditor({ id }: { id: string }) {
           <Photo media={item?.media.find((photo) => photo.role !== "MEASUREMENT")} alt={form.title} contain />
           <h1>{form.title || "Название не заполнено"}</h1>
           {productSize(attributes) && <p>{productSize(attributes)}</p>}
-          <strong>{money(Math.round(Number(price) * 100))}</strong>
+          <strong>{money(priceMinor)}</strong>
           {productColor(attributes.color) && <p>{productColor(attributes.color)}</p>}
-          <p>{form.attributes.material}</p>
+          {String(form.attributes.material ?? "").trim() && <p>{form.attributes.material}</p>}
           <ItemMeasurements measurements={form.measurements} />
           {form.hasDefect && <div className="defect-notice"><strong>Есть дефект</strong><p className="pre-wrap">{form.defectDescription}</p></div>}
           {missing.length > 0 && (
             <div className="notice">
-              <strong>До публикации заполните</strong>
+              <strong>Проверьте обязательные поля</strong>
               <p>{missing.join(", ")}</p>
             </div>
           )}
@@ -1131,9 +1151,9 @@ function StaffOrder({ id }: { id: string }) {
         {order.method !== "PICKUP" && (
           <>
             <p>
-              {order.recipient?.city}, {order.recipient?.office}{order.recipient?.officeAddress ? `, ${order.recipient.officeAddress}` : ""}
+              {[order.recipient?.city, order.recipient?.office, order.recipient?.officeAddress].filter(Boolean).join(", ")}
             </p>
-            <p>Индекс {order.recipient?.postalCode || "не указан"}</p>
+            {order.recipient?.postalCode && <p>Индекс {order.recipient.postalCode}</p>}
             <Copy
               value={[
                 order.recipient?.fullName,
