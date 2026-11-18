@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { pool } from "../server/db.js";
 import { migrate } from "../server/migrate.js";
 import { buildApp } from "../server/app.js";
-import { createLease, confirmOrder } from "../server/orders.js";
+import { confirmOrder } from "../server/orders.js";
 import { tick } from "../server/jobs.js";
 import { digest } from "../server/crypto.js";
 import type { Actor } from "../server/types.js";
@@ -27,18 +27,18 @@ test(
       actor.id,
       actor.telegramId,
     ]);
-    await pool.query(
-      "UPDATE store_settings SET value=jsonb_set(value,'{acceptingOrders}','true') WHERE id=true",
+    const { rows: [settings] } = await pool.query<{ version: number }>(
+      "UPDATE store_settings SET value=jsonb_set(value,'{acceptingOrders}','true') WHERE id=true RETURNING version",
     );
     const itemId = randomUUID();
-    await pool.query(
-      "INSERT INTO items(id,sku,title,category,price_minor,publication,physical) VALUES($1,$2,'Тест перезапуска','tops',2500,'PUBLISHED','AVAILABLE')",
+    const { rows: [item] } = await pool.query<{ id: string; version: number }>(
+      "INSERT INTO items(id,sku,title,category,price_minor,publication,physical) VALUES($1,$2,'Тест перезапуска','tops',2500,'PUBLISHED','AVAILABLE') RETURNING id,version",
       [itemId, "RESTART-" + itemId],
     );
-    const lease = await createLease(actor, randomUUID(), { itemIds: [itemId] });
     const operation = randomUUID();
     const body = {
-      leaseId: lease.id,
+      items: [item],
+      settingsVersion: settings.version,
       method: "PICKUP",
       phone: "+375291234567",
       termsAccepted: true,

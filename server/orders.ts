@@ -1,5 +1,6 @@
 import { invalidateCheckout, recipientProfile, saveRecipientProfile } from "./checkout-data.js";
-import { publicSettings } from "./public-settings.js";
+import { orderingIssue, publicSettings } from "./public-settings.js";
+import { orderRecipient, recipientErrors } from "../shared/checkout.js";
 import { defaultBuyerGuide } from "../shared/buyer-guide.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { PoolClient } from "pg";
@@ -13,7 +14,6 @@ import { z } from "zod";
 import { tx } from "./db.js";
 import { AppError, assert } from "./errors.js";
 import type { Actor } from "./types.js";
-import { config } from "./config.js";
 import { encrypt, decrypt } from "./crypto.js";
 import {
   type Calendar,
@@ -282,15 +282,9 @@ export async function readOrder(c: PoolClient, id: string, actor: Actor) {
       : undefined,
   };
 }
-function assertLaunchSettings(settings: any) {
-  if (!config.production) return;
-  assert(
-    settings.documentStatus === "APPROVED" && settings.phoneIsTest === false &&
-    settings.phone?.trim() && settings.phone.replace(/\D/g, "") !== "375337777777" &&
-    settings.address?.trim() && settings.seller?.trim() && settings.telegramUsername?.trim() &&
-    ["privacy", "reservation", "shipping", "returns"].every(key => (settings.documents?.[key] ?? "").trim().length >= 20),
-    503, "LAUNCH_SETTINGS", "Рабочие контакты и утверждённые документы ещё не подготовлены",
-  );
+function assertOrderingOpen(settings: Parameters<typeof orderingIssue>[0]) {
+  const issue = orderingIssue(settings);
+  if (issue) throw new AppError(503, issue, "Магазин пока не принимает заявки. Вещи остались в корзине");
 }
 export async function createLease(
   actor: Actor,
@@ -301,13 +295,7 @@ export async function createLease(
   return idem(actor, key, "checkout.lease", body, async (c) => {
     await c.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [actor.id]);
     const settings = await getSettings(c);
-    assertLaunchSettings(settings);
-    assert(
-      settings.acceptingOrders,
-      503,
-      "STORE_CLOSED",
-      "Оформление временно закрыто. Выбор сохранён",
-    );
+    assertOrderingOpen(settings);
     const items = await lockItems(c, body.itemIds);
     await assertAvailable(c, items);
     const id = randomUUID(),
@@ -334,117 +322,48 @@ export async function createLease(
   });
 }
 export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
-  const body = recipientSchema
-    .extend({
-      leaseId: z.string().uuid(),
+  const orderInput = recipientSchema.extend({
       method: z.enum(["PICKUP", "BELPOST", "EUROPOST"]),
       termsAccepted: z.literal(true),
-      settingsVersion: z.number().int().positive().optional(),
       draftToken: z.uuid().optional(),
       saveRecipient: z.boolean().optional(),
       recipientVersion: z.number().int().min(0).optional(),
-    })
-    .parse(raw);
-  if (body.method !== "PICKUP")
-    for (const field of ["fullName", "city", "office"] as const)
-      assert(
-        body[field]?.trim(),
-        422,
-        "RECIPIENT_REQUIRED",
-        `Заполните ${field === "fullName" ? "ФИО получателя" : field === "city" ? "населённый пункт" : "отделение"}`,
-      );
-  if (body.method === "EUROPOST") assert(body.officeAddress?.trim(), 422, "OFFICE_ADDRESS_REQUIRED", "Укажите адрес пункта выдачи Европочты, не домашний адрес");
+  });
+  const settingsVersion = z.number().int().positive();
+  const body = z.union([
+    orderInput.extend({
+      items: z.array(z.object({ id: z.uuid(), version })).min(1).refine(
+        items => new Set(items.map(item => item.id)).size === items.length,
+        "Вещи не должны повторяться",
+      ),
+      settingsVersion,
+    }),
+    orderInput.extend({ leaseId: z.uuid(), settingsVersion: settingsVersion.optional() }),
+  ]).parse(raw);
+  const fields = recipientErrors(body.method, body);
+  if (Object.keys(fields).length)
+    throw new AppError(422, "RECIPIENT_REQUIRED", "Проверьте данные получателя", fields);
   return idem(actor, key, "orders.create", body, async (c) => {
     const buyer = (await c.query("SELECT * FROM users WHERE id=$1 FOR UPDATE", [actor.id])).rows[0];
     if (body.draftToken) assert(body.draftToken === buyer.checkout_token, 409, "DRAFT_CLOSED", "Это оформление завершено или данные очищены. Откройте новую форму");
     const profile = await recipientProfile(c, actor.id);
     if (body.saveRecipient !== undefined) assert(body.draftToken && body.recipientVersion === profile.version, 409, "PROFILE_CHANGED", "Сохранённые данные изменились. Обновите форму перед подтверждением");
-    const lease = (
-      await c.query("SELECT * FROM leases WHERE id=$1 FOR UPDATE", [
-        body.leaseId,
-      ])
-    ).rows[0];
-    assert(
-      lease && lease.user_id === actor.id,
-      403,
-      "LEASE_FORBIDDEN",
-      "Удержание не найдено",
-    );
-    const ls = (
-      await c.query(
-        "SELECT * FROM lease_lines WHERE lease_id=$1 ORDER BY item_id",
-        [lease.id],
-      )
-    ).rows;
-    const items = await lockItems(
-        c,
-        ls.map((l) => l.item_id),
-      ),
-      at = await now(c);
-    assert(
-      lease.state === "ACTIVE" && lease.expires_at > at,
-      410,
-      "LEASE_EXPIRED",
-      "Время удержания истекло. Перепроверьте состав; данные сохранены",
-    );
-    const claims = (
-      await c.query(
-        "SELECT * FROM inventory_claim WHERE item_id=ANY($1::uuid[])",
-        [items.map((i) => i.id)],
-      )
-    ).rows;
-    assert(
-      claims.length === items.length &&
-        claims.every(
-          (cl) =>
-            cl.owner_type === "CHECKOUT" &&
-            cl.owner_id === lease.id &&
-            cl.expires_at > at,
-        ),
-      410,
-      "LEASE_EXPIRED",
-      "Удержание больше не действует",
-    );
-    assert(
-      items.every(
-        (i) =>
-          i.version === ls.find((l) => l.item_id === i.id).item_version &&
-          i.physical === "AVAILABLE" &&
-          i.publication === "PUBLISHED",
-      ),
-      409,
-      "ITEM_CHANGED",
-      "Описание вещи изменилось. Перепроверьте состав",
-    );
     const settings = await getSettings(c);
-    assertLaunchSettings(settings);
-    assert(body.settingsVersion === undefined || body.settingsVersion === settings.version, 409, "RULES_CHANGED", "Условия магазина изменились. Проверьте их ещё раз перед подтверждением");
-    assert(
-      settings.acceptingOrders,
-      503,
-      "STORE_CLOSED",
-      "Оформление временно закрыто",
-    );
+    assertOrderingOpen(settings);
+    assert(body.settingsVersion === undefined || body.settingsVersion === settings.version, 409, "RULES_CHANGED", "Условия магазина изменились. Проверьте их перед отправкой");
     if (body.method !== "PICKUP")
-      assert(
-        settings.carriers?.[body.method]?.enabled,
-        422,
-        "DELIVERY_DISABLED",
-        "Этот способ получения пока недоступен",
-      );
+      assert(settings.carriers?.[body.method]?.enabled, 422, "DELIVERY_DISABLED", "Этот способ получения пока недоступен");
+
+    const at = await now(c);
+    const leaseId = "leaseId" in body ? body.leaseId : null;
+    const lines = "items" in body
+      ? await directOrderLines(c, body.items)
+      : await leasedOrderLines(c, actor.id, body.leaseId);
+    const itemIds = lines.map(line => line.item_id);
     const id = randomUUID(),
       reservationId = randomUUID(),
-      total = ls.reduce((a, l) => a + l.snapshot.priceMinor, 0);
-    const recipient = {
-      phone: body.phone,
-      fullName: body.fullName ?? "",
-      city: body.city ?? "",
-      office: body.office ?? "",
-      officeAddress: body.officeAddress ?? "",
-      postalCode: body.postalCode ?? "",
-      comment: body.comment ?? "",
-      phoneSource: "MANUAL",
-    };
+      total = lines.reduce((sum, line) => sum + line.snapshot.priceMinor, 0);
+    const recipient = orderRecipient(body.method, body);
     const verifyBy = addOpenHours(at, 4, settings.calendar),
       cancelBy = addOpenHours(at, 8, settings.calendar);
     const o = (
@@ -455,7 +374,7 @@ export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
           actor.id,
           body.method,
           total,
-          encrypt(recipient),
+          encrypt({ ...recipient, phoneSource: "MANUAL" }),
           JSON.stringify(settings),
           verifyBy,
           cancelBy,
@@ -467,70 +386,122 @@ export async function confirmOrder(actor: Actor, key: unknown, raw: unknown) {
       "INSERT INTO reservations(id,order_id,user_id) VALUES($1,$2,$3)",
       [reservationId, id, actor.id],
     );
-    for (const l of ls) {
+    for (const l of lines) {
       const lineId = randomUUID();
       await c.query(
         "INSERT INTO order_lines(id,order_id,item_id,snapshot,price_minor) VALUES($1,$2,$3,$4,$5)",
-        [
-          lineId,
-          id,
-          l.item_id,
-          JSON.stringify(l.snapshot),
-          l.snapshot.priceMinor,
-        ],
+        [lineId, id, l.item_id, JSON.stringify(l.snapshot), l.snapshot.priceMinor],
       );
       await c.query(
         "INSERT INTO reservation_lines(reservation_id,order_line_id) VALUES($1,$2)",
         [reservationId, lineId],
       );
     }
-    await convertClaims(
-      c,
-      items.map((i) => i.id),
-      "CHECKOUT",
-      lease.id,
-      "RESERVATION",
-      id,
-      null,
-    );
-    await c.query("UPDATE leases SET state='CONVERTED' WHERE id=$1", [
-      lease.id,
-    ]);
+    if (leaseId) {
+      await convertClaims(c, itemIds, "CHECKOUT", leaseId, "RESERVATION", id, null);
+      await c.query("UPDATE leases SET state='CONVERTED' WHERE id=$1", [leaseId]);
+    } else {
+      await claimItems(c, itemIds, "RESERVATION", id, actor.id, null);
+    }
     if (body.saveRecipient !== undefined) {
-      const reusable = { method: body.method, phone: body.phone, fullName: body.fullName ?? "", city: body.city ?? "", office: body.office ?? "", officeAddress: body.officeAddress ?? "", postalCode: body.postalCode ?? "" };
-      await saveRecipientProfile(c, actor.id, profile.version, reusable, body.saveRecipient);
+      const { comment: _, ...reusable } = recipient;
+      const save = body.method === "PICKUP"
+        ? { ...profile.recipient, method: body.method, phone: recipient.phone }
+        : { ...reusable, method: body.method };
+      await saveRecipientProfile(c, actor.id, profile.version, save, body.saveRecipient);
     }
     await invalidateCheckout(c, actor.id);
     await c.query(
       "UPDATE selections SET item_ids=array(SELECT unnest(item_ids) EXCEPT SELECT unnest($2::uuid[])),updated_at=now() WHERE user_id=$1",
-      [actor.id, items.map((i) => i.id)],
+      [actor.id, itemIds],
     );
     await audit(c, actor.id, "orders.create", "order", id, {
       method: body.method,
-      itemIds: items.map((i) => i.id),
+      itemIds,
     });
-    await event(
-      c,
-      o,
-      "ORDER_CREATED",
-      "Вещи закреплены. Проверяем физическое наличие",
-    );
-    {
-      const owners = (await c.query("SELECT id FROM users WHERE role='OWNER'"))
-        .rows;
-      for (const owner of owners)
-        await c.query(
-          "INSERT INTO outbox_events(entity_id,entity_version,event_type,recipient_id,message) VALUES($1,1,$4,$2,$3) ON CONFLICT DO NOTHING",
-          [
-            id,
-            owner.id,
-            `Заявка №${o.number}: ${items.length} вещей, ${body.method === "PICKUP" ? "Самовывоз" : body.method === "BELPOST" ? "Белпочта" : "Европочта"}. Откройте защищённую очередь.`,
-            body.method === "PICKUP" ? "OWNER_ORDER_REQUEST" : "SHIPMENT_REQUEST",
-          ],
-        );
-    }
+    await event(c, o, "ORDER_CREATED", "Заявка принята. Проверяем физическое наличие");
+    const owners = (await c.query("SELECT id FROM users WHERE role='OWNER'")).rows;
+    for (const owner of owners)
+      await c.query(
+        "INSERT INTO outbox_events(entity_id,entity_version,event_type,recipient_id,message) VALUES($1,1,$4,$2,$3) ON CONFLICT DO NOTHING",
+        [
+          id,
+          owner.id,
+          `Заявка №${o.number}: ${lines.length} вещей, ${body.method === "PICKUP" ? "Самовывоз" : body.method === "BELPOST" ? "Белпочта" : "Европочта"}. Откройте защищённую очередь.`,
+          body.method === "PICKUP" ? "OWNER_ORDER_REQUEST" : "SHIPMENT_REQUEST",
+        ],
+      );
     return readOrder(c, id, actor);
   });
+}
+
+async function directOrderLines(c: PoolClient, expectedItems: { id: string; version: number }[]) {
+  const versions = new Map(expectedItems.map(item => [item.id, item.version]));
+  const items = await lockItems(c, [...versions.keys()]);
+  await assertAvailable(c, items);
+  assert(items.every(item => item.version === versions.get(item.id)), 409, "ITEM_CHANGED", "Состав или цены изменились. Проверьте их перед отправкой");
+  return Promise.all(items.map(async item => ({ item_id: item.id, snapshot: await itemSnapshot(c, item) })));
+}
+
+async function leasedOrderLines(c: PoolClient, userId: string, leaseId: string) {
+  const lease = (
+    await c.query("SELECT * FROM leases WHERE id=$1 FOR UPDATE", [
+      leaseId,
+    ])
+  ).rows[0];
+  assert(
+    lease && lease.user_id === userId,
+    403,
+    "LEASE_FORBIDDEN",
+    "Удержание не найдено",
+  );
+  const ls = (
+    await c.query<{ item_id: string; item_version: number; snapshot: Awaited<ReturnType<typeof itemSnapshot>> }>(
+      "SELECT * FROM lease_lines WHERE lease_id=$1 ORDER BY item_id",
+      [lease.id],
+    )
+  ).rows;
+  const items = await lockItems(
+      c,
+      ls.map((l) => l.item_id),
+    ),
+    at = await now(c);
+  assert(
+    lease.state === "ACTIVE" && lease.expires_at > at,
+    410,
+    "LEASE_EXPIRED",
+    "Время удержания истекло. Перепроверьте состав; данные сохранены",
+  );
+  const claims = (
+    await c.query(
+      "SELECT * FROM inventory_claim WHERE item_id=ANY($1::uuid[])",
+      [items.map((i) => i.id)],
+    )
+  ).rows;
+  assert(
+    claims.length === items.length &&
+      claims.every(
+        (cl) =>
+          cl.owner_type === "CHECKOUT" &&
+          cl.owner_id === lease.id &&
+          cl.expires_at > at,
+      ),
+    410,
+    "LEASE_EXPIRED",
+    "Удержание больше не действует",
+  );
+  assert(
+    items.every(
+      (i) =>
+        i.version === ls.find((l) => l.item_id === i.id)?.item_version &&
+        i.physical === "AVAILABLE" &&
+        i.publication === "PUBLISHED",
+    ),
+    409,
+    "ITEM_CHANGED",
+    "Описание вещи изменилось. Перепроверьте состав",
+  );
+  return ls;
 }
 export async function expireOrder(c: PoolClient, o: OrderRow, at?: Date) {
   const current = at ?? (await now(c));
@@ -928,16 +899,10 @@ export async function registerOrders(app: FastifyInstance) {
         "METHOD",
         "Для самовывоза получатель почты не нужен",
       );
-      for (const field of ["fullName", "city", "office"] as const)
-        assert(
-          body[field],
-          422,
-          "RECIPIENT_REQUIRED",
-          "Заполните ФИО, населённый пункт и отделение",
-        );
-      if (o.method === "EUROPOST") assert(body.officeAddress?.trim(), 422, "OFFICE_ADDRESS_REQUIRED", "Укажите адрес пункта выдачи Европочты");
-      const { version: _, ...recipient } = body;
-      void _;
+      const fields = recipientErrors(o.method, body);
+      if (Object.keys(fields).length)
+        throw new AppError(422, "RECIPIENT_REQUIRED", "Проверьте данные получателя", fields);
+      const recipient = orderRecipient(o.method, body);
       if (o.status === "CHECKING") {
         await c.query(
           "INSERT INTO recipient_history(order_id,version,value_enc) VALUES($1,$2,$3)",

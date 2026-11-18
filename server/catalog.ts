@@ -2,7 +2,7 @@ import { productColor } from "../shared/catalog-attributes.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { pool } from "./db.js";
-import { assert } from "./errors.js";
+import { AppError, assert } from "./errors.js";
 import { lockItems, setPhysical, audit, idem } from "./inventory.js";
 import { assertActiveCategory } from "./categories.js";
 const ids = z.array(z.uuid()).max(10000);
@@ -22,18 +22,22 @@ const itemInput = z
           z.array(z.string().max(500)),
         ]),
       )
-      .default({}),
+      .optional(),
     measurements: z
       .record(z.string(), z.number().int().min(0).max(20000))
       .optional(),
-    hasDefect: z.boolean().default(false),
-    defectDescription: z.string().trim().max(4000).default(""),
-    storageLocation: z.string().max(200).default(""),
+    hasDefect: z.boolean().optional(),
+    defectDescription: z.string().trim().max(4000).optional(),
+    storageLocation: z.string().max(200).optional(),
     version: z.number().int().optional(),
   })
-  .strict()
-  .refine(b => !b.hasDefect || b.defectDescription.length > 0, { message: "Опишите конкретный дефект", path: ["defectDescription"] });
-function normalizeColor(attributes: z.infer<typeof itemInput>["attributes"], previousColor?: unknown) {
+  .strict();
+function defectDescription(hasDefect: boolean, description: string) {
+  if (hasDefect && !description.trim())
+    throw new AppError(422, "DEFECT_DESCRIPTION", "Укажите описание дефекта", { defectDescription: "Опишите конкретный дефект" });
+  return hasDefect ? description : "";
+}
+function normalizeColor(attributes: NonNullable<z.infer<typeof itemInput>["attributes"]>, previousColor?: unknown) {
   const value = attributes.color;
   const color = productColor(value);
   if (!color && previousColor && !productColor(previousColor) &&
@@ -338,11 +342,11 @@ export async function registerCatalog(app: FastifyInstance) {
             b.title,
             b.category,
             b.priceMinor,
-            normalizeColor(b.attributes),
+            normalizeColor(b.attributes ?? {}),
             b.measurements ?? {},
-            b.storageLocation,
-            b.hasDefect,
-            b.hasDefect ? b.defectDescription : "",
+            b.storageLocation ?? "",
+            b.hasDefect ?? false,
+            defectDescription(b.hasDefect ?? false, b.defectDescription ?? ""),
           ],
         );
         await audit(c, req.actor.id, "ITEM_CREATE", "ITEM", rows[0].id, {});
@@ -377,6 +381,7 @@ export async function registerCatalog(app: FastifyInstance) {
           "CLAIMED",
           "Сначала согласуйте изменения действующего обращения",
         );
+        const hasDefect = b.hasDefect ?? old.has_defect;
         const row = (
           await c.query(
             "UPDATE items SET sku=$2,title=$3,category=$4,price_minor=$5,attributes=$6,measurements=$7,storage_location=$8,has_defect=$9,defect_description=$10,version=version+1,updated_at=now() WHERE id=$1 RETURNING *",
@@ -386,11 +391,11 @@ export async function registerCatalog(app: FastifyInstance) {
               b.title,
               b.category,
               b.priceMinor,
-              normalizeColor(b.attributes, old.attributes.color),
+              b.attributes === undefined ? old.attributes : normalizeColor(b.attributes, old.attributes.color),
               b.measurements ?? old.measurements,
-              b.storageLocation,
-              b.hasDefect,
-              b.hasDefect ? b.defectDescription : "",
+              b.storageLocation ?? old.storage_location,
+              hasDefect,
+              defectDescription(hasDefect, b.defectDescription ?? old.defect_description),
             ],
           )
         ).rows[0];
@@ -438,44 +443,11 @@ export async function registerCatalog(app: FastifyInstance) {
           );
           if (command === "publish") {
             const fields: Record<string, string> = {};
-            for (const key of [
-              "material",
-              "care",
-              "manufacturer",
-              "importer",
-              "origin",
-              "documents",
-            ])
-              if (
-                !item.attributes[key] ||
-                (Array.isArray(item.attributes[key]) &&
-                  !item.attributes[key].length)
-              )
-                fields[key] = "Заполните сведения для нового товара";
             if (item.has_defect && !item.defect_description?.trim())
               fields.defectDescription = "Опишите конкретный дефект";
-            if (!item.storage_location)
-              fields.storageLocation = "Укажите место хранения";
             if (!b.checked) fields.checked = "Подтвердите физическую проверку";
-            if (!["bags", "accessories"].includes(item.category) && !String(item.attributes.sizeLabel ?? "").trim())
-              fields.sizeLabel = "Укажите размер";
-            if (
-              !(
-                await c.query(
-                  "SELECT 1 FROM media_assets WHERE item_id=$1 AND state='READY'",
-                  [id],
-                )
-              ).rowCount
-            )
-              fields.media = "Добавьте фотографию";
-            assert(
-              !Object.keys(fields).length,
-              422,
-              "PUBLICATION_FIELDS",
-              Object.entries(fields)
-                .map(([k, v]) => `${k}: ${v}`)
-                .join("; "),
-            );
+            if (Object.keys(fields).length)
+              throw new AppError(422, "PUBLICATION_FIELDS", "Проверьте карточку перед публикацией", fields);
             assert(
               ["INTAKE", "AVAILABLE"].includes(item.physical),
               409,

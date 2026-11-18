@@ -97,13 +97,16 @@
   const cleanRecipient = body => Object.fromEntries(recipientFields.map(key => [key, String(body[key] ?? (key === 'method' ? 'PICKUP' : ''))]));
   const validateRecipient = body => {
     const fields = {};
-    if (!/^\+?[\d\s()-]{9,22}$/.test(body.phone || '')) fields.phone = 'Проверьте номер телефона';
+    const phone = String(body.phone || '').trim();
+    if (!/^\+?[\d\s()-]{9,22}$/.test(phone) || !/^\d{9,15}$/.test(phone.replace(/\D/g, ''))) fields.phone = 'Проверьте номер телефона';
     if (!['PICKUP', 'EUROPOST', 'BELPOST'].includes(body.method)) fields.method = 'Выберите получение';
     if (body.method !== 'PICKUP') {
       if ((body.fullName || '').trim().split(/\s+/).length < 2) fields.fullName = 'Укажите фамилию и имя получателя';
-      for (const [key, label] of [['city', 'населённый пункт'], ['office', 'пункт выдачи'], ['officeAddress', 'адрес пункта выдачи']])
-        if (!String(body[key] || '').trim() && (key !== 'officeAddress' || body.method === 'EUROPOST')) fields[key] = `Укажите ${label}`;
-      if (body.method === 'BELPOST' && !/^\d{6}$/.test(body.postalCode || '')) fields.postalCode = 'Укажите шестизначный индекс';
+      if (!String(body.city || '').trim()) fields.city = 'Укажите населённый пункт';
+      if (body.method === 'BELPOST') {
+        if (!String(body.office || body.officeAddress || '').trim()) fields.office = 'Укажите отделение или его адрес';
+        if (body.postalCode && !/^\d{6}$/.test(body.postalCode)) fields.postalCode = 'Укажите шестизначный индекс';
+      }
     }
     ensure(!Object.keys(fields).length, 422, 'VALIDATION', 'Проверьте заполненные поля', { fieldErrors: fields });
   };
@@ -159,7 +162,6 @@
       ensure(String(body.name || '').trim(), 422, 'VALIDATION', 'Укажите название магазина', { fieldErrors: { name: 'Укажите название' } });
       // A demo never approves documents, verifies contracts, or activates services.
       state.settings = { ...clone(body), version: state.settings.version + 1, documentStatus: 'DRAFT', phone: '', phoneIsTest: true, telegramUsername: '', seller: '', documents: { privacy: '', reservation: '', shipping: '', returns: '' } };
-      state.settings.carriers.BELPOST.enabled = false;
       record('demo.settings', 'store'); persist(); return settings();
     }
     if (path.startsWith('/owner/categories') && ['POST', 'PATCH'].includes(method)) {
@@ -247,22 +249,35 @@
     }
     if (/^\/checkout\/leases\/[^/]+$/.test(path) && method === 'DELETE') { leases.delete(path.split('/')[3]); return { ok: true }; }
     if (path === '/orders' && method === 'POST') {
-      const lease = leases.get(body.leaseId);
-      ensure(lease && Date.parse(lease.expiresAt) > Date.now(), 410, 'LEASE_EXPIRED', 'Время проверки истекло. Перепроверьте наличие.');
+      const lease = body.leaseId ? leases.get(body.leaseId) : undefined;
+      let items;
+      if (body.leaseId) {
+        ensure(lease && Date.parse(lease.expiresAt) > Date.now(), 410, 'LEASE_EXPIRED', 'Время проверки истекло. Перепроверьте наличие.');
+        items = lease.items;
+      } else {
+        ensure(Array.isArray(body.items) && body.items.length && new Set(body.items.map(item => item.id)).size === body.items.length, 422, 'SELECTION', 'Проверьте состав заявки');
+        items = body.items.map(item => itemView(findItem(item.id)));
+        ensure(items.every(item => item.available), 409, 'AVAILABILITY_CONFLICT', 'Часть вещей недоступна');
+        ensure(items.every((item, index) => item.version === body.items[index].version), 409, 'ITEM_CHANGED', 'Состав или цены изменились. Проверьте их перед отправкой');
+      }
       ensure(body.settingsVersion === state.settings.version, 409, 'RULES_CHANGED', 'Условия изменились. Проверьте их ещё раз.');
       ensure(body.termsAccepted, 422, 'TERMS', 'Подтвердите условия');
-      ensure(state.settings.acceptingOrders, 409, 'STORE_CLOSED', 'Тестовый приём обращений выключен в настройках демонстрации.');
-      ensure(body.method === 'PICKUP' || (body.method === 'EUROPOST' && state.settings.carriers.EUROPOST.enabled), 422, 'METHOD', 'Способ получения недоступен');
+      ensure(state.settings.acceptingOrders, 503, 'STORE_CLOSED', 'Тестовый приём обращений выключен в настройках демонстрации.');
+      ensure(body.method === 'PICKUP' || state.settings.carriers[body.method]?.enabled, 422, 'DELIVERY_DISABLED', 'Способ получения недоступен');
       validateRecipient(body);
       ensure(body.draftToken === draftGeneration, 409, 'DRAFT_CLOSED', 'Оформление завершено. Откройте новую форму.');
       ensure(body.recipientVersion === profileVersion, 409, 'VERSION', 'Данные получателя изменились. Обновите форму.');
       const recipient = cleanRecipient(body);
       if (recipient.method === 'PICKUP') for (const key of ['fullName', 'city', 'office', 'officeAddress', 'postalCode']) recipient[key] = '';
-      const order = { id: uuid(), number: String(1001 + orders.length), version: 1, method: body.method, status: 'CHECKING', reservationStatus: 'RESERVED', totalMinor: lease.items.reduce((sum, item) => sum + item.priceMinor, 0), createdAt: now(), verifyBy: deadline(0) || deadline(), recipient, ruleSnapshot: clone(lease.rules), pickupCode: String(Math.floor(100000 + Math.random() * 900000)), buyer: { ...clone(identity), atCheckout: clone(identity) }, notes: [], lines: lease.items.map(item => ({ ...clone(item), id: uuid(), itemId: item.id, outcome: 'RESERVED', checked: false })) };
-      orders.unshift(order); leases.delete(lease.id);
-      selection = selection.filter(id => !lease.items.some(item => item.id === id));
+      const order = { id: uuid(), number: String(1001 + orders.length), version: 1, method: body.method, status: 'CHECKING', reservationStatus: 'RESERVED', totalMinor: items.reduce((sum, item) => sum + item.priceMinor, 0), createdAt: now(), verifyBy: deadline(0) || deadline(), recipient, ruleSnapshot: clone(lease?.rules ?? settings()), pickupCode: String(Math.floor(100000 + Math.random() * 900000)), buyer: { ...clone(identity), atCheckout: clone(identity) }, notes: [], lines: items.map(item => ({ ...clone(item), id: uuid(), itemId: item.id, outcome: 'RESERVED', checked: false })) };
+      orders.unshift(order); if (lease) leases.delete(lease.id);
+      selection = selection.filter(id => !items.some(item => item.id === id));
       profileEnabled = !!body.saveRecipient;
-      profile = profileEnabled ? { ...cleanRecipient(draft || body), comment: '' } : null; profileVersion++;
+      profile = profileEnabled ? {
+        ...(body.method === 'PICKUP' ? { ...profile, method: body.method, phone: recipient.phone } : recipient),
+        comment: '',
+      } : null;
+      profileVersion++;
       draft = null; draftGeneration = uuid(); draftRevision = 0;
       event(order, `Обращение №${order.number}: проверяем наличие`); record('demo.order.created', order.id); return orderView(order);
     }
@@ -374,8 +389,8 @@
     if (/^\/staff\/items\/[^/]+\/(publish|hide|inspect|write-off)$/.test(path) && method === 'POST') {
       const item = findItem(path.split('/')[3]), action = path.split('/')[4]; checkVersion(item, body); ensure(!claimed(item.id), 409, 'CLAIMED', 'Вещь закреплена обращением');
       if (action === 'publish') {
-        ensure(body.checked && item.media.length && item.title && item.priceMinor && item.storageLocation, 422, 'PUBLISH', 'Заполните данные, фото и подтвердите проверку вещи');
-        ensure(['bags', 'accessories'].includes(item.category) || String(item.attributes.sizeLabel ?? '').trim(), 422, 'PUBLISH', 'Укажите размер');
+        ensure(body.checked, 422, 'PUBLISH', 'Подтвердите физическую проверку вещи');
+        ensure(!item.hasDefect || item.defectDescription.trim(), 422, 'PUBLISH', 'Укажите описание дефекта');
         item.publication = 'PUBLISHED';
       }
       if (action === 'hide') item.publication = 'HIDDEN';

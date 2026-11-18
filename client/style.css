@@ -48,6 +48,10 @@ textarea {
   font: inherit;
   letter-spacing: normal;
 }
+input,
+textarea {
+  caret-color: currentColor;
+}
 button,
 a,
 input,
@@ -669,6 +673,10 @@ textarea.field-control {
   --field-focus-ring: #c1351526;
   border-color: var(--error);
 }
+.editor-form .field-control[data-empty],
+.item-editor .empty-photo-control {
+  border-color: var(--error);
+}
 .field-control[readonly],
 .field-control:disabled {
   --field-surface: var(--soft);
@@ -1138,6 +1146,38 @@ textarea.field-control {
 .item-cta > small {
   grid-column: 1/-1;
   text-align: center;
+}
+.item-page.has-purchase-bar {
+  padding-bottom: 88px;
+}
+.item-cta[data-floating] > .button {
+  visibility: hidden;
+}
+.purchase-bar {
+  position: fixed;
+  z-index: 25;
+  bottom: var(--measured-nav-height, var(--nav-height));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(100%, 540px);
+  padding: 8px max(var(--gutter), env(safe-area-inset-right)) 8px max(var(--gutter), env(safe-area-inset-left));
+  background: white;
+  border: 1px solid var(--line);
+}
+.purchase-bar > div:last-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.purchase-bar .button {
+  flex: 0 1 58%;
+}
+.app-shell:has(.purchase-bar) .toast {
+  bottom: calc(var(--measured-nav-height, var(--nav-height)) + 84px);
+}
+@media (orientation: landscape) and (max-height: 500px) {
+  .purchase-bar { bottom: env(safe-area-inset-bottom, 0px); }
 }
 .gallery-view {
   overflow: auto;
@@ -1871,21 +1911,14 @@ button > svg, .button > svg { flex-shrink: 0; display: block; }
 .selection-page .remove-button { align-self: center; }
 .selection-checkout { margin: 24px 0 12px; border: 1px solid var(--line); border-radius: 24px; padding: 4px 20px 16px; background: white; box-shadow: 0 1px 2px #00000008, 0 4px 12px #00000006; }
 .selection-checkout > .summary-row { border-bottom: 1px solid #eee; margin-bottom: 16px; flex-wrap: wrap; }
-.receiving-actions { display: grid; gap: 12px; }
-.receiving-actions > .button { width: 100%; justify-content: flex-start; gap: 12px; padding: 16px; border-radius: 16px; text-align: left; }
-.receiving-actions .button > span { flex: 1; min-width: 0; }
-.receiving-actions strong { display: block; line-height: 1.35; }
-.receiving-actions small { display: block; font-size: .8125rem; font-weight: 400; line-height: 1.4; margin-top: 4px; }
+.selection-checkout > .button { width: 100%; }
 .selection-checkout > p { margin: 16px 0 0; line-height: 1.6; }
-.checkout-progress { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; list-style: none; padding: 0; margin: 12px 0 28px; }
-.checkout-progress li { min-width: 0; font-size: .75rem; color: var(--mute); border-top: 2px solid #eee; padding-top: 10px; overflow-wrap: anywhere; }
-.checkout-progress li.reached { border-color: #222; color: #222; }
-.checkout-progress li[aria-current] { font-weight: 700; }
-.checkout-progress span { display: block; margin-bottom: 4px; }
-.receiving-summary, .workspace-intro { display: flex; align-items: flex-start; gap: 14px; padding: 18px; border: 1px solid var(--line); border-radius: 18px; background: var(--soft); margin: 16px 0 24px; }
-.receiving-summary > svg, .workspace-intro > svg { flex: 0 0 24px; margin-top: 3px; }
-.receiving-summary > div, .workspace-intro > div { min-width: 0; }
-.receiving-summary p { margin: 6px 0 0; }
+.checkout-fields { display: grid; gap: 12px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.checkout-fields legend { margin-bottom: 10px; font-weight: 700; }
+.checkout-fields p { margin: 0; }
+.workspace-intro { display: flex; align-items: flex-start; gap: 14px; padding: 18px; border: 1px solid var(--line); border-radius: 18px; background: var(--soft); margin: 16px 0 24px; }
+.workspace-intro > svg { flex: 0 0 24px; margin-top: 3px; }
+.workspace-intro > div { min-width: 0; }
 .workspace-intro h2 { font-size: 1rem; }
 .workspace-intro p { color: var(--mute); font-size: .875rem; line-height: 1.6; margin: 0; }
 .service-shell .page { padding-top: 20px; }
@@ -1915,8 +1948,6 @@ button > svg, .button > svg { flex-shrink: 0; display: block; }
 }
 @media (max-width: 380px) {
   .selection-checkout { padding-inline: 12px; }
-  .receiving-actions > .button { padding: 14px 12px; gap: 8px; }
-  .receiving-actions > .button > svg:last-child { display: none; }
   .form-pair { grid-template-columns: 1fr; }
 }
 @media (max-height: 500px) and (orientation: landscape) {
@@ -1925,8 +1956,7 @@ button > svg, .button > svg { flex-shrink: 0; display: block; }
 }
 
 .preview-note { padding: 10px var(--gutter); font-size: .75rem; line-height: 1.5; color: var(--mute); text-align: center; background: var(--soft); border-bottom: 1px solid #eee; margin-bottom: 16px; }
-.receiving-actions > .button:not(.secondary), .checkout-page .button:not(.secondary):not(.ghost):not(.danger) { background: var(--accent); color: #222; }
-.receiving-actions > .button:not(.secondary) small { color: #222; }
+.selection-checkout > .button, .checkout-page .button:not(.secondary):not(.ghost):not(.danger) { background: var(--accent); color: #222; }
 
 .service-shell .chips > button { max-width:100%; }
 

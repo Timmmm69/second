@@ -28,7 +28,6 @@ import {
 import {
   date,
   itemCount,
-  type Settings,
   methodNames,
   money,
   statusNames,
@@ -39,6 +38,7 @@ import {
   type Method,
   type Order,
 } from "./types";
+import { checkoutMethods, recipientErrors, shippingCostNotice } from "../shared/checkout.js";
 import { getDraftSession } from "./checkout-draft";
 import { storeHours } from "../shared/store-hours";
 import { defaultBuyerGuide } from "../shared/buyer-guide";
@@ -63,7 +63,7 @@ let catalogCache: {
 } | null = null;
 export default function Buyer() {
   const { path } = useApp();
-  if (path.startsWith("/items/")) return <ItemPage id={path.split("/")[2]} />;
+  if (path.startsWith("/items/")) return <ItemPage key={path} id={path.split("/")[2]} />;
   if (path === "/selection") return <Selection />;
   if (path === "/checkout" || path.startsWith("/checkout/")) return <Checkout key={path} />;
   if (path.startsWith("/orders/")) return <OrderPage id={path.split("/")[2]} />;
@@ -537,6 +537,38 @@ function ItemPage({ id }: { id: string }) {
     [index, setIndex] = useState(0),
     [zoom, setZoom] = useState(1),
     [actionError, setActionError] = useState<unknown>(null);
+  const mainPurchase = useRef<HTMLDivElement>(null);
+  const updating = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [showPurchaseBar, setShowPurchaseBar] = useState(false);
+  const available = item?.available === true;
+  useEffect(() => {
+    const button = mainPurchase.current?.querySelector("button");
+    if (!available || !button) return;
+    const nav = document.querySelector(".bottom-nav");
+    const header = document.querySelector(".app-header");
+    let observer: IntersectionObserver | undefined;
+    const observe = () => {
+      observer?.disconnect();
+      const fixedHeight = (element: Element | null) => element &&
+        ["fixed", "sticky"].includes(getComputedStyle(element).position) ? Math.ceil(element.getBoundingClientRect().height) : 0;
+      observer = new IntersectionObserver(([entry]) => setShowPurchaseBar(entry.intersectionRatio < 0.99), {
+        rootMargin: `-${fixedHeight(header)}px 0px -${fixedHeight(nav)}px 0px`,
+        threshold: [0.99],
+      });
+      observer.observe(button);
+    };
+    observe();
+    const resize = new ResizeObserver(observe);
+    if (header) resize.observe(header);
+    if (nav) resize.observe(nav);
+    window.addEventListener("resize", observe);
+    return () => {
+      observer?.disconnect();
+      resize.disconnect();
+      window.removeEventListener("resize", observe);
+    };
+  }, [available]);
   const size = productSize(item?.attributes);
   const media = item?.media.filter((photo) => photo.role !== "MEASUREMENT") ?? [];
   if (loading && !item) return <Loading cards />;
@@ -547,8 +579,49 @@ function ItemPage({ id }: { id: string }) {
       </div>
     );
   const chosen = selectionIds.includes(id);
+  const floating = available && showPurchaseBar && !gallery;
+  const buy = async () => {
+    if (!available || updating.current) return;
+    if (chosen) {
+      go("/selection");
+      return;
+    }
+    updating.current = true;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await setSelection([...selectionIds, id]);
+      toast("Вещь в корзине");
+    } catch (e) {
+      setActionError(e);
+    } finally {
+      updating.current = false;
+      setBusy(false);
+    }
+  };
+  const purchaseButton = <Button disabled={!available || busy} onClick={buy}>
+    {busy ? "Добавляем…" : chosen ? "В корзине ✓" : "В корзину"}
+  </Button>;
+  const details = [
+    ["brand", "Бренд"],
+    ["material", "Состав"],
+    ["color", "Цвет"],
+    ["season", "Сезон"],
+    ["sizeLabel", "Размер"],
+    ["care", "Уход"],
+    ["manufacturer", "Изготовитель"],
+    ["importer", "Импортёр"],
+    ["origin", "Страна происхождения"],
+    ["documents", "Сведения о документах"],
+  ]
+    .map(([key, label]) => ({
+      label,
+      value: String((key === "sizeLabel" ? size : key === "color"
+        ? productColor(item.attributes.color) : item.attributes[key]) ?? "").trim(),
+    }))
+    .filter(detail => detail.value);
   return (
-    <div className="page item-page">
+    <div className={`page item-page ${available ? "has-purchase-bar" : ""}`}>
       <div className="item-layout">
         <div>
           <button
@@ -602,29 +675,16 @@ function ItemPage({ id }: { id: string }) {
           <section className="detail-section">
             <h2>Детали вещи</h2>
             <p>Единственный экземпляр.</p>
-            <dl className="details-list">
-              {[
-                ["brand", "Бренд"],
-                ["material", "Состав"],
-                ["color", "Цвет"],
-                ["season", "Сезон"],
-                ["sizeLabel", "Размер"],
-                ["care", "Уход"],
-                ["manufacturer", "Изготовитель"],
-                ["importer", "Импортёр"],
-                ["origin", "Страна происхождения"],
-                ["documents", "Сведения о документах"],
-              ]
-                .map(([key, label]) => [label, key === "sizeLabel" ? size : key === "color"
-                  ? productColor(item.attributes.color) : item.attributes[key]])
-                .filter(([, value]) => value)
-                .map(([label, value]) => (
+            {details.length > 0 && (
+              <dl className="details-list">
+                {details.map(({ label, value }) => (
                   <div key={label}>
                     <dt>{label}</dt>
                     <dd>{value}</dd>
                   </div>
                 ))}
-            </dl>
+              </dl>
+            )}
           </section>
           <ItemMeasurements measurements={item.measurements} />
           <section className="detail-section">
@@ -641,30 +701,23 @@ function ItemPage({ id }: { id: string }) {
               Сведения о продавце и правила
             </Button>
           </section>
-          <ErrorBox error={actionError} />
-          <div className="item-cta">
+          {!floating && <ErrorBox error={actionError} />}
+          <div className="item-cta" ref={mainPurchase} data-floating={floating || undefined}>
             <div>
               <strong>{money(item.priceMinor)}</strong>
               <small>Один экземпляр</small>
             </div>
-            <Button
-              disabled={!item.available}
-              onClick={() =>
-                setSelection(
-                  chosen
-                    ? selectionIds.filter((v) => v !== id)
-                    : [...selectionIds, id],
-                )
-                  .then(() => toast(chosen ? "Вещь убрана" : "Вещь в корзине"))
-                  .catch(setActionError)
-              }
-            >
-              {chosen ? "В корзине ✓" : "В корзину"}
-            </Button>
+            {purchaseButton}
             <small>Добавление в корзину ещё не резервирует вещь</small>
           </div>
         </div>
       </div>
+      {floating && (
+        <div className="purchase-bar">
+          <ErrorBox error={actionError} />
+          <div><strong>{money(item.priceMinor)}</strong>{purchaseButton}</div>
+        </div>
+      )}
       {gallery && media.length > 0 && (
         <Sheet
           title={`Фото ${index + 1} из ${media.length}`}
@@ -784,15 +837,10 @@ function Selection() {
         <>
           <section className="selection-checkout" aria-label="Оформление корзины">
             <Summary label="Стоимость вещей">{money(selection.reduce((s, i) => s + i.priceMinor, 0))}</Summary>
-            <div className="receiving-actions">
-              <Button disabled={!selection.length || offline} onClick={() => { if (demo || authenticated()) go("/checkout/pickup"); }}>
-                <Icon name="pin" /><span><strong>Забронировать в магазине</strong><small>{settings?.buyerGuide?.pickupSummary || defaultBuyerGuide.pickupSummary}</small></span><Icon name="next" size={18} />
-              </Button>
-              <Button secondary disabled={!selection.length || offline || (!demo && !settings?.carriers.EUROPOST.enabled)} onClick={() => { if (demo || authenticated()) go("/checkout/delivery"); }}>
-                <Icon name="box" /><span><strong>Оформить доставку</strong><small>{demo || settings?.carriers.EUROPOST.enabled ? settings?.buyerGuide?.shippingSummary || defaultBuyerGuide.shippingSummary : "Отправка пока недоступна"}</small></span><Icon name="next" size={18} />
-              </Button>
-            </div>
-            <p className="small-text">{settings?.buyerGuide?.selection || defaultBuyerGuide.selection}</p>
+            <Button disabled={!selection.length || offline || !settings?.acceptingOrders} onClick={() => {
+              if (demo || authenticated()) go("/checkout");
+            }}>Перейти к оформлению</Button>
+            {!settings?.acceptingOrders && <p className="small-text" role="status">Магазин пока не принимает заявки. Вещи остаются в корзине.</p>}
           </section>
           <h2 className="selection-items-heading">Выбранные вещи</h2>
           <div className="item-list">
@@ -843,537 +891,258 @@ function Selection() {
     </div>
   );
 }
-function Checkout() {
-  const { user, settings, selection, selectionIds, setSelection, go, toast, path, offline, demo } = useApp();
-  const requestedMethod = path.endsWith("/pickup") ? "PICKUP" : path.endsWith("/delivery") ? "EUROPOST" : null;
+type CheckoutOperation = {
+  key: string;
+  items: { id: string; version: number }[];
+  settingsVersion: number;
+};
 
-  const session = useMemo(() => getDraftSession(user?.id || "anonymous", api), [user?.id]);
+function Checkout() {
+  const { user, settings, selection, selectionIds, refreshSelection, refreshSettings, go, toast, offline, demo } = useApp();
+  const account = user?.id || "anonymous";
+  const operationStorage = `${account}:checkout-operation`;
+  const leaseStorage = `${account}:checkout-lease`;
+  const session = useMemo(() => getDraftSession(account, api), [account]);
   const draftState = useSyncExternalStore(session.subscribe, session.snapshot);
   const { draft, loaded } = draftState;
-  const accountKey = (name: string) => `${user?.id || "anonymous"}:${name}`;
-  const [step, setStep] = useState(() =>
-      readLocal(accountKey("checkout-lease"), null) ? 2 : requestedMethod ? 1 : 0,
-    ),
-    [error, setError] = useState<unknown>(null),
-    [busy, setBusy] = useState(false),
-    [attempted, setAttempted] = useState(false),
-    [lease, setLease] = useState<{ id: string; expiresAt: string; items?: Item[]; rules?: Settings } | null>(() =>
-      readLocal(accountKey("checkout-lease"), null),
-    ),
-    [conflicts, setConflicts] = useState<{ itemId: string; reason: string }[]>(
-      [],
-    ),
-    [pending, setPending] = useState(() =>
-      Boolean(readLocal(accountKey("checkout-operation"), null)),
-    );
-  const confirmationBody = useRef<Record<string,unknown> | null>(null);
-  const heading = useRef<HTMLHeadingElement>(null);
-  useEffect(() => { if (loaded) { window.scrollTo({top:0,behavior:"instant"}); heading.current?.focus({preventScroll:true}); } }, [step,loaded]);
-  const key = useRef(
-    readLocal<string | null>(accountKey("checkout-operation"), null) || operationKey(),
-  );
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  const [attempted, setAttempted] = useState(false);
+  const [pending, setPending] = useState<CheckoutOperation | string | null>(() => readLocal(operationStorage, null));
+  const submitting = useRef(false);
+  const form = useRef<HTMLFormElement>(null);
+
   useEffect(() => {
-    if (!user) return;
-    let active = true;
-    (async () => {
-      await session.load();
-      if (!active) return;
-      const data = session.snapshot().draft;
-      if (lease && ((!lease.rules && !pending) || (requestedMethod && !pending && data.method !== requestedMethod))) {
-        await api(`/checkout/leases/${lease.id}`, {method:"DELETE"});
-        if (!active) return;
-        setLease(null); saveLocal(accountKey("checkout-lease"), null); setStep(1);
-      }
-      if (requestedMethod && !pending && data.method !== requestedMethod) session.update({ method: requestedMethod });
-    })().catch(e => { if (active) setError(e); });
-    return () => { active = false; session.flush({keepalive:true}).catch(() => {}); };
-  }, [user?.id, session, requestedMethod]);
+    if (!user && !demo) return;
+    session.load().catch(setError);
+    const oldLease = readLocal<{ id: string } | null>(leaseStorage, null);
+    const oldOperation = readLocal<CheckoutOperation | string | null>(operationStorage, null);
+    if (oldLease && !oldOperation)
+      api(`/checkout/leases/${oldLease.id}`, { method: "DELETE" })
+        .then(() => saveLocal(leaseStorage, null)).catch(setError);
+    return () => { session.flush().catch(() => {}); };
+  }, [user?.id, demo, session, leaseStorage, operationStorage]);
+
   useEffect(() => {
-    const flush = () => { if (document.hidden) session.flush({keepalive:true}).catch(() => {}); };
-    const leave = () => { session.flush({keepalive:true}).catch(() => {}); };
-    document.addEventListener("visibilitychange", flush);
-    window.addEventListener("pagehide", leave);
-    return () => { document.removeEventListener("visibilitychange", flush); window.removeEventListener("pagehide", leave); };
+    const flush = () => session.flush().catch(() => {});
+    const onVisibilityChange = () => { if (document.hidden) flush(); };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pagehide", flush);
+    };
   }, [session]);
-  const changeReceiving = async () => {
-    try { await session.flush(); go("/checkout"); } catch(e) { setError(e); }
-  };
-  const set = (key: keyof Draft, value: string) => session.update({[key]:value});
-  const contact = () => {
-    const phoneAtRequest = session.snapshot().draft.phone;
-    const app = tg();
-    if (!app?.requestContact) {
-      toast(
-        "Введите номер вручную — Telegram не поддерживает запрос контакта в этом окне.",
-      );
-      return;
-    }
-    app.requestContact(async (success) => {
-      if (success) {
-        try {
-          const saved = await api<Partial<Draft>>("/me/contact");
-          if (saved.phone && session.snapshot().draft.phone === phoneAtRequest) set("phone", saved.phone);
-          else
-            toast("Контакт передан. При необходимости введите номер вручную.");
-        } catch (e) {
-          setError(e);
-        }
-      } else toast("Можно ввести телефон вручную.");
-    });
-  };
-  const acquire = async (ids = selectionIds) => {
-    if (pending) return;
-    setBusy(true);
+
+  const set = (key: keyof Draft, value: string) => {
+    session.update({ [key]: value });
     setError(null);
-    setConflicts([]);
-    try {
-      await session.flush();
-      const response = await command<{ id: string; expiresAt: string; items: Item[]; rules: Settings }>(
-        "/checkout/leases",
-        { itemIds: ids },
-      );
-      setLease(response);
-      saveLocal(accountKey("checkout-lease"), response);
-      setStep(2);
-    } catch (e) {
-      setError(e);
-      if (e instanceof ApiError) setConflicts(e.conflicts);
-    } finally {
-      setBusy(false);
-    }
+  };
+  const methods = checkoutMethods.filter(method => method === "PICKUP" || settings?.carriers[method]?.enabled);
+  const method = methods.includes(draft.method) ? draft.method : "PICKUP";
+  const fieldErrors = {
+    ...(error instanceof ApiError ? error.fieldErrors : {}),
+    ...(attempted ? recipientErrors(method, draft) : {}),
+  };
+  const unavailable = selectionIds.length !== selection.length || selection.some(item => !item.available);
+
+  const recordPending = (operation: CheckoutOperation | string | null) => {
+    saveLocal(operationStorage, operation);
+    setPending(operation);
+  };
+  const complete = (order: Order) => {
+    if (!order?.id) throw new Error("Не удалось получить подтверждение сохранения заявки");
+    recordPending(null);
+    saveLocal(leaseStorage, null);
+    session.finish();
+    refreshSelection().catch(() => {});
+    go(`/orders/${order.id}`);
+  };
+  const findResult = async (key: string) => {
+    const response = await api<Order | { result: Order }>(`/operations/${key}`);
+    return "result" in response ? response.result : response;
   };
   const recover = async () => {
-    setBusy(true);
-    try {
-      const op = await api<Order | { result: Order }>(
-        `/operations/${key.current}`,
-      );
-      const order = "result" in op ? op.result : op;
-      if (order.id) {
-        session.finish();
-        saveLocal(accountKey("checkout-operation"), null);
-        saveLocal(accountKey("checkout-lease"), null);
-        await setSelection([]).catch(() => {});
-        go(`/orders/${order.id}`);
-      }
-    } catch (e) {
-      setError(e);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const submit = async () => {
-    if (!lease) return;
+    if (!pending || submitting.current) return;
+    submitting.current = true;
     setBusy(true);
     setError(null);
-    saveLocal(accountKey("checkout-operation"), key.current);
     try {
-      if (!pending) await session.flush();
-      confirmationBody.current ??= { ...draft, ...session.orderMetadata(), leaseId: lease.id, termsAccepted: true, settingsVersion: lease.rules?.version };
-      const order = await command<Order>(
-        "/orders",
-        confirmationBody.current,
-        "POST",
-        key.current,
-      );
-      session.finish();
-      saveLocal(accountKey("checkout-operation"), null);
-      saveLocal(accountKey("checkout-lease"), null);
-      await setSelection([]).catch(() => {});
-      go(`/orders/${order.id}`);
+      complete(await findResult(typeof pending === "string" ? pending : pending.key));
     } catch (e) {
       setError(e);
-      const uncertain = !(e instanceof ApiError) || e.status === 0 || e.status >= 500 || e.code === "IDEMPOTENCY_MISMATCH";
-      if (uncertain) {
-        setPending(true);
+      if (typeof pending === "string" && e instanceof ApiError && e.status === 404) {
+        const oldLease = readLocal<{ id: string } | null>(leaseStorage, null);
         try {
-          const op = await api<Order | { result: Order }>(
-            `/operations/${key.current}`,
-          );
-          const order = "result" in op ? op.result : op;
-          if (order.id) {
-            session.finish();
-            saveLocal(accountKey("checkout-operation"), null);
-            saveLocal(accountKey("checkout-lease"), null);
-            await setSelection([]).catch(() => {});
-            go(`/orders/${order.id}`);
-          }
-        } catch {
-          /* Keep original operation key for explicit retry. */
-        }
-      } else if (
-        e instanceof ApiError &&
-        (e.status === 410 || e.code === "LEASE_EXPIRED" || e.code === "RULES_CHANGED")
-      ) {
-        if (e.code === "RULES_CHANGED") await api(`/checkout/leases/${lease.id}`, { method:"DELETE" }).catch(() => {});
-        setLease(null);
-        saveLocal(accountKey("checkout-lease"), null);
-        setStep(1);
-        key.current = operationKey();
-        saveLocal(accountKey("checkout-operation"), null);
-      }
-      if (!uncertain) {
-        confirmationBody.current = null; setPending(false);
-        saveLocal(accountKey("checkout-operation"), null); key.current = operationKey();
+          if (oldLease) await api(`/checkout/leases/${oldLease.id}`, { method: "DELETE" });
+          saveLocal(leaseStorage, null);
+          recordPending(null);
+          await refreshSelection();
+        } catch (releaseError) { setError(releaseError); }
       }
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   };
-  useEffect(() => {
-    if (loaded && pending) recover();
-  }, [loaded]);
-  const displayedSettings = lease?.rules || settings;
-  const guide = { ...defaultBuyerGuide, ...displayedSettings?.buyerGuide };
-  if (!user && !demo)
-    return (
-      <div className="page">
-        <Empty title="Откройте магазин через Telegram">
-          Для оформления нужна защищённая авторизация. Корзина сохранена на
-          этом устройстве.
-        </Empty>
-      </div>
-    );
-  if (!loaded)
-    return (
-      <div className="page narrow">
-        <ErrorBox
-          error={error}
-          retry={() => session.load().catch(setError)}
-        />
-        {!error && <Loading />}
-      </div>
-    );
-  const unavailable = selection.filter((i) => !i.available);
-  const availableIds = selectionIds.filter(
-    (id) =>
-      !conflicts.some((c) => c.itemId === id) &&
-      !unavailable.some((i) => i.id === id),
-  );
-  const fieldErrors: Record<string,string> = error instanceof ApiError ? {...error.fieldErrors} : {};
-  if (attempted) {
-    if (!/^\+?[\d\s()-]{9,22}$/.test(draft.phone)) fieldErrors.phone = "Укажите телефон для связи";
-    if (draft.method !== "PICKUP") {
-      if (draft.fullName.trim().split(/\s+/).length < 2) fieldErrors.fullName = "Укажите фамилию и имя получателя";
-      if (!draft.city.trim()) fieldErrors.city = "Укажите населённый пункт";
-      if (!draft.office.trim()) fieldErrors.office = "Укажите номер или название пункта";
-      if (draft.method === "EUROPOST" && !draft.officeAddress?.trim()) fieldErrors.officeAddress = "Укажите адрес пункта выдачи";
-      if (draft.method === "BELPOST" && !/^\d{6}$/.test(draft.postalCode)) fieldErrors.postalCode = "Укажите шестизначный индекс";
+  const submit = async (retry?: CheckoutOperation) => {
+    if (submitting.current || offline) return;
+    if (!retry && (pending || !settings?.acceptingOrders || !selection.length || unavailable)) return;
+    setAttempted(true);
+    const current = session.snapshot().draft;
+    const selectedMethod = retry ? current.method : method;
+    if (Object.keys(recipientErrors(selectedMethod, current)).length) {
+      requestAnimationFrame(() => form.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+      return;
     }
-  }
-  const validPhone = /^\+?[\d\s()-]{9,22}$/.test(draft.phone);
-  const validRecipient =
-    draft.method === "PICKUP" ||
-    Boolean(
-      draft.fullName.trim().split(/\s+/).length >= 2 &&
-        draft.city.trim() &&
-        draft.office.trim() &&
-        (draft.method !== "EUROPOST" || draft.officeAddress?.trim()) &&
-        (draft.method !== "BELPOST" || /^\d{6}$/.test(draft.postalCode)),
-    );
-  const methodEnabled = draft.method === "PICKUP" || Boolean(settings?.carriers[draft.method]?.enabled);
-  const total = (lease?.items || selection).reduce((s, i) => s + i.priceMinor, 0);
+    const operation = retry ?? {
+      key: operationKey(),
+      items: selection.map(({ id, version }) => ({ id, version })),
+      settingsVersion: settings!.version,
+    };
+    submitting.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      if (current.method !== selectedMethod) session.update({ method: selectedMethod });
+      await session.flush();
+      recordPending(operation);
+      const { key, ...snapshot } = operation;
+      try {
+        const order = await command<Order>("/orders", {
+          ...session.snapshot().draft, ...session.orderMetadata(), ...snapshot, termsAccepted: true,
+        }, "POST", key);
+        complete(order);
+      } catch (e) {
+        const paused = e instanceof ApiError && ["STORE_CLOSED", "LAUNCH_SETTINGS"].includes(e.code);
+        const uncertain = !(e instanceof ApiError) || e.status === 0 ||
+          (e.status >= 500 && !paused) || e.code === "IDEMPOTENCY_MISMATCH";
+        if (uncertain) {
+          try { complete(await findResult(key)); }
+          catch { setError(e); }
+        } else {
+          recordPending(null);
+          setError(e);
+          if (paused || ["RULES_CHANGED", "DELIVERY_DISABLED"].includes(e.code)) await refreshSettings().catch(() => {});
+          if (["ITEM_CHANGED", "ITEM_NOT_FOUND", "AVAILABILITY_CONFLICT"].includes(e.code))
+            await refreshSelection().catch(() => {});
+        }
+      }
+    } catch (e) {
+      setError(e);
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
+  };
+
+  if (!user && !demo)
+    return <div className="page"><Empty title="Откройте магазин через Telegram">
+      Для отправки заявки войдите через Telegram. Вещи остаются в корзине.
+    </Empty></div>;
+  if (!loaded) return <div className="page narrow">
+    <ErrorBox error={error} retry={() => session.load().then(() => setError(null)).catch(setError)} />
+    {!error && <Loading />}
+  </div>;
+
   return (
     <div className="page narrow checkout-page">
-      <ol className="checkout-progress" aria-label="Этапы оформления">{["Получение", "Данные", "Подтверждение"].map((label, i) => <li key={label} aria-current={i === step ? "step" : undefined} className={i <= step ? "reached" : ""}><span>{i+1}</span>{label}</li>)}</ol>
-      <h1 ref={heading} tabIndex={-1}>
-        {["Как получить вещи?", "Данные для получения", "Всё верно?"][step]}
-      </h1>
+      <h1>Оформление заявки</h1>
       <ErrorBox error={error || draftState.error} />
-      {!methodEnabled && !demo && <div className="notice" role="status"><h2>Этот способ сейчас недоступен</h2><p>Выберите самовывоз или другой доступный способ. Введённые данные сохранятся.</p><Button secondary onClick={changeReceiving}>Изменить получение</Button></div>}
       {pending && (
-        <div className="notice">
-          <h2>Проверяем результат оформления</h2>
-          <p>
-            Не удалось получить подтверждение. Проверьте результат перед новым оформлением — повторная проверка не создаст вторую бронь.
-          </p>
-          <Button onClick={recover} disabled={busy}>
-            Проверить результат
-          </Button>
-          <Button secondary onClick={submit} disabled={busy || !lease || offline}>Повторить это подтверждение</Button>
-          <p className="small-text">Повтор использует тот же ключ операции и не создаёт второе обращение.</p>
-        </div>
-      )}
-      {step === 0 && (
-        <>
-          <p className="muted">Выберите удобный способ</p>
-          <div className="delivery-options">
-            {(["PICKUP", "EUROPOST", "BELPOST"] as Method[]).map((method) => {
-              const enabled =
-                method === "PICKUP" || settings?.carriers[method]?.enabled;
-              return (
-                <label
-                  key={method}
-                  className={`delivery-option ${draft.method === method ? "selected" : ""} ${!enabled ? "disabled" : ""}`}
-                >
-                  <div>
-                    <Icon name={method === "PICKUP" ? "pin" : "box"} />
-                    <strong>{method === "PICKUP" ? "Забронировать в магазине" : method === "EUROPOST" ? "Оформить доставку" : methodNames[method]}</strong>
-                    <input
-                      type="radio"
-                      name="method"
-                      checked={draft.method === method}
-                      disabled={!enabled}
-                      onChange={() => set("method", method)}
-                    />
-                  </div>
-                  <p>
-                    {method === "PICKUP"
-                      ? guide.pickupSummary
-                      : enabled
-                        ? method === "EUROPOST" ? guide.shippingSummary : "В отделение · условия до отправки"
-                        : "Способ пока не подключён магазином"}
-                  </p>
-                </label>
-              );
-            })}
-          </div>
-          <section className="detail-section">
-            <h2>
-              {draft.method === "PICKUP"
-                ? "Бесплатная бронь"
-                : "Отправка в пункт выдачи"}
-            </h2>
-            <p>
-              {draft.method === "PICKUP"
-                ? guide.pickup : guide.shipping}
-            </p>
-            <p className="muted">
-              {draft.method === "PICKUP"
-                ? settings?.address
-                : guide.dispatch}
-            </p>
-          </section>
-          <Summary label="Вещи">{money(total)}</Summary>
-          <div className="bottom-action">
-            <Button onClick={() => setStep(1)}>Указать контакт</Button>
-          </div>
-        </>
-      )}
-      {step === 1 && (
-        <form
-          className="form-stack"
-          noValidate
-          onSubmit={(e: FormEvent) => {
-            e.preventDefault(); setAttempted(true);
-            if (validPhone && validRecipient) acquire();
-            else requestAnimationFrame(()=> document.querySelector<HTMLInputElement>('input[aria-invalid="true"]')?.focus());
-          }}
-        >
-          <div className="receiving-summary"><Icon name={draft.method === "PICKUP" ? "pin" : "box"} /><div><strong>{draft.method === "PICKUP" ? "Бронь с примеркой" : "Доставка в пункт выдачи"}</strong><p className="small-text">{draft.method === "PICKUP" ? settings?.address : guide.shippingSummary}</p></div></div>
-          {demo && <p className="small-text">Тестовые контакты можно менять. Они хранятся до перезагрузки.</p>}
-
-          <Field
-            label="Телефон"
-            hint="Для связи по обращению. Telegram не передаёт номер автоматически."
-            type="tel"
-            autoComplete="tel"
-            required
-            value={draft.phone}
-            onChange={(e) => set("phone", e.target.value)}
-            placeholder="+375 29 000 00 00"
-            error={draft.phone && !validPhone ? "Проверьте номер телефона" : fieldErrors.phone}
-          />
-          {!demo && <Button secondary onClick={contact}>
-            Поделиться контактом Telegram
-          </Button>}
-          {draft.method !== "PICKUP" && (
-            <>
-              <Field
-                label="Фамилия, имя, отчество получателя"
-                autoComplete="name"
-                required
-                value={draft.fullName}
-                onChange={(e) => set("fullName", e.target.value)}
-                hint="Получатель может отличаться от владельца Telegram."
-                error={draft.fullName && draft.fullName.trim().split(/\s+/).length < 2 ? "Укажите фамилию и имя получателя" : fieldErrors.fullName}
-              />
-              <Field
-                label="Населённый пункт"
-                required
-                error={fieldErrors.city} value={draft.city}
-                onChange={(e) => set("city", e.target.value)}
-              />
-              <Field
-                label={draft.method === "EUROPOST" ? "Номер или название пункта выдачи" : "Номер и адрес отделения"}
-                required
-                error={fieldErrors.office} value={draft.office}
-                onChange={(e) => set("office", e.target.value)}
-                hint="Сотрудник проверит пункт выдачи перед отправкой."
-              />
-              {draft.method === "EUROPOST" && <Field label="Адрес пункта выдачи" required error={fieldErrors.officeAddress} value={draft.officeAddress || ""} onChange={e => set("officeAddress", e.target.value)} hint="Улица и дом пункта выдачи, не домашний адрес покупателя." />}
-              <Field
-                label={
-                  draft.method === "BELPOST"
-                    ? "Индекс отделения"
-                    : "Индекс, если известен"
-                }
-                inputMode="numeric"
-                pattern={draft.method === "BELPOST" ? "[0-9]{6}" : undefined}
-                required={draft.method === "BELPOST"}
-                error={fieldErrors.postalCode} value={draft.postalCode}
-                onChange={(e) => set("postalCode", e.target.value)}
-              />
-              <a
-                className="external-link"
-                href={
-                  draft.method === "BELPOST"
-                    ? "https://belpost.by"
-                    : "https://evropochta.by"
-                }
-                target="_blank"
-                rel="noreferrer"
-              >
-                Проверить отделение на сайте почты ↗
-              </a>
-            </>
-          )}
-          <Textarea
-            label="Комментарий магазину, необязательно"
-            value={draft.comment}
-            onChange={(v) => set("comment", v)}
-          />
-          <div className="recipient-preferences">
-            <label className="check-row"><input type="checkbox" checked={draftState.saveRecipient} disabled={draftState.clearing} onChange={e=>session.setSaveRecipient(e.target.checked)} /><span>Сохранить данные для следующих обращений<small>После оформления подставим телефон и последнего получателя. Можно исправить или очистить. Это не рекламная подписка.</small></span></label>
-            <button type="button" className="text-link" disabled={draftState.clearing || busy} onClick={()=>session.clear().then(()=>toast("Данные получателя и черновик очищены")).catch(setError)}>Очистить сохранённые данные</button>
-          </div>
-          <p className="draft-status small-text" role="status">{{idle:"",saving:"Сохраняем…",saved:"Сохранено",failed:"Не удалось сохранить. Ввод остаётся в форме."}[draftState.status]}</p>
-          {draftState.status === "failed" && <Button secondary onClick={()=>session.flush().catch(setError)}>Повторить сохранение</Button>}
-          <p className="small-text">
-            Данные используются для исполнения обращения.{" "}
-            <button
-              type="button"
-              className="text-link"
-              onClick={() => go("/about")}
-            >
-              Политика обработки данных
-            </button>
-          </p>
-          <div className="button-stack">
-            <Button
-              type="submit"
-              disabled={
-                busy || draftState.clearing ||
-                pending ||
-                !methodEnabled || offline ||
-                !selectionIds.length
-              }
-            >
-              {busy ? "Проверяем наличие…" : "Проверить и продолжить"}
-            </Button>
-            <Button secondary onClick={changeReceiving}>
-              Изменить получение
-            </Button>
-          </div>
-        </form>
-      )}
-      {conflicts.length > 0 && (
         <section className="notice">
-          <h2>Часть вещей уже недоступна</h2>
-          {conflicts.map((c) => (
-            <p key={c.itemId}>
-              {selection.find((i) => i.id === c.itemId)?.title || "Вещь"} ·{" "}
-              {c.reason}
-            </p>
-          ))}
-          <p>Новый состав оформится только после вашего решения.</p>
-          <Button
-            disabled={busy || !availableIds.length}
-            onClick={() =>
-              setSelection(availableIds).then(() => acquire(availableIds))
-            }
-          >
-            Оформить доступные: {itemCount(availableIds.length)}
-          </Button>
-          <Button secondary onClick={() => go("/selection")}>
-            Вернуться к корзине
-          </Button>
+          <h2>Проверка результата заявки</h2>
+          <p>Если подтверждение не пришло, проверьте, сохранилась ли заявка.</p>
+          <div className="button-stack">
+            <Button onClick={recover} disabled={busy || offline}>Проверить результат</Button>
+            {typeof pending !== "string" && <Button secondary onClick={() => submit(pending)} disabled={busy || offline}>Повторить отправку</Button>}
+          </div>
         </section>
       )}
-      {step === 2 && (
-        <>
-          <div className="notice">
-            <Icon name="clock" />
-            <p>
-              {demo ? "Перед оформлением вы проверите актуальный состав, цены и особенности вещей." : <>Удерживаем вещи до {date(lease?.expiresAt)}. После истечения перепроверим наличие.</>}
-            </p>
-          </div>
-          <div className="compact-lines">
-            {(lease?.items || selection).map((i) => (
-              <div className="item-row" key={i.id}>
-                <Photo media={i.media.find((photo) => photo.role !== "MEASUREMENT")} alt={i.title} />
+      {!pending && !settings?.acceptingOrders && <p className="notice" role="status">Магазин пока не принимает заявки. Вещи остаются в корзине.</p>}
+      {!pending && unavailable && <p className="notice" role="status">Некоторые вещи недоступны. Вернитесь в корзину, чтобы изменить состав заявки.</p>}
+      <form ref={form} className="form-stack" noValidate onSubmit={(e: FormEvent) => { e.preventDefault(); void submit(); }}>
+        <fieldset className="checkout-fields" disabled={Boolean(pending) || busy || draftState.clearing}>
+          <legend>Способ получения</legend>
+          <div className="delivery-options">
+            {methods.map(option => (
+              <label key={option} className={`delivery-option ${method === option ? "selected" : ""}`}>
                 <div>
-                  <strong>{i.title}</strong>
-                  <p className="muted">
-                    {[productSize(i.attributes), i.sku].filter(Boolean).join(" · ")}
-                  </p>
-                  <Defect item={i} expanded />
-                  <strong>{money(i.priceMinor)}</strong>
+                  <Icon name={option === "PICKUP" ? "pin" : "box"} />
+                  <strong>{methodNames[option]}</strong>
+                  <input type="radio" name="method" checked={method === option} onChange={() => {
+                    session.update({ method: option, office: "", officeAddress: "", postalCode: "" });
+                    setError(null);
+                  }} />
+                </div>
+              </label>
+            ))}
+          </div>
+          {method === "PICKUP"
+            ? settings?.address && <p className="muted">{settings.address}</p>
+            : <p className="muted">{shippingCostNotice}. {settings?.carriers[method]?.terms}</p>}
+        </fieldset>
+        <fieldset className="checkout-fields" disabled={Boolean(pending) || busy || draftState.clearing}>
+          <legend>Контакты</legend>
+          <Field label="Телефон" type="tel" autoComplete="tel" value={draft.phone}
+            required maxLength={22} onChange={e => set("phone", e.target.value)} error={fieldErrors.phone} />
+          {!demo && tg()?.requestContact && <Button secondary onClick={() => {
+            const phone = session.snapshot().draft.phone;
+            tg()?.requestContact?.(async (success) => {
+              if (!success) return;
+              try {
+                const saved = await api<Partial<Draft>>("/me/contact");
+                if (!submitting.current && saved.phone && session.snapshot().draft.phone === phone) set("phone", saved.phone);
+                else toast("Контакт передан. При необходимости введите номер вручную.");
+              } catch (e) { setError(e); }
+            });
+          }}>Поделиться контактом Telegram</Button>}
+          {method !== "PICKUP" && <>
+            <Field label="Фамилия и имя получателя" autoComplete="name" required maxLength={200}
+              value={draft.fullName} error={fieldErrors.fullName} onChange={e => set("fullName", e.target.value)} />
+            <Field label="Населённый пункт" required maxLength={150}
+              value={draft.city} error={fieldErrors.city} onChange={e => set("city", e.target.value)} />
+            <Field label={method === "EUROPOST" ? "Предпочтительное отделение, если известно" : "Отделение или его адрес"}
+              required={method === "BELPOST"} maxLength={350} value={[draft.office, draft.officeAddress].filter(Boolean).join(", ")}
+              error={fieldErrors.office} onChange={e => { session.update({ office: e.target.value, officeAddress: "" }); setError(null); }} />
+            {method === "BELPOST" && <Field label="Индекс отделения, если известен" inputMode="numeric"
+              maxLength={6} value={draft.postalCode} error={fieldErrors.postalCode} onChange={e => set("postalCode", e.target.value)} />}
+          </>}
+          <Textarea label="Комментарий магазину, необязательно" maxLength={1000}
+            value={draft.comment} onChange={value => set("comment", value)} />
+          <div className="recipient-preferences">
+            <label className="check-row"><input type="checkbox" checked={draftState.saveRecipient}
+              onChange={e => session.setSaveRecipient(e.target.checked)} /><span>Сохранить данные для следующих заявок</span></label>
+            <button type="button" className="text-link"
+              onClick={() => session.clear().then(() => toast("Данные получателя и черновик очищены")).catch(setError)}>Очистить сохранённые данные</button>
+          </div>
+        </fieldset>
+        {draftState.status === "failed" && (
+          <p className="small-text" role="status">Не удалось сохранить черновик. Данные остаются в форме.</p>
+        )}
+        <section className="detail-section">
+          <h2>Состав заявки</h2>
+          <div className="compact-lines">
+            {selection.map(item => (
+              <div className="item-row" key={item.id}>
+                <Photo media={item.media.find(photo => photo.role !== "MEASUREMENT")} alt={item.title} />
+                <div>
+                  <strong>{item.title}</strong>
+                  <Defect item={item} />
+                  <p>{money(item.priceMinor)}</p>
                 </div>
               </div>
             ))}
           </div>
-          <section className="detail-section">
-            <h2>{methodNames[draft.method]}</h2>
-            {<p>{draft.phone}</p>}
-            {draft.method === "PICKUP" ? (
-              <p>{displayedSettings?.address}<MapLink address={displayedSettings?.address} /></p>
-            ) : (
-              <>
-                <p>{draft.fullName}</p>
-                {<p>
-                  {draft.city}, {draft.office}{draft.officeAddress ? `, ${draft.officeAddress}` : ""}
-                  {draft.postalCode ? `, ${draft.postalCode}` : ""}
-                </p>}
-              </>
-            )}
-          </section>
-          <section className="detail-section">
-            <h2>Бронь и заявка бесплатны</h2>
-            <p>
-              {draft.method === "PICKUP"
-                ? guide.pickup : guide.shipping}
-            </p>
-            {draft.method !== "PICKUP" && displayedSettings?.carriers[draft.method]?.terms !== guide.shipping && (
-              <p className="muted">{displayedSettings?.carriers[draft.method]?.terms}</p>
-            )}
-            <button className="text-link" onClick={() => go("/about")}>
-              Правила магазина и обработки данных
-            </button>
-          </section>
-          <Summary label="Стоимость вещей">{money(total)}</Summary>
-          <div className="bottom-action button-stack">
-            <Button
-              disabled={busy || pending || offline || !methodEnabled || (!demo && !settings?.acceptingOrders)}
-              onClick={submit}
-            >
-              {busy
-                ? "Сохраняем…"
-                : demo ? (draft.method === "PICKUP" ? "Создать тестовую бронь" : "Создать тестовую заявку") : draft.method === "PICKUP"
-                  ? "Подтвердить бесплатную бронь"
-                  : "Оформить заявку на отправку"}
-            </Button>
-            <Button
-              secondary
-              disabled={busy || pending}
-              onClick={async () => {
-                if (lease)
-                  await api(`/checkout/leases/${lease.id}`, {
-                    method: "DELETE",
-                  }).catch(setError);
-                setLease(null);
-                saveLocal(accountKey("checkout-lease"), null);
-                setStep(1);
-              }}
-            >
-              Изменить данные
-            </Button>
-            {!demo && !settings?.acceptingOrders && (
-              <p>Магазин временно не принимает новые обращения.</p>
-            )}
-          </div>
-        </>
-      )}
+          <Summary label="Стоимость вещей">{money(selection.reduce((sum, item) => sum + item.priceMinor, 0))}</Summary>
+        </section>
+        <p className="small-text">Отправляя заявку, вы принимаете <button type="button" className="text-link" onClick={() => go("/about")}>правила магазина и обработки данных</button>.</p>
+        <div className="button-stack">
+          <Button type="submit" disabled={busy || Boolean(pending) || offline || draftState.clearing ||
+            !settings?.acceptingOrders || unavailable || !selection.length}>{busy ? "Отправляем…" : "Отправить заявку"}</Button>
+          <Button secondary disabled={busy} onClick={() => go("/selection")}>Вернуться в корзину</Button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -1549,7 +1318,7 @@ function OrderPage({ id }: { id: string }) {
     order.method !== "PICKUP" &&
     ["CHECKING", "PREPARING", "DISPATCH_READY"].includes(order.status);
   const next: Record<string, string> = {
-    CHECKING: order.method === "PICKUP" ? "Вещи закреплены за вами. Дождитесь уведомления о готовности, прежде чем приезжать." : "Вещи закреплены за заявкой. Проверим их и свяжемся для согласования условий отправки.",
+    CHECKING: "Заявка принята. Мы проверим наличие товаров и свяжемся с вами для подтверждения заказа.",
     READY_FOR_PICKUP:
       "Приходите в магазин и покажите сотруднику номер и код выдачи.",
     PREPARING: "Заявка передана владельцу. Он оформит и сдаст посылку вручную.",
@@ -1651,7 +1420,7 @@ function OrderPage({ id }: { id: string }) {
           <>
             <p>{order.recipient?.fullName}</p>
             <p>
-              {order.recipient?.city}, {order.recipient?.office}{order.recipient?.officeAddress ? `, ${order.recipient.officeAddress}` : ""}
+              {[order.recipient?.city, order.recipient?.office, order.recipient?.officeAddress].filter(Boolean).join(", ")}
             </p>
             {order.recipient?.postalCode && (
               <p>Индекс {order.recipient.postalCode}</p>
@@ -1893,21 +1662,23 @@ function OrderPage({ id }: { id: string }) {
               }
             />
             <Field
-              label={order.method === "EUROPOST" ? "Номер или название пункта выдачи" : "Номер и адрес отделения"}
-              required
+              label={order.method === "EUROPOST" ? "Предпочтительное отделение, если известно" : "Отделение или его адрес"}
+              required={order.method === "BELPOST" && !recipient.officeAddress}
               value={recipient.office}
               onChange={(e) =>
                 setRecipient((v) => ({ ...v, office: e.target.value }))
               }
             />
-            {order.method === "EUROPOST" && <Field label="Адрес пункта выдачи" required value={recipient.officeAddress || ""} onChange={e => setRecipient(v => ({...v, officeAddress:e.target.value}))} />}
-            <Field
+            {(order.method === "EUROPOST" || recipient.officeAddress) && <Field label="Адрес пункта выдачи, если известен" value={recipient.officeAddress || ""} onChange={e => setRecipient(v => ({...v, officeAddress:e.target.value}))} />}
+            {order.method === "BELPOST" && <Field
               label="Индекс"
+              inputMode="numeric"
+              pattern="[0-9]{6}"
               value={recipient.postalCode}
               onChange={(e) =>
                 setRecipient((v) => ({ ...v, postalCode: e.target.value }))
               }
-            />
+            />}
             {order.status !== "CHECKING" && (
               <p>Изменение проверит сотрудник до передачи посылки.</p>
             )}

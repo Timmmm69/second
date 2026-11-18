@@ -11,7 +11,7 @@ assert.equal(data.settings.acceptingOrders, true);
 assert.equal(data.settings.telegramUsername, '');
 assert.equal(data.settings.phone, '');
 assert.equal(data.settings.documentStatus, 'DRAFT');
-assert.equal(data.settings.carriers.BELPOST.enabled, false);
+assert.equal(data.settings.carriers.BELPOST.enabled, true);
 assert.ok(data.settings.buyerGuide.shipping.includes('согласовать'));
 assert.ok(!html.includes('telegram.org/js/telegram-web-app.js'));
 for (const item of data.items) for (const media of item.media)
@@ -65,7 +65,7 @@ assert.equal((await one.request('/me/checkout-draft', 'PATCH', personal)).status
 assert.equal((await one.request('/me/checkout-draft', 'PATCH', { ...initialDraft, draftRevision: 1 })).status, 409);
 assert.equal((await get('/me/checkout-draft')).phone, personal.phone);
 await one.ok('/me/selection', 'PUT', { itemIds: [data.items[0].id] });
-let lease = await one.ok('/checkout/leases', 'POST', { itemIds: [data.items[0].id] });
+const lease = await one.ok('/checkout/leases', 'POST', { itemIds: [data.items[0].id] });
 assert.equal(lease.items.length, 1);
 assert.equal((await get('/items/' + data.items[0].id)).available, false);
 const pickupBody = { ...personal, method: 'PICKUP', leaseId: lease.id, termsAccepted: true, settingsVersion: lease.rules.version, saveRecipient: true, recipientVersion: initialDraft.recipientVersion, buyerId: 'forged', buyer: { telegramId: 'forged' } };
@@ -105,10 +105,9 @@ console.log('PASS: draft sequence/tombstone, reuse of saved recipient, server-ow
 
 await one.ok('/demo/role', 'POST', { role: 'BUYER' });
 const deliveryDraft = await get('/me/checkout-draft');
-lease = await one.ok('/checkout/leases', 'POST', { itemIds: [data.items[1].id] });
-let deliveryBody = { ...deliveryDraft, ...personal, draftToken: deliveryDraft.draftToken, draftRevision: deliveryDraft.draftRevision + 1, recipientVersion: deliveryDraft.recipientVersion, method: 'EUROPOST', leaseId: lease.id, termsAccepted: true, settingsVersion: lease.rules.version };
-assert.equal((await one.request('/orders', 'POST', { ...deliveryBody, officeAddress: '' })).body.fieldErrors.officeAddress, 'Укажите адрес пункта выдачи');
-await one.ok('/me/checkout-draft', 'PATCH', deliveryBody);
+const item = data.items[1];
+const deliveryBody = { ...deliveryDraft, ...personal, draftToken: deliveryDraft.draftToken, recipientVersion: deliveryDraft.recipientVersion, method: 'EUROPOST', office: '', officeAddress: '', termsAccepted: true, settingsVersion: data.settings.version, items: [{ id: item.id, version: item.version }] };
+assert.equal((await one.request('/orders', 'POST', { ...deliveryBody, city: '' })).body.fieldErrors.city, 'Укажите населённый пункт');
 let shipping = await one.ok('/orders', 'POST', deliveryBody, 'shipping-command');
 assert.equal(shipping.recipient.fullName, personal.fullName);
 await one.ok('/demo/role', 'POST', { role: 'STAFF' });
@@ -124,7 +123,7 @@ assert.equal(shipping.status, 'IN_FULFILLMENT');
 assert.equal(shipping.shipment.status, 'ACCEPTED');
 shipping = await one.ok(`/staff/shipments/${shipping.shipment.id}/events`, 'POST', { version: shipping.version, source: 'Тестовое отслеживание', status: 'DELIVERED' });
 assert.equal(shipping.status, 'FULFILLED');
-console.log('PASS: delivery validates recipient/office address; tracking registration and physical acceptance are separate events');
+console.log('PASS: delivery validates recipient and allows Europost without an office; tracking registration and physical acceptance are separate events');
 
 await one.ok('/demo/role', 'POST', { role: 'OWNER' });
 const categories = await get('/owner/categories');

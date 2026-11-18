@@ -65,10 +65,8 @@ test("order history freezes defect disclosure, including after cancellation and 
   assert.equal(history.json().lines[0].hasDefect,true);
 });
 
-test("Europost requires a pickup point address, stores it in encrypted server draft",async()=>{
+test("the encrypted draft retains a previously entered Europost address",async()=>{
  const b=await app.inject({method:"POST",url:"/api/auth/dev",payload:{role:"BUYER"}});const h={cookie:String(b.headers["set-cookie"]).split(";")[0],"idempotency-key":randomUUID()};
- const invalid=await app.inject({method:"POST",url:"/api/orders",headers:h,payload:{leaseId:randomUUID(),method:"EUROPOST",phone:"+375291234567",fullName:"Тест Получатель",city:"Минск",office:"Пункт 1",termsAccepted:true}});
- assert.equal(invalid.statusCode,422,invalid.body);assert.equal(invalid.json().code,"OFFICE_ADDRESS_REQUIRED");
  const meta=(await app.inject({url:"/api/me/checkout-draft",headers:h})).json();
  const patch=await app.inject({method:"PATCH",url:"/api/me/checkout-draft",headers:h,payload:{draftToken:meta.draftToken,draftRevision:meta.draftRevision+1,method:"EUROPOST",office:"Пункт 1",officeAddress:"Синтетическая улица, 2"}});assert.equal(patch.statusCode,200,patch.body);
  const restored=await app.inject({url:"/api/me/checkout-draft",headers:h});assert.equal(restored.json().officeAddress,"Синтетическая улица, 2");
@@ -88,7 +86,20 @@ test("production rejects drafts/test contacts when a legacy acceptingOrders flag
    await pool.query("UPDATE store_settings SET value=$1 WHERE id=true",[{...ready,...patch}]);
    const r=await app.inject({method:"POST",url:"/api/checkout/leases",headers:{cookie:buyerCookie,origin:config.origin,"idempotency-key":randomUUID()},payload:{itemIds:[item.id]}});
    assert.equal(r.statusCode,503,r.body);assert.equal(r.json().code,"LAUNCH_SETTINGS");
+   const settings = (await app.inject("/api/settings")).json();
+   assert.equal(settings.acceptingOrders, false);
+   const direct = await app.inject({method:"POST",url:"/api/orders",headers:{cookie:buyerCookie,origin:config.origin,"idempotency-key":randomUUID()},
+     payload:{items:[{id:item.id,version:item.version}],settingsVersion:settings.version,method:"PICKUP",phone:"+375291234567",termsAccepted:true}});
+   assert.equal(direct.statusCode,503,direct.body);
+   assert.equal(direct.json().code,"LAUNCH_SETTINGS");
   }
+  await pool.query("UPDATE store_settings SET value=$1 WHERE id=true",[ready]);
+  const active = (await app.inject("/api/settings")).json();
+  assert.equal(active.acceptingOrders, true);
+  const accepted = await app.inject({method:"POST",url:"/api/orders",headers:{cookie:buyerCookie,origin:config.origin,"idempotency-key":randomUUID()},
+    payload:{items:[{id:item.id,version:item.version}],settingsVersion:active.version,method:"PICKUP",phone:"+375291234567",termsAccepted:true}});
+  assert.equal(accepted.statusCode,200,accepted.body);
+  assert.equal(accepted.json().status,"CHECKING");
  }finally{config.production=false;await pool.query("UPDATE store_settings SET value=$1 WHERE id=true",[old]);}
 });
 

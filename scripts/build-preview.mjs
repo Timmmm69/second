@@ -14,7 +14,7 @@ data.settings.seller = '';
 data.settings.documentStatus = 'DRAFT';
 data.settings.about = 'Лучок — магазин вещей в Минске. В основном у нас новые вещи: одежда, детские находки, сумки и аксессуары. Если у вещи есть дефект, мы отдельно показываем и описываем его в карточке.';
 data.settings.documents = {privacy:'',reservation:'',shipping:'',returns:''};
-data.settings.carriers = {EUROPOST:{enabled:true,terms:defaultBuyerGuide.shipping},BELPOST:{enabled:false,terms:''}};
+data.settings.carriers = {EUROPOST:{enabled:true,terms:''},BELPOST:{enabled:true,terms:''}};
 await writeFile(dir+'/preview-data.json',JSON.stringify(data));
 await cp('preview/adapter.js',dir+'/preview-api.js');
 const art = {outerwear:['jacket','#b8794f'],trousers:['pants','#536b86'],knit:['jacket','#d7c5a9'],shirts:['shirt','#c5d3d9'],children:['jacket','#d2b6b5'],bags:['bag','#97715a'],accessories:['scarf','#a9b6a1'],dresses:['dress','#b4ad99']};
