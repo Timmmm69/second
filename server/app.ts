@@ -126,7 +126,7 @@ export async function buildApp({ staticFiles = true } = {}) {
       return;
     }
     if (
-      ["ECONNREFUSED", "57P01", "53300", "08006", "08001"].includes(error.code)
+      ["ECONNREFUSED", "ECONNRESET", "57P01", "53300", "08006", "08001"].includes(error.code)
     ) {
       reply.code(503).send({
         code: "DATABASE_UNAVAILABLE",
