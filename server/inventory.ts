@@ -15,6 +15,7 @@ export type ItemRow = {
   physical: string;
   version: number;
   attributes: Record<string, unknown>;
+  composition?: { materialId: string; name: string; percent: number | null }[];
   measurements: Record<string, number>;
   storage_location: string;
   has_defect: boolean;
