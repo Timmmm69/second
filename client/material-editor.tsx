@@ -65,6 +65,7 @@ export function MaterialEditor({
       {value.map((row, index) => (
         <div className="composition-row" key={row.key}>
           <Select label={`Материал ${index + 1}`}
+            markEmpty
             value={row.materialId}
             searchPlaceholder="Найти или добавить материал"
             allowCustom
@@ -75,7 +76,7 @@ export function MaterialEditor({
             }))}
             onValueChange={choice => { void choose(row, choice); }}
           />
-          <Field label="Доля, %" type="number" inputMode="numeric"
+          <Field label="Доля, %" markEmpty type="number" inputMode="numeric"
             min="1" max="100" step="1" placeholder="?"
             value={row.percent}
             onChange={event => setRow(row.key, { percent: event.target.value })}
