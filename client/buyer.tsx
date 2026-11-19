@@ -600,7 +600,7 @@ function ItemPage({ id }: { id: string }) {
     }
   };
   const purchaseButton = <Button disabled={!available || busy} onClick={buy}>
-    {busy ? "Добавляем…" : chosen ? "В корзине ✓" : "В корзину"}
+    {busy ? "Добавляем…" : chosen ? "Перейти в корзину" : "В корзину"}
   </Button>;
   const details = [
     ["brand", "Бренд"],
@@ -713,9 +713,15 @@ function ItemPage({ id }: { id: string }) {
         </div>
       </div>
       {floating && (
-        <div className="purchase-bar">
+        <div className="purchase-bar" role="region" aria-label="Добавление вещи в корзину">
           <ErrorBox error={actionError} />
-          <div><strong>{money(item.priceMinor)}</strong>{purchaseButton}</div>
+          <div className="purchase-bar-content">
+            <div className="purchase-bar-price">
+              <small>Цена</small>
+              <strong>{money(item.priceMinor)}</strong>
+            </div>
+            {purchaseButton}
+          </div>
         </div>
       )}
       {gallery && media.length > 0 && (
