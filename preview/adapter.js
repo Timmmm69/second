@@ -12,6 +12,41 @@
     const color = typeof value === 'string' ? value.trim() : '';
     return !color.includes('#') && !/^(?:[\da-f]{6}|[\da-f]{8})$/i.test(color) && /\p{L}/u.test(color) ? color : '';
   };
+  const normalizeMaterial = value => String(value).normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('ru').replaceAll('ё', 'е');
+  const initialMaterials = [
+    ['Хлопок', 'cotton'], ['Полиэстер', 'polyester,полиэфир,pes'],
+    ['Эластан', 'лайкра,спандекс,elastane,spandex,lycra'],
+    ['Вискоза', 'viscose,rayon'], ['Шерсть', 'wool'],
+    ['Лён', 'лен,linen,flax'], ['Акрил', 'acrylic'],
+    ['Полиамид', 'нейлон,nylon,polyamide,pa'], ['Шёлк', 'шелк,silk'],
+    ['Кашемир', 'cashmere'], ['Модал', 'modal'],
+    ['Лиоцелл', 'тенсел,tencel,lyocell'],
+    ['Полиуретан', 'polyurethane'], ['Кожа', 'leather'],
+    ['Замша', 'suede'], ['Пух', 'down'], ['Перо', 'feather'], ['Ацетат', 'acetate'],
+  ].map(([name, aliases], index) => ({
+    id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    name, aliases: aliases.split(','),
+  }));
+  let materials = clone(initialMaterials);
+  const parseMaterial = source => {
+    const pieces = String(source || '').trim().split(/\s*[,;]\s*/).filter(Boolean);
+    if (!pieces.length || pieces.length > 20) return [];
+    let total = 0;
+    const result = [];
+    for (const raw of pieces) {
+      const prefix = /^(\d{1,3})\s*%\s*(.+)$/.exec(raw);
+      const suffix = /^(.+?)\s+(\d{1,3})\s*%$/.exec(raw);
+      const percent = prefix ? +prefix[1] : suffix ? +suffix[2] : null;
+      const label = normalizeMaterial(prefix ? prefix[2] : suffix ? suffix[1] : raw);
+      const known = materials.find(m => [m.name, ...m.aliases].some(v => normalizeMaterial(v) === label));
+      if (!known || (percent !== null && (percent < 1 || percent > 100)) ||
+        result.some(p => p.materialId === known.id)) return [];
+      total += percent ?? 0;
+      if (total > 100) return [];
+      result.push({ materialId: known.id, name: known.name, percent });
+    }
+    return total === 100 && result.some(p => p.percent === null) ? [] : result;
+  };
   const catalogOption = (attributes, key) => {
     if (key === 'color') return productColor(attributes.color);
     if (key === 'sizeLabel' && !['INT', 'RU'].includes(attributes.sizeSystem)) return '';
@@ -33,7 +68,10 @@
     initial = await response.json();
     state = clone(initial);
     state.categories = state.categories.map((category, index) => ({ sortOrder: index * 10, version: 1, archived: false, ...category }));
-    state.items = state.items.map(item => ({ physical: 'AVAILABLE', publication: 'PUBLISHED', storageLocation: 'Тестовый зал · рейл 1', ...item }));
+    state.items = state.items.map(item => ({
+      physical: 'AVAILABLE', publication: 'PUBLISHED', storageLocation: 'Тестовый зал · рейл 1',
+      ...item, composition: item.composition ?? parseMaterial(item.attributes?.material),
+    }));
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
       if (saved?.schema === 5 && Array.isArray(saved.items) && Array.isArray(saved.categories) && saved.settings) {
@@ -48,7 +86,10 @@
           }
           return { ...item, attributes };
         });
-        state = { items, categories: saved.categories, settings: saved.settings };
+        if (Array.isArray(saved.materials)) materials = saved.materials;
+        state = { items: items.map(item => ({
+          ...item, composition: item.composition ?? parseMaterial(item.attributes?.material),
+        })), categories: saved.categories, settings: saved.settings };
       }
     } catch { /* Storage is optional; a private browser may disallow it. */ }
   });
@@ -69,11 +110,11 @@
       priceMinor: item.priceMinor, publication: item.publication,
       // A local order cannot leave a persistent stock lock after reload.
       physical: ['RESERVED', 'PICKED', 'PACKED'].includes(item.physical) ? 'AVAILABLE' : item.physical,
-      version: item.version, attributes: item.attributes, measurements: item.measurements,
+      version: item.version, attributes: item.attributes, composition: item.composition, measurements: item.measurements,
       media: item.media, hasDefect: item.hasDefect, defectDescription: item.defectDescription,
       storageLocation: item.storageLocation,
     }));
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ schema: 5, items, categories: state.categories, settings: publicSettings })); }
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ schema: 5, items, categories: state.categories, settings: publicSettings, materials })); }
     catch { fail(507, 'DEMO_STORAGE', 'Память браузера заполнена. Уменьшите фотографии или сбросьте демонстрацию. Изменение действует до перезагрузки.'); }
   };
   const settings = () => ({ ...clone(state.settings), phone: '', phoneIsTest: true, telegramUsername: '', seller: '', documentStatus: 'DRAFT', documents: { privacy: '', reservation: '', shipping: '', returns: '' } });
@@ -126,7 +167,11 @@
   const reset = () => {
     state = clone(initial);
     state.categories = state.categories.map((category, index) => ({ sortOrder: index * 10, version: 1, archived: false, ...category }));
-    state.items = state.items.map(item => ({ physical: 'AVAILABLE', publication: 'PUBLISHED', storageLocation: 'Тестовый зал · рейл 1', ...item }));
+    materials = clone(initialMaterials);
+    state.items = state.items.map(item => ({
+      physical: 'AVAILABLE', publication: 'PUBLISHED', storageLocation: 'Тестовый зал · рейл 1',
+      ...item, composition: item.composition ?? parseMaterial(item.attributes?.material),
+    }));
     selection = []; orders = []; leases = new Map(); operations = new Map(); events = []; journal = [];
     profile = clone(synthetic); draft = clone(synthetic); draftGeneration = uuid(); draftRevision = 0; profileEnabled = true; profileVersion = 0; role = 'BUYER';
     try {
@@ -177,9 +222,20 @@
     if (path === '/owner/staff' && method === 'GET') return { staff: [] };
     if (path === '/owner/operations' && method === 'GET') fail(403, 'DEMO_BOUNDARY', 'В демонстрации нет сервера, диска магазина, worker и реальных уведомлений.');
     if (path.startsWith('/owner/')) fail(403, 'DEMO_BOUNDARY', 'Эта системная операция доступна только в рабочем приложении. В демонстрации нет сервера, договоров и сотрудников.');
+    if (path === '/staff/materials' && method === 'GET') return clone(materials.toSorted((a,b) => a.name.localeCompare(b.name, 'ru')));
+    if (path === '/staff/materials' && method === 'POST') {
+      const name = String(body.name || '').normalize('NFKC').trim().replace(/\s+/g, ' ');
+      ensure(name.length >= 2 && name.length <= 120 && /\p{L}/u.test(name), 422, 'MATERIAL', 'Укажите корректное название материала');
+      const normalized = normalizeMaterial(name);
+      const existing = materials.find(material =>
+        [material.name, ...material.aliases].some(value => normalizeMaterial(value) === normalized));
+      if (existing) return clone(existing);
+      const material = { id: uuid(), name, aliases: [] };
+      materials.push(material); persist(); return clone(material);
+    }
     if (path === '/catalog/options' && method === 'GET') {
       const items = state.items.filter(item => itemView(item).available);
-      return Object.fromEntries(['brand', 'color', 'material', 'season', 'sizeLabel'].map(key => {
+      const facets = Object.fromEntries(['brand', 'color', 'material', 'season', 'sizeLabel'].map(key => {
         const values = new Map();
         for (const { attributes } of items) {
           const value = catalogOption(attributes, key);
@@ -187,6 +243,9 @@
         }
         return [key, [...values.values()].sort((a, b) => a.localeCompare(b, 'ru', { numeric: true }))];
       }));
+      return { ...facets, materials: [...new Map(items.flatMap(item =>
+        (item.composition || []).map(part => [part.materialId, { id: part.materialId, name: part.name }])
+      )).values()].sort((a,b) => a.name.localeCompare(b.name, 'ru')) };
     }
     if (path === '/catalog/availability' && method === 'POST') {
       ensure(Array.isArray(body.itemIds) && body.itemIds.length <= 100 &&
@@ -198,8 +257,11 @@
       const categories = query.getAll('category').filter(Boolean);
       const audiences = query.getAll('audience').map(value => value.trim().toLowerCase()).filter(Boolean);
       if (audiences.includes('женское') || audiences.includes('мужское')) audiences.push('унисекс');
-      const filters = ['brand', 'color', 'material', 'season', 'sizeLabel'].map(key =>
+      const filters = ['brand', 'color', 'season', 'sizeLabel'].map(key =>
         [key, query.getAll(key).map(value => value.trim().toLowerCase()).filter(Boolean)]);
+      const selectedMaterials = query.getAll('material').filter(Boolean);
+      const minPercent = query.get('minPercent') ? Number(query.get('minPercent')) : 0;
+      ensure(Number.isInteger(minPercent) && minPercent >= 0 && minPercent <= 100, 422, 'FILTER', 'Проверьте процент');
       let items = state.items.map(itemView).filter(item => item.available).filter(item => {
         const a = item.attributes;
         if (query.get('q') && ![item.title, item.sku, a.brand, productColor(a.color)].join(' ').toLowerCase().replace(/\s+/g, ' ').includes(query.get('q').trim().toLowerCase().replace(/\s+/g, ' '))) return false;
@@ -207,6 +269,8 @@
         if (audiences.length && !audiences.includes(String(a.audience ?? '').toLowerCase())) return false;
         for (const [key, values] of filters)
           if (values.length && !values.includes(catalogOption(a, key).toLowerCase())) return false;
+        if (selectedMaterials.length && !(item.composition || []).some(part =>
+          selectedMaterials.includes(part.materialId) && (minPercent === 0 || (part.percent !== null && part.percent >= minPercent)))) return false;
         for (const [key, value, min] of [['minPrice', item.priceMinor, true], ['maxPrice', item.priceMinor, false]])
           if (query.get(key) && (value == null || (min ? value < +query.get(key) : value > +query.get(key)))) return false;
         return true;
@@ -381,9 +445,27 @@
       ensure(body.description === undefined || (typeof body.description === 'string' && body.description.trim().length <= 4000), 422, 'VALIDATION', 'Описание слишком длинное');
       ensure(state.categories.some(category => category.id === body.category && !category.archived), 422, 'CATEGORY', 'Выберите действующую категорию');
       ensure(!body.hasDefect || String(body.defectDescription || '').trim(), 422, 'VALIDATION', 'Опишите дефект', { fieldErrors: { defectDescription: 'Опишите конкретный дефект' } });
-      const item = { ...(existing || { id: uuid(), sku: `DEMO-${state.items.length + 1}`, media: [], publication: 'DRAFT', physical: 'AVAILABLE' }), ...clone(body), description: String(body.description ?? existing?.description ?? '').trim(), version: (existing?.version || 0) + 1 };
+      const incomingComposition = body.composition === undefined ? existing?.composition ?? [] : body.composition;
+      ensure(Array.isArray(incomingComposition) && incomingComposition.length <= 20, 422, 'MATERIAL', 'Проверьте состав');
+      const ids = new Set();
+      let sum = 0;
+      const composition = incomingComposition.map(part => {
+        const material = materials.find(m => m.id === part.materialId);
+        ensure(material && !ids.has(material.id) && (part.percent === null ||
+          (Number.isInteger(part.percent) && part.percent >= 1 && part.percent <= 100)),
+          422, 'MATERIAL', 'Проверьте материалы и проценты');
+        ids.add(material.id);
+        sum += part.percent ?? 0;
+        return { materialId: material.id, name: material.name, percent: part.percent };
+      });
+      ensure(sum <= 100 && !(sum === 100 && composition.some(part => part.percent === null)),
+        422, 'MATERIAL', 'Проверьте сумму процентов');
+      const item = { ...(existing || { id: uuid(), sku: `DEMO-${state.items.length + 1}`, media: [], publication: 'DRAFT', physical: 'AVAILABLE' }), ...clone(body), description: String(body.description ?? existing?.description ?? '').trim(), composition, version: (existing?.version || 0) + 1 };
       item.measurements = body.measurements ?? existing?.measurements ?? {};
       item.attributes ??= {};
+      if (composition.length) item.attributes.material = composition.map(part =>
+        part.percent === null ? part.name : `${part.percent}% ${part.name.toLocaleLowerCase('ru')}`).join(', ');
+      else if (existing?.composition?.length) item.attributes.material = '';
       const color = item.attributes.color, namedColor = productColor(color), previousColor = existing?.attributes.color;
       if (!namedColor && previousColor && !productColor(previousColor) && (color === previousColor || color === undefined || (typeof color === 'string' && !color.trim()))) {
         item.attributes.color = previousColor;
