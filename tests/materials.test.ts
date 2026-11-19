@@ -30,7 +30,7 @@ after(async () => {
 
 async function send(method: "GET" | "POST" | "PATCH", url: string, payload?: unknown, authorized = true) {
   return app.inject({
-    method, url, payload,
+    method, url, payload: payload as Record<string, unknown> | undefined,
     headers: {
       ...(authorized ? { cookie } : {}),
       ...(method !== "GET" ? { "idempotency-key": randomUUID() } : {}),
