@@ -216,7 +216,7 @@ export function Field({
   );
 }
 
-type SelectOption = { value: string; label: string };
+type SelectOption = { value: string; label: string; searchText?: string };
 
 function searchText(text: string) {
   return text.trim().toLocaleLowerCase("ru").replaceAll("ё", "е");
@@ -260,11 +260,11 @@ export function Select(props: {
   const filter = searchText(query);
   const customValue = query.trim();
   const custom = props.allowCustom && customValue &&
-    !choices.some((option) => matches(option.value, customValue))
+    !choices.some((option) => matches(option.value, customValue) || searchText(option.label) === searchText(customValue))
     ? { value: customValue, label: `Добавить «${customValue}»` }
     : null;
   const visible = searchPlaceholder && filter
-    ? [...choices.filter((option) => searchText(option.label).includes(filter)), ...(custom ? [custom] : [])]
+    ? [...choices.filter((option) => searchText(`${option.label} ${option.searchText ?? ""}`).includes(filter)), ...(custom ? [custom] : [])]
     : choices;
   const activeIndex = visible.findIndex((option) => option.value === activeValue);
   const activeId = open && activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined;
