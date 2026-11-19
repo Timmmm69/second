@@ -2051,7 +2051,8 @@ button > svg, .button > svg { flex-shrink: 0; display: block; }
 .material-filter-percent .chips > button { min-height: 40px; }
 .material-filter-percent .small-text { margin: 0; }
 @media (max-width: 350px) {
-  .composition-row { grid-template-columns: minmax(0,1fr) 74px 36px; gap: 5px; }
-  .composition-row .field-control { padding-left: 8px; padding-right: 8px; }
-  .composition-row .icon-button { min-width: 36px; }
+  .composition-row { grid-template-columns: minmax(0,1fr) 44px; gap: 8px; }
+  .composition-row > :first-child { grid-column: 1 / -1; }
+  .composition-row > :nth-child(2) { grid-column: 1; }
+  .composition-remove { grid-column: 2; }
 }
