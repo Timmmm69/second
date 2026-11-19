@@ -113,11 +113,6 @@ function readCatalogFilters(): CatalogFilters {
     .filter((value): value is string => typeof value === "string" && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(value));
   if (selected.length) filters.material = selected;
   else delete filters.minPercent;
-  const legacyMaterial = saved.material;
-  const selected = (Array.isArray(legacyMaterial) ? legacyMaterial : [legacyMaterial])
-    .filter((value): value is string => typeof value === "string" && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(value));
-  if (selected.length) filters.material = selected;
-  else delete filters.minPercent;
   return filters;
 }
 
