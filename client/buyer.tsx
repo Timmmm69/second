@@ -1,4 +1,4 @@
-import { productColor, productSize } from "../shared/catalog-attributes.js";
+import { compositionText, productColor, productSize } from "../shared/catalog-attributes.js";
 import { useEffect, useId, useRef, useState, useMemo, useSyncExternalStore, type FormEvent } from "react";
 import {
   api,
@@ -617,7 +617,8 @@ function ItemPage({ id }: { id: string }) {
     .map(([key, label]) => ({
       label,
       value: String((key === "sizeLabel" ? size : key === "color"
-        ? productColor(item.attributes.color) : item.attributes[key]) ?? "").trim(),
+        ? productColor(item.attributes.color) : key === "material" && item.composition?.length
+          ? compositionText(item.composition) : item.attributes[key]) ?? "").trim(),
     }))
     .filter(detail => detail.value);
   return (
