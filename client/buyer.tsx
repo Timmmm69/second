@@ -205,7 +205,7 @@ function Catalog() {
     const controller = new AbortController();
     setLoading(true);
     setError(null);
-    api<{ items: Item[]; nextCursor: string | null }>(
+    const timer = window.setTimeout(() => api<{ items: Item[]; nextCursor: string | null }>(
       `/catalog?${queryString}`,
       { signal: controller.signal },
     )
@@ -225,8 +225,8 @@ function Catalog() {
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
-      });
-    return () => controller.abort();
+      }), cursor ? 0 : 180);
+    return () => { clearTimeout(timer); controller.abort(); };
   }, [queryString, refresh, cursor]);
   useEffect(() => {
     const update = () => {

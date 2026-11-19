@@ -65,7 +65,7 @@
     publicSettings.documents = { privacy: '', reservation: '', shipping: '', returns: '' };
     publicSettings.documentStatus = 'DRAFT'; publicSettings.phoneIsTest = true;
     const items = state.items.map(item => ({
-      id: item.id, sku: item.sku, title: item.title, category: item.category,
+      id: item.id, sku: item.sku, title: item.title, description: item.description || '', category: item.category,
       priceMinor: item.priceMinor, publication: item.publication,
       // A local order cannot leave a persistent stock lock after reload.
       physical: ['RESERVED', 'PICKED', 'PACKED'].includes(item.physical) ? 'AVAILABLE' : item.physical,
@@ -188,14 +188,23 @@
         return [key, [...values.values()].sort((a, b) => a.localeCompare(b, 'ru', { numeric: true }))];
       }));
     }
+    if (path === '/catalog/availability' && method === 'POST') {
+      ensure(Array.isArray(body.itemIds) && body.itemIds.length <= 100 &&
+        body.itemIds.every(id => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id)),
+        422, 'VALIDATION', 'Проверьте список вещей');
+      return { availableIds: body.itemIds.filter(id => state.items.some(item => item.id === id && itemView(item).available)) };
+    }
     if (path === '/catalog' && method === 'GET') {
+      const categories = query.getAll('category').filter(Boolean);
+      const audiences = query.getAll('audience').map(value => value.trim().toLowerCase()).filter(Boolean);
+      if (audiences.includes('женское') || audiences.includes('мужское')) audiences.push('унисекс');
       const filters = ['brand', 'color', 'material', 'season', 'sizeLabel'].map(key =>
         [key, query.getAll(key).map(value => value.trim().toLowerCase()).filter(Boolean)]);
       let items = state.items.map(itemView).filter(item => item.available).filter(item => {
         const a = item.attributes;
         if (query.get('q') && ![item.title, item.sku, a.brand, productColor(a.color)].join(' ').toLowerCase().replace(/\s+/g, ' ').includes(query.get('q').trim().toLowerCase().replace(/\s+/g, ' '))) return false;
-        if (query.get('category') && item.category !== query.get('category')) return false;
-        if (query.get('audience') && String(a.audience ?? '').toLowerCase() !== query.get('audience').toLowerCase()) return false;
+        if (categories.length && !categories.includes(item.category)) return false;
+        if (audiences.length && !audiences.includes(String(a.audience ?? '').toLowerCase())) return false;
         for (const [key, values] of filters)
           if (values.length && !values.includes(catalogOption(a, key).toLowerCase())) return false;
         for (const [key, value, min] of [['minPrice', item.priceMinor, true], ['maxPrice', item.priceMinor, false]])
@@ -203,7 +212,7 @@
         return true;
       });
       if (query.get('sort')?.startsWith('price_')) items = items.toSorted((a, b) => query.get('sort') === 'price_asc' ? a.priceMinor - b.priceMinor : b.priceMinor - a.priceMinor);
-      return { items, nextCursor: null, serverNow: now() };
+      return { items: items.map(({ description, ...item }) => item), nextCursor: null, serverNow: now() };
     }
     if (/^\/items\/[^/]+$/.test(path) && method === 'GET') return itemView(findItem(path.split('/')[2]));
     if (path === '/me/selection') {
@@ -369,9 +378,10 @@
       const existing = method === 'PATCH' ? findItem(path.split('/')[3]) : null;
       if (existing) { checkVersion(existing, body); ensure(!claimed(existing.id), 409, 'CLAIMED', 'Вещь закреплена. Сначала обработайте обращение.'); }
       ensure(String(body.title || '').trim() && Number.isInteger(body.priceMinor) && body.priceMinor >= 0, 422, 'VALIDATION', 'Проверьте название и цену');
+      ensure(body.description === undefined || (typeof body.description === 'string' && body.description.trim().length <= 4000), 422, 'VALIDATION', 'Описание слишком длинное');
       ensure(state.categories.some(category => category.id === body.category && !category.archived), 422, 'CATEGORY', 'Выберите действующую категорию');
       ensure(!body.hasDefect || String(body.defectDescription || '').trim(), 422, 'VALIDATION', 'Опишите дефект', { fieldErrors: { defectDescription: 'Опишите конкретный дефект' } });
-      const item = { ...(existing || { id: uuid(), sku: `DEMO-${state.items.length + 1}`, media: [], publication: 'DRAFT', physical: 'AVAILABLE' }), ...clone(body), version: (existing?.version || 0) + 1 };
+      const item = { ...(existing || { id: uuid(), sku: `DEMO-${state.items.length + 1}`, media: [], publication: 'DRAFT', physical: 'AVAILABLE' }), ...clone(body), description: String(body.description ?? existing?.description ?? '').trim(), version: (existing?.version || 0) + 1 };
       item.measurements = body.measurements ?? existing?.measurements ?? {};
       item.attributes ??= {};
       const color = item.attributes.color, namedColor = productColor(color), previousColor = existing?.attributes.color;
