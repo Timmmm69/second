@@ -120,6 +120,15 @@ test("invalid composition is rejected without writing an item", async () => {
     const response = await make(composition);
     assert.equal(response.statusCode, 422, response.body);
   }
+  const uppercase = await make([{ materialId: cotton.toUpperCase(), percent: 100 }]);
+  assert.equal(uppercase.statusCode, 200, uppercase.body);
+  assert.equal(uppercase.json().composition[0].materialId, cotton);
+  created.push(uppercase.json().id);
+  const duplicateCase = await make([
+    { materialId: cotton, percent: 50 },
+    { materialId: cotton.toUpperCase(), percent: 50 },
+  ]);
+  assert.equal(duplicateCase.statusCode, 422, duplicateCase.body);
   const badPercent = await send("GET", "/api/catalog?material=" + cotton + "&minPercent=101");
   assert.equal(badPercent.statusCode, 422);
 });
