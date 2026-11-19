@@ -106,7 +106,7 @@ test("catalog pagination/filters and staff visibility use one item and one media
   assert.equal(staff.items[0].physical, "AVAILABLE");
   assert.equal(staff.items[0].storageLocation, "Полка");
   const last = staff.items.at(-1);
-  assert.deepEqual(last, { ...page.items[0], physical: "AVAILABLE", storageLocation: "Полка" });
+  assert.deepEqual(last, { ...page.items[0], description: "", physical: "AVAILABLE", storageLocation: "Полка" });
   const hidden = await list(`/api/staff/items?q=${marker}&state=HIDDEN`, true);
   assert.deepEqual(hidden.items.map((i: any) => i.id), [itemIds[41]]);
   await pool.query("UPDATE items SET attributes=$2 WHERE id=$1", [
@@ -140,7 +140,7 @@ test("multiple categories and audience filtering respect unisex expansion", asyn
   ] as const;
   for (const [id, category, audience] of samples)
     await pool.query(
-      "UPDATE items SET category=$2,attributes=attributes || jsonb_build_object('audience',$3) WHERE id=$1",
+      "UPDATE items SET category=$2,attributes=attributes || jsonb_build_object('audience',$3::text) WHERE id=$1",
       [id, category, audience],
     );
   async function filtered(query: string) {
@@ -173,7 +173,7 @@ test("description is editable and omitted from catalog lists; availability is ba
   assert.equal(edit.json().description, description);
   const detail = await app.inject("/api/items/" + id);
   assert.equal(detail.json().description, description);
-  const catalog = await app.inject("/api/catalog?q=" + marker);
+  const catalog = await app.inject("/api/catalog?q=" + marker + "&sort=price_asc");
   assert.equal(catalog.statusCode, 200, catalog.body);
   assert.equal(catalog.json().items.find((item: any) => item.id === id).description, undefined);
   const spy = t.mock.method(pool, "query");
