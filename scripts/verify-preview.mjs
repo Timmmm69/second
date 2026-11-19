@@ -47,6 +47,10 @@ assert.equal((await get('/catalog?sizeLabel=xl')).items[0].attributes.sizeLabel,
 const facets = await get('/catalog/options');
 assert.deepEqual(facets.brand, ['Линия', 'Маяк', 'Север']);
 assert.ok(facets.material.includes('Хлопок'));
+const cottonMaterial = facets.materials.find(material => material.name === 'Хлопок');
+assert.ok(cottonMaterial);
+assert.ok((await get('/catalog?material=' + cottonMaterial.id)).items.length > 0);
+assert.equal((await get('/catalog?material=' + cottonMaterial.id + '&minPercent=1')).items.length, 0);
 assert.ok(facets.season.includes('Лето'));
 const multiple = await get('/catalog?' + new URLSearchParams([
   ['sizeLabel', 'xl'], ['sizeLabel', 'S'], ['brand', 'Линия'], ['brand', 'Маяк'], ['season', 'Лето'],
@@ -147,9 +151,24 @@ assert.ok(uploaded.url.startsWith('data:image/png'));
 const attributes = { sizeSystem: 'RU', sizeLabel: '116', color: ' Светло-голубой ' };
 const newItem = { title: 'Новая детская вещь', category: 'children', priceMinor: 2000, storageLocation: 'Полка', attributes };
 assert.equal((await one.request('/staff/items', 'POST', { ...newItem, attributes: { ...attributes, color: '#aabbcc' } })).status, 422);
-const draftItem = await one.ok('/staff/items', 'POST', newItem);
+const materialTypes = await one.ok('/staff/materials');
+const polyester = materialTypes.find(material => material.name === 'Полиэстер');
+const elastane = materialTypes.find(material => material.name === 'Эластан');
+assert.equal((await one.ok('/staff/materials', 'POST', { name: 'ЛАЙКРА' })).id, elastane.id);
+const addedMaterial = await one.ok('/staff/materials', 'POST', { name: 'Экспериментальное волокно' });
+assert.equal((await one.ok('/staff/materials', 'POST', { name: 'экспериментальное волокно' })).id, addedMaterial.id);
+const blend = [
+  { materialId: polyester.id, percent: 92 },
+  { materialId: elastane.id, percent: 8 },
+];
+assert.equal((await one.request('/staff/items', 'POST', { ...newItem,
+  composition: [{ materialId: polyester.id, percent: 92 }, { materialId: elastane.id, percent: 20 }],
+})).status, 422);
+const draftItem = await one.ok('/staff/items', 'POST', { ...newItem, composition: blend });
 assert.deepEqual(draftItem.measurements, {});
 assert.equal(draftItem.attributes.color, 'Светло-голубой');
+assert.equal(draftItem.attributes.material, '92% полиэстер, 8% эластан');
+assert.deepEqual(draftItem.composition.map(part => part.percent), [92, 8]);
 formData.set('itemId', draftItem.id);
 const newPhoto = await one.window.fetch('https://preview.example/api/staff/media/uploads', { method: 'POST', body: formData });
 assert.equal(newPhoto.status, 200);
@@ -157,6 +176,9 @@ const readyItem = await get('/staff/items/' + draftItem.id);
 const published = await one.ok('/staff/items/' + draftItem.id + '/publish', 'POST', { version: readyItem.version, checked: true });
 assert.equal(published.publication, 'PUBLISHED');
 assert.equal((await get('/catalog?sizeLabel=116')).items[0].id, published.id);
+assert.deepEqual((await get('/catalog?material=' + polyester.id + '&minPercent=90')).items.map(item => item.id), [published.id]);
+assert.deepEqual((await get('/catalog?material=' + polyester.id + '&minPercent=93')).items, []);
+assert.deepEqual((await get('/catalog?material=' + polyester.id + '&material=' + cottonMaterial.id + '&minPercent=90')).items.map(item => item.id), [published.id]);
 const originalSettings = await get('/owner/settings');
 await one.ok('/owner/settings', 'PATCH', { ...originalSettings, name: 'Лучок локально', about: 'Отредактированное описание', calendar: { ...originalSettings.calendar, week: { ...originalSettings.calendar.week, 2: ['11:00', '19:00'] } }, phone: '+375299999999', telegramUsername: 'arbitrary_real_username', documentStatus: 'APPROVED' });
 assert.equal((await get('/settings')).name, 'Лучок локально');
@@ -170,6 +192,9 @@ for (const privateValue of ['PrivateName', 'PrivateComment', '+375 29 123 45 67'
 const refreshed = browser(one.storage);
 assert.equal((await refreshed.ok('/settings')).name, 'Лучок локально');
 assert.equal((await refreshed.ok('/items/' + editable.id)).priceMinor, 12345);
+await refreshed.ok('/demo/role', 'POST', { role: 'STAFF' });
+assert.ok((await refreshed.ok('/staff/materials')).some(m => m.id === addedMaterial.id));
+await refreshed.ok('/demo/role', 'POST', { role: 'BUYER' });
 assert.equal((await refreshed.ok('/items/' + editable.id)).media.at(-1).id, uploaded.id);
 assert.equal((await refreshed.ok('/me/checkout-draft')).phone, '+375 00 000 00 00');
 assert.equal((await refreshed.ok('/me/orders')).orders.length, 0);
