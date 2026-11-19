@@ -1,6 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { pool, tx } from "./db.js";
+import { backfillLegacyCompositions } from "./materials.js";
 export async function migrate() {
   await tx(async (c) => {
     await c.query("SELECT pg_advisory_xact_lock(12002026)");
@@ -23,6 +24,7 @@ export async function migrate() {
           "utf8",
         ),
       );
+      if (name === "009.sql") await backfillLegacyCompositions(c);
       await c.query("INSERT INTO schema_migrations(name) VALUES($1)", [name]);
     }
   });
