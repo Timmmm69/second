@@ -1,4 +1,4 @@
-import { isLetterSize, letterSizePattern, productColor, productSize } from "../shared/catalog-attributes.js";
+import { catalogAudiences, isLetterSize, letterSizePattern, productColor, productSize } from "../shared/catalog-attributes.js";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { api, readLocal, saveLocal } from "./api";
 import { useApp } from "./context";
@@ -369,6 +369,7 @@ const initialItem = {
   hasDefect: false,
   defectDescription: "",
   title: "",
+  description: "",
   sku: "",
   category: "",
   priceMinor: 0,
@@ -428,6 +429,7 @@ function ItemEditor({ id }: { id: string }) {
         hasDefect: item.hasDefect ?? false,
         defectDescription: item.defectDescription ?? "",
         title: item.title,
+        description: item.description ?? "",
         sku: item.sku,
         category: item.category,
         priceMinor: item.priceMinor,
@@ -576,6 +578,13 @@ function ItemEditor({ id }: { id: string }) {
           value={form.title}
           onChange={(e) => set("title", e.target.value)}
         />
+        <Textarea
+          label="Описание"
+          markEmpty
+          maxLength={4000}
+          value={form.description}
+          onChange={(value) => set("description", value)}
+        />
         <Field
           label="Артикул"
           markEmpty
@@ -638,7 +647,7 @@ function ItemEditor({ id }: { id: string }) {
           markEmpty
           value={String(form.attributes.audience ?? "")}
           onValueChange={(value) => attr("audience", value)}
-          options={[{ value: "", label: "Не указано" }, ...["Женское", "Мужское", "Унисекс", "Детское"].map((value) => ({ value, label: value }))]}
+          options={[{ value: "", label: "Не указано" }, ...catalogAudiences.map((value) => ({ value, label: value }))]}
         />
         </fieldset>
         {measurementKeys.length > 0 && <fieldset>
@@ -913,6 +922,7 @@ function ItemEditor({ id }: { id: string }) {
           <h1>{form.title || "Название не заполнено"}</h1>
           {productSize(attributes) && <p>{productSize(attributes)}</p>}
           <strong>{money(priceMinor)}</strong>
+          {form.description.trim() && <p className="pre-wrap">{form.description}</p>}
           {productColor(attributes.color) && <p>{productColor(attributes.color)}</p>}
           {String(form.attributes.material ?? "").trim() && <p>{form.attributes.material}</p>}
           <ItemMeasurements measurements={form.measurements} />

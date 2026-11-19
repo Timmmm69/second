@@ -57,7 +57,7 @@ test("readItems batches real SQL, preserves response/media/order and reads curre
   assert.deepEqual(items.map(i => i!.id), [itemIds[2], itemIds[0], itemIds[0]]);
   assert.deepEqual(items[0]!.media, []);
   assert.deepEqual(JSON.parse(JSON.stringify(items[1])), {
-    id: itemIds[0], sku: marker + "1", title: marker + "1", category: "accessories",
+    id: itemIds[0], sku: marker + "1", title: marker + "1", description: "", category: "accessories",
     priceMinor: 100, publication: "PUBLISHED", version: 1, hasDefect: true,
     defectDescription: "Затяжка", attributes: {}, measurements: {}, available: true,
     media: [
@@ -106,7 +106,7 @@ test("catalog pagination/filters and staff visibility use one item and one media
   assert.equal(staff.items[0].physical, "AVAILABLE");
   assert.equal(staff.items[0].storageLocation, "Полка");
   const last = staff.items.at(-1);
-  assert.deepEqual(last, { ...page.items[0], physical: "AVAILABLE", storageLocation: "Полка" });
+  assert.deepEqual(last, { ...page.items[0], description: "", physical: "AVAILABLE", storageLocation: "Полка" });
   const hidden = await list(`/api/staff/items?q=${marker}&state=HIDDEN`, true);
   assert.deepEqual(hidden.items.map((i: any) => i.id), [itemIds[41]]);
   await pool.query("UPDATE items SET attributes=$2 WHERE id=$1", [
@@ -128,4 +128,63 @@ test("catalog pagination/filters and staff visibility use one item and one media
   assert.equal(options.statusCode, 200, options.body);
   assert.ok(options.json().brand.includes(marker));
   assert.ok(!options.json().brand.includes(marker + "-hidden"));
+});
+
+test("multiple categories and audience filtering respect unisex expansion", async () => {
+  const samples = [
+    [itemIds[0], "accessories", "Женское"],
+    [itemIds[1], "accessories", "Унисекс"],
+    [itemIds[2], "tops", "Мужское"],
+    [itemIds[3], "trousers", "Детское"],
+    [itemIds[4], "bags", "Питомцы"],
+  ] as const;
+  for (const [id, category, audience] of samples)
+    await pool.query(
+      "UPDATE items SET category=$2,attributes=attributes || jsonb_build_object('audience',$3::text) WHERE id=$1",
+      [id, category, audience],
+    );
+  async function filtered(query: string) {
+    const response = await app.inject("/api/catalog?q=" + marker + "&sort=price_asc&" + query);
+    assert.equal(response.statusCode, 200, response.body);
+    return response.json().items.map((item: any) => item.id);
+  }
+  assert.deepEqual(await filtered("audience=Женское"), [itemIds[0], itemIds[1]]);
+  assert.deepEqual(await filtered("audience=Мужское"), [itemIds[1], itemIds[2]]);
+  assert.deepEqual(await filtered("audience=Унисекс"), [itemIds[1]]);
+  assert.deepEqual(await filtered("audience=Детское"), [itemIds[3]]);
+  assert.deepEqual(await filtered("audience=Питомцы"), [itemIds[4]]);
+  assert.deepEqual(
+    await filtered("category=accessories&category=tops&audience=Женское&audience=Мужское"),
+    [itemIds[0], itemIds[1], itemIds[2]],
+  );
+  assert.deepEqual(await filtered("category=trousers&category=bags"), [itemIds[3], itemIds[4]]);
+  assert.deepEqual(await filtered("audience=Детское&audience=Питомцы"), [itemIds[3], itemIds[4]]);
+});
+
+test("description is editable and omitted from catalog lists; availability is batched", async (t) => {
+  const id = itemIds[0];
+  const description = "Описание вещи.\nХорошее состояние.";
+  const edit = await app.inject({
+    method: "PATCH", url: "/api/staff/items/" + id,
+    headers: { cookie, "idempotency-key": randomUUID() },
+    payload: { title: marker + "1", category: "accessories", priceMinor: 100, version: 1, description },
+  });
+  assert.equal(edit.statusCode, 200, edit.body);
+  assert.equal(edit.json().description, description);
+  const detail = await app.inject("/api/items/" + id);
+  assert.equal(detail.json().description, description);
+  const catalog = await app.inject("/api/catalog?q=" + marker + "&sort=price_asc");
+  assert.equal(catalog.statusCode, 200, catalog.body);
+  assert.equal(catalog.json().items.find((item: any) => item.id === id).description, undefined);
+  const spy = t.mock.method(pool, "query");
+  const check = await app.inject({ method: "POST", url: "/api/catalog/availability", payload: { itemIds: [id, itemIds[41]] } });
+  assert.equal(check.statusCode, 200, check.body);
+  assert.deepEqual(check.json().availableIds, [id]);
+  assert.equal(spy.mock.calls.filter(call => String(call.arguments[0]).includes("FROM items i WHERE i.id=ANY")).length, 1);
+  spy.mock.restore();
+  assert.equal((await app.inject({
+    method: "PATCH", url: "/api/staff/items/" + id,
+    headers: { cookie, "idempotency-key": randomUUID() },
+    payload: { title: marker + "1", category: "accessories", priceMinor: 100, version: 2, description: "x".repeat(4001) },
+  })).statusCode, 422);
 });

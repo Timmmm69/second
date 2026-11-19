@@ -1,5 +1,7 @@
 type Attributes = Record<string, unknown>;
 
+export const catalogAudiences = ["Женское", "Мужское", "Детское", "Унисекс", "Питомцы"] as const;
+
 export function productColor(value: unknown) {
   const color = typeof value === "string" ? value.trim() : "";
   return !color.includes("#") && !/^(?:[\da-f]{6}|[\da-f]{8})$/i.test(color) && /\p{L}/u.test(color) ? color : "";

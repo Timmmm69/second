@@ -8,6 +8,7 @@ export type ItemRow = {
   id: string;
   sku: string;
   title: string;
+  description: string;
   category: string;
   price_minor: number;
   publication: string;
@@ -189,6 +190,7 @@ export async function itemSnapshot(c: PoolClient, i: ItemRow) {
     id: i.id,
     sku: i.sku,
     title: i.title,
+    description: i.description,
     category: i.category,
     priceMinor: i.price_minor,
     version: i.version,
