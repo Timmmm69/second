@@ -45,3 +45,46 @@ jobs:
           node --input-type=module -e 'import pg from "pg";const p=new pg.Pool({connectionString:process.env.DATABASE_URL});await p.query("CREATE DATABASE luchok_smoke_test");await p.end();'
           docker build -f infra/Dockerfile -t luchok:ci .
           DATABASE_URL=postgresql://postgres:postgres@localhost:5432/luchok_smoke_test bash infra/smoke-production.sh
+      - name: Verify encrypted backup and restore on isolated Compose volumes
+        if: matrix.postgres == '17'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs';
+          import { randomBytes } from 'node:crypto';
+          const env = {
+            DOMAIN: 'backup.invalid', ACME_EMAIL: 'test@example.invalid',
+            APP_IMAGE: 'luchok:ci', APP_ORIGIN: 'https://backup.invalid',
+            BOT_TOKEN: '123456789:synthetic-ci-token-never-valid',
+            BOT_USERNAME: 'synthetic_ci_bot', BOT_DELIVERY_MODE: 'live',
+            POSTGRES_PASSWORD: randomBytes(24).toString('hex'),
+            DATA_KEY: randomBytes(32).toString('hex'),
+            WEBHOOK_SECRET: randomBytes(24).toString('hex')
+          };
+          writeFileSync('infra/.env', Object.entries(env).map(([k,v]) => `${k}=${v}`).join('\n') + '\n', { mode: 0o600 });
+          NODE
+          compose=(docker compose --env-file infra/.env -f infra/compose.yaml)
+          # Only this isolated CI stack's disposable volumes may be removed.
+          trap '"${compose[@]}" down -v; rm -f infra/.env' EXIT
+          "${compose[@]}" up -d --wait --wait-timeout 180 db api worker
+          "${compose[@]}" exec -T db psql -U veshi -d veshi -v ON_ERROR_STOP=1 -c "CREATE TABLE backup_probe (id int PRIMARY KEY); INSERT INTO backup_probe VALUES (73);"
+          "${compose[@]}" exec -T api node --input-type=module -e "import{writeFileSync}from'node:fs';writeFileSync('/data/media/backup-probe.txt','synthetic-photo-bytes')"
+          age-keygen -o "$RUNNER_TEMP/backup-identity" 2>/dev/null
+          age-keygen -y "$RUNNER_TEMP/backup-identity" > "$RUNNER_TEMP/backup-recipients"
+          sudo bash infra/backup.sh "$RUNNER_TEMP/luchok-backups" "$RUNNER_TEMP/backup-recipients"
+          snapshot=$(sudo find "$RUNNER_TEMP/luchok-backups" -mindepth 1 -maxdepth 1 -type d -name '20*' | sort | tail -1)
+          sudo bash -c 'cd "$1" && sha256sum -c SHA256SUMS' _ "$snapshot"
+          "${compose[@]}" exec -T db createdb -U veshi luchok_restore_test
+          sudo age -d -i "$RUNNER_TEMP/backup-identity" "$snapshot/database.dump.age" |
+            "${compose[@]}" exec -T db pg_restore -U veshi -d luchok_restore_test --exit-on-error --no-owner --no-acl
+          test "$("${compose[@]}" exec -T db psql -U veshi -d luchok_restore_test -Atc 'SELECT id FROM backup_probe')" = 73
+          mkdir -m 700 "$RUNNER_TEMP/restored-media" "$RUNNER_TEMP/restored-config"
+          sudo age -d -i "$RUNNER_TEMP/backup-identity" "$snapshot/media.tar.age" | tar -xf - -C "$RUNNER_TEMP/restored-media"
+          test "$(cat "$RUNNER_TEMP/restored-media/backup-probe.txt")" = synthetic-photo-bytes
+          sudo age -d -i "$RUNNER_TEMP/backup-identity" "$snapshot/configuration.tar.age" | tar -xf - -C "$RUNNER_TEMP/restored-config"
+          cmp infra/.env "$RUNNER_TEMP/restored-config/infra/.env"
+          "${compose[@]}" exec -T api node -e "fetch('http://127.0.0.1:3000/health/ready').then(r=>{if(!r.ok)process.exit(1)})"
+          echo 'PASS encrypted database/media/configuration round-trip and service recovery'
