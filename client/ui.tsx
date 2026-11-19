@@ -253,10 +253,10 @@ export function Select(props: {
   const matches = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
   const selected = selectedValues.map((value) => options.find((option) => matches(option.value, value))?.label ?? value);
   const selectedLabel = selected.join(", ");
-  const choices = props.multiple
+  const choices: SelectOption[] = props.multiple
     ? [...options, ...props.value.filter((value) => !options.some((option) => matches(option.value, value)))
       .map((value) => ({ value, label: value }))]
-    : options;
+    : [...options];
   const filter = searchText(query);
   const customValue = query.trim();
   const custom = props.allowCustom && customValue &&
