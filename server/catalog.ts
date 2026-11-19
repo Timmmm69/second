@@ -39,7 +39,7 @@ function defectDescription(hasDefect: boolean, description: string) {
     throw new AppError(422, "DEFECT_DESCRIPTION", "Укажите описание дефекта", { defectDescription: "Опишите конкретный дефект" });
   return hasDefect ? description : "";
 }
-function normalizeColor(attributes: NonNullable<z.infer<typeof itemInput>["attributes"]>, previousColor?: unknown) {
+function normalizeColor(attributes: NonNullable<z.infer<typeof itemInput>["attributes"]>, previousColor?: unknown): Record<string, unknown> {
   const value = attributes.color;
   const color = productColor(value);
   if (!color && previousColor && !productColor(previousColor) &&
