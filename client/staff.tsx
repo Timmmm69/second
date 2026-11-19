@@ -1,6 +1,7 @@
-import { isLetterSize, letterSizePattern, productColor, productSize } from "../shared/catalog-attributes.js";
+import { compositionText, isLetterSize, letterSizePattern, productColor, productSize } from "../shared/catalog-attributes.js";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { api, readLocal, saveLocal } from "./api";
+import { MaterialEditor, type MaterialDraft } from "./material-editor";
 import { useApp } from "./context";
 import { OrderCard } from "./buyer";
 import { useMutation } from "./mutations";
@@ -411,6 +412,10 @@ function ItemEditor({ id }: { id: string }) {
   const mutation = useMutation();
   const fileInput = useRef<HTMLInputElement>(null);
   const [checked, setChecked] = useState(false);
+  const [materialRows, setMaterialRows] = useState<MaterialDraft[]>([
+    { key: 1, materialId: "", name: "", percent: "" },
+  ]);
+  const [materialsBusy, setMaterialsBusy] = useState(false);
   const [price, setPrice] = useState("");
   const [size, setSize] = useState("");
   const [attempted, setAttempted] = useState(false);
@@ -435,6 +440,10 @@ function ItemEditor({ id }: { id: string }) {
         measurements: item.measurements ?? {},
         storageLocation: item.storageLocation || "",
       });
+      setMaterialRows(item.composition?.length ? item.composition.map((part, index) => ({
+        key: index + 1, materialId: part.materialId, name: part.name,
+        percent: part.percent === null ? "" : String(part.percent),
+      })) : [{ key: 1, materialId: "", name: "", percent: "" }]);
       setPrice(String(item.priceMinor / 100));
       setSize(editableSize(item));
       setDirty(false);
@@ -458,6 +467,27 @@ function ItemEditor({ id }: { id: string }) {
     setForm((v) => ({ ...v, attributes: { ...v.attributes, [key]: value } }));
     setDirty(true);
   };
+  const changeMaterialRows = (update: (rows: MaterialDraft[]) => MaterialDraft[]) => {
+    setMaterialRows(update);
+    setDirty(true);
+  };
+  const filledMaterialRows = materialRows.filter(row => row.materialId || row.percent.trim());
+  const materialSum = filledMaterialRows.reduce((sum, row) =>
+    sum + (/^\d+$/.test(row.percent) ? Number(row.percent) : 0), 0);
+  const compositionError = filledMaterialRows.some(row => !row.materialId)
+    ? "Выберите материал для каждой заполненной строки"
+    : filledMaterialRows.some(row => row.percent !== "" &&
+        (!/^\d+$/.test(row.percent) || Number(row.percent) < 1 || Number(row.percent) > 100))
+      ? "Процент должен быть целым числом от 1 до 100"
+      : new Set(filledMaterialRows.map(row => row.materialId)).size !== filledMaterialRows.length
+        ? "Один материал нельзя указывать дважды"
+        : materialSum > 100 || (materialSum === 100 && filledMaterialRows.some(row => !row.percent))
+          ? "Проверьте сумму указанных процентов"
+          : undefined;
+  const composition = filledMaterialRows.map(row => ({
+    materialId: row.materialId,
+    percent: row.percent === "" ? null : Number(row.percent),
+  }));
   const attributes = { ...form.attributes };
   if (showSize && !previousSize) {
     delete attributes.sizeSystem;
@@ -475,11 +505,13 @@ function ItemEditor({ id }: { id: string }) {
     price: !priceInput ? "Укажите цену" :
       !/^\d+(\.\d{1,2})?$/.test(priceInput) || priceMinor > 100000000 ? "Укажите цену от 0 до 1 000 000 BYN с точностью до копеек" : undefined,
     defect: form.hasDefect && !form.defectDescription.trim() ? "Опишите конкретный дефект" : undefined,
+    composition: compositionError,
   };
   const save = async () => {
     const data = {
       ...form,
       attributes,
+      composition,
       sku: form.sku.trim() || undefined,
       priceMinor,
       ...(item ? { version: item.version } : {}),
@@ -694,7 +726,6 @@ function ItemEditor({ id }: { id: string }) {
           ["brand", "Бренд"],
           ["color", "Цвет"],
           ["season", "Сезон"],
-          ["material", "Состав"],
           ["care", "Уход"],
           ["manufacturer", "Изготовитель"],
           ["importer", "Импортёр"],
@@ -710,8 +741,16 @@ function ItemEditor({ id }: { id: string }) {
             onChange={(e) => attr(key, e.target.value || (key === "color" ? legacyColor : ""))}
           />
         ))}
+        <div className="composition-section">
+          <h2>Состав</h2>
+          <MaterialEditor value={materialRows} onChange={changeMaterialRows}
+            onBusyChange={setMaterialsBusy}
+            validationError={attempted ? compositionError : undefined}
+            legacy={!item?.composition?.length ? String(item?.attributes.material ?? "").trim() : undefined}
+          />
+        </div>
         </fieldset>
-        <Button type="submit" disabled={mutation.busy}>
+        <Button type="submit" disabled={mutation.busy || materialsBusy}>
           {mutation.busy ? "Сохраняем…" : "Сохранить карточку"}
         </Button>
         {dirty && (
@@ -914,7 +953,11 @@ function ItemEditor({ id }: { id: string }) {
           {productSize(attributes) && <p>{productSize(attributes)}</p>}
           <strong>{money(priceMinor)}</strong>
           {productColor(attributes.color) && <p>{productColor(attributes.color)}</p>}
-          {String(form.attributes.material ?? "").trim() && <p>{form.attributes.material}</p>}
+          {composition.length > 0
+            ? <p>{compositionText(filledMaterialRows.filter(row => row.materialId).map(row => ({
+                name: row.name, percent: row.percent === "" ? null : Number(row.percent),
+              })))}</p>
+            : String(form.attributes.material ?? "").trim() && <p>{form.attributes.material}</p>}
           <ItemMeasurements measurements={form.measurements} />
           {form.hasDefect && <div className="defect-notice"><strong>Есть дефект</strong><p className="pre-wrap">{form.defectDescription}</p></div>}
           {missing.length > 0 && (
