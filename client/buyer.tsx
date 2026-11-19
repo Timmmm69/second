@@ -1,5 +1,6 @@
 import { catalogAudiences, productColor, productSize } from "../shared/catalog-attributes.js";
-import { useEffect, useId, useRef, useState, useMemo, useSyncExternalStore, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, useMemo, useSyncExternalStore, type FormEvent } from "react";
+import { SEARCH_DEBOUNCE_MS, shouldApplyCatalogSearch } from "./catalog-search";
 import {
   api,
   ApiError,
@@ -136,16 +137,21 @@ function Catalog() {
     [error, setError] = useState<unknown>(null),
     [loading, setLoading] = useState(true);
   const catalogOptions = useLoad<CatalogOptions>(filterOpen ? "/catalog/options" : null);
+  const searchButtonRef = useRef<HTMLButtonElement>(null);
+  const applySearch = useCallback((value: string) => {
+    if (!shouldApplyCatalogSearch(filters.q, value)) return;
+    setCursor("");
+    setFilters((previous) => shouldApplyCatalogSearch(previous.q, value)
+      ? { ...previous, q: value } : previous);
+  }, [filters.q]);
+  const previousSearchInput = useRef(q);
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setFilters((v) => {
-        if (v.q === q || (!v.q && !q)) return v;
-        setCursor("");
-        return { ...v, q };
-      });
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [q]);
+    // A filter reset changes filters.q but must not restore stale input text.
+    if (previousSearchInput.current === q) return;
+    previousSearchInput.current = q;
+    const timer = window.setTimeout(() => applySearch(q), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [q, applySearch]);
   useEffect(() => {
     saveLocal("catalogFilters", filters);
   }, [filters]);
@@ -258,10 +264,6 @@ function Catalog() {
       window.removeEventListener("focus", update);
     };
   }, []);
-  const changeSearch = (value: string) => {
-    setCursor("");
-    setFilters((v) => ({ ...v, q: value }));
-  };
   const toggle = (key: "audience" | "category", value: string) => {
     setCursor("");
     setFilters((v) => {
@@ -288,7 +290,19 @@ function Catalog() {
   return (
     <div className="page catalog-page">
       <p className="catalog-kicker">Секонд-хенд · Минск</p>
-      <div className="search-row">
+      <form className="search-row" role="search" onSubmit={(event) => {
+        event.preventDefault();
+        const button = searchButtonRef.current;
+        if (button && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          button.getAnimations().forEach((animation) => animation.cancel());
+          button.animate([
+            { transform: "scale(1)" },
+            { transform: "scale(0.9)", offset: 0.45 },
+            { transform: "scale(1)" },
+          ], { duration: 180, easing: "ease-out" });
+        }
+        applySearch(q);
+      }}>
         <div className="search-pill">
           <Icon name="search" />
           <div>
@@ -303,6 +317,7 @@ function Catalog() {
           </div>
           {q && (
             <button
+              type="button"
               className="icon-button search-clear"
               aria-label="Очистить поиск"
               onClick={() => setQ("")}
@@ -312,16 +327,14 @@ function Catalog() {
           )}
         </div>
         <button
+          ref={searchButtonRef}
+          type="submit"
           className="search-cta"
           aria-label="Найти вещи"
-          onClick={() => {
-            changeSearch(q);
-            setRefresh((v) => v + 1);
-          }}
         >
           <Icon name="search" />
         </button>
-      </div>
+      </form>
       <div className="chips" role="group" aria-label="Назначение">
         <button className={!filters.audience?.length ? "selected" : ""}
           aria-pressed={!filters.audience?.length} onClick={() => clear("audience")}>Все</button>
@@ -531,6 +544,7 @@ function Catalog() {
                 disabled={!validRange}
                 onClick={() => {
                   setCursor("");
+                  setQ(draft.q ?? "");
                   setFilters(draft);
                   setFilterOpen(false);
                 }}
