@@ -196,7 +196,7 @@ export async function registerCatalog(app: FastifyInstance) {
       // Indexed JSONB membership first, then (only if needed) percentage check.
       const terms = selectedMaterials.map(id => {
         params.push(JSON.stringify([{ materialId: id }]));
-        return `i.composition @> ${params.length}::jsonb`;
+        return `i.composition @> $${params.length}::jsonb`;
       });
       where.push(`(${terms.join(" OR ")})`);
       if (minimum > 0) {
@@ -204,8 +204,8 @@ export async function registerCatalog(app: FastifyInstance) {
         const idsParam = params.length;
         params.push(minimum);
         where.push(`EXISTS (SELECT 1 FROM jsonb_array_elements(i.composition) AS part(value)
-          WHERE part.value->>'materialId'=ANY(${idsParam}::text[])
-          AND (part.value->>'percent')::integer >= ${params.length})`);
+          WHERE part.value->>'materialId'=ANY($${idsParam}::text[])
+          AND (part.value->>'percent')::integer >= $${params.length})`);
       }
     }
     for (const [key, op] of [
