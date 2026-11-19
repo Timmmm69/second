@@ -5,7 +5,7 @@ import { assert } from "./errors.js";
 export type MaterialPart = { materialId: string; name: string; percent: number | null };
 export type MaterialType = { id: string; name: string; aliases: string[] };
 export const compositionSchema = z.array(z.object({
-  materialId: z.uuid(),
+  materialId: z.uuid().transform(id => id.toLowerCase()),
   percent: z.number().int().min(1).max(100).nullable(),
 }).strict()).max(20).superRefine((parts, context) => {
   if (new Set(parts.map(part => part.materialId)).size !== parts.length)
