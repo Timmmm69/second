@@ -231,7 +231,7 @@ export function Select(props: {
   searchPlaceholder?: string;
   disabled?: boolean;
 } & (
-  | { multiple?: false; value: string; onValueChange: (value: string) => void }
+  | { multiple?: false; value: string; onValueChange: (value: string) => void; allowCustom?: boolean }
   | { multiple: true; value: readonly string[]; onValueChange: (value: string[]) => void; allowCustom?: boolean }
 )) {
   const { label, error, options, searchPlaceholder, disabled = false } = props;
@@ -259,7 +259,7 @@ export function Select(props: {
     : options;
   const filter = searchText(query);
   const customValue = query.trim();
-  const custom = props.multiple && props.allowCustom && customValue &&
+  const custom = props.allowCustom && customValue &&
     !choices.some((option) => matches(option.value, customValue))
     ? { value: customValue, label: `Добавить «${customValue}»` }
     : null;
@@ -470,7 +470,7 @@ export function Select(props: {
                 aria-controls={listId}
                 aria-activedescendant={activeId}
                 placeholder={searchPlaceholder}
-                maxLength={props.multiple && props.allowCustom ? 200 : undefined}
+                maxLength={props.allowCustom ? 120 : undefined}
                 value={query}
                 onChange={(event) => {
                   setQuery(event.target.value);
