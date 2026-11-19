@@ -144,7 +144,11 @@ function Catalog() {
     setFilters((previous) => shouldApplyCatalogSearch(previous.q, value)
       ? { ...previous, q: value } : previous);
   }, [filters.q]);
+  const previousSearchInput = useRef(q);
   useEffect(() => {
+    // A filter reset changes filters.q but must not restore stale input text.
+    if (previousSearchInput.current === q) return;
+    previousSearchInput.current = q;
     const timer = window.setTimeout(() => applySearch(q), SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [q, applySearch]);
@@ -540,6 +544,7 @@ function Catalog() {
                 disabled={!validRange}
                 onClick={() => {
                   setCursor("");
+                  setQ(draft.q ?? "");
                   setFilters(draft);
                   setFilterOpen(false);
                 }}
