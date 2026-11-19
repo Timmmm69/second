@@ -1,10 +1,11 @@
 import { productColor } from "../shared/catalog-attributes.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { pool } from "./db.js";
+import { pool, tx } from "./db.js";
 import { AppError, assert } from "./errors.js";
 import { lockItems, setPhysical, audit, idem } from "./inventory.js";
 import { assertActiveCategory } from "./categories.js";
+import { compositionSchema, createMaterial, formatComposition, resolveComposition } from "./materials.js";
 const ids = z.array(z.uuid()).max(10000);
 const itemInput = z
   .object({
@@ -24,6 +25,7 @@ const itemInput = z
         ]),
       )
       .optional(),
+    composition: compositionSchema.optional(),
     measurements: z
       .record(z.string(), z.number().int().min(0).max(20000))
       .optional(),
@@ -38,7 +40,7 @@ function defectDescription(hasDefect: boolean, description: string) {
     throw new AppError(422, "DEFECT_DESCRIPTION", "Укажите описание дефекта", { defectDescription: "Опишите конкретный дефект" });
   return hasDefect ? description : "";
 }
-function normalizeColor(attributes: NonNullable<z.infer<typeof itemInput>["attributes"]>, previousColor?: unknown) {
+function normalizeColor(attributes: NonNullable<z.infer<typeof itemInput>["attributes"]>, previousColor?: unknown): Record<string, unknown> {
   const value = attributes.color;
   const color = productColor(value);
   if (!color && previousColor && !productColor(previousColor) &&
@@ -82,6 +84,7 @@ function itemWithMedia(row: any, assets: any[], staff: boolean) {
     hasDefect: row.has_defect ?? false,
     defectDescription: row.has_defect ? row.defect_description : "",
     attributes: row.attributes,
+    composition: row.composition ?? [],
     measurements: row.measurements,
     media: assets.map((m) => ({
       ...m,
@@ -123,6 +126,14 @@ const availableCatalog = [
 ];
 
 export async function registerCatalog(app: FastifyInstance) {
+  app.get("/staff/materials", async () => {
+    const { rows } = await pool.query("SELECT id,name,aliases FROM material_types ORDER BY name COLLATE \"C\"");
+    return rows;
+  });
+  app.post("/staff/materials", async (req) => {
+    const { name } = z.object({ name: z.string().max(120) }).strict().parse(req.body);
+    return tx(c => createMaterial(c, name));
+  });
   app.get("/catalog/options", async () => {
     const { rows: [options] } = await pool.query<Record<string, (string | null)[] | null>>(
       `SELECT array_agg(DISTINCT i.attributes->>'brand') AS brand,
@@ -133,14 +144,23 @@ export async function registerCatalog(app: FastifyInstance) {
                 THEN i.attributes->>'sizeLabel' END) AS "sizeLabel"
          FROM items i WHERE ${availableCatalog.join(" AND ")}`,
     );
-    return Object.fromEntries(Object.entries(options).map(([key, raw]) => {
+    const { rows: materialRows } = await pool.query<{ id: string; name: string }>(
+      `SELECT DISTINCT part.value->>'materialId' AS id, part.value->>'name' AS name
+       FROM items i CROSS JOIN LATERAL jsonb_array_elements(i.composition) AS part(value)
+       WHERE ${availableCatalog.join(" AND ")}
+       ORDER BY name`,
+    );
+    return {
+      ...Object.fromEntries(Object.entries(options).map(([key, raw]) => {
       const values = new Map<string, string>();
       for (const value of raw ?? []) {
         const label = key === "color" ? productColor(value) : value?.trim();
         if (label && !values.has(label.toLowerCase())) values.set(label.toLowerCase(), label);
       }
       return [key, [...values.values()].sort((a, b) => a.localeCompare(b, "ru", { numeric: true }))];
-    }));
+      })),
+      materials: materialRows,
+    };
   });
 
   app.post("/catalog/availability", async (req) => {
@@ -175,7 +195,7 @@ export async function registerCatalog(app: FastifyInstance) {
     // A unisex item is included when either adult audience is selected.
     if (audiences.includes("женское") || audiences.includes("мужское")) audiences.push("унисекс");
     if (audiences.length) add("lower(i.attributes->>'audience')=ANY(?::text[])", [...new Set(audiences)]);
-    for (const key of ["brand", "material", "season", "color", "sizeLabel"] as const) {
+    for (const key of ["brand", "season", "color", "sizeLabel"] as const) {
       const raw = q[key];
       const values = (Array.isArray(raw) ? raw : [raw ?? ""])
         .map((value) => value.trim().toLowerCase()).filter(Boolean);
@@ -183,6 +203,30 @@ export async function registerCatalog(app: FastifyInstance) {
       const field = key === "color" ? namedColor : `btrim(i.attributes->>'${key}')`;
       const sizeSystem = key === "sizeLabel" ? "i.attributes->>'sizeSystem' IN ('INT','RU') AND " : "";
       add(`${sizeSystem}lower(${field})=ANY(?::text[])`, values);
+    }
+    const selectedMaterials = [...new Set((Array.isArray(q.material) ? q.material : [q.material ?? ""])
+      .map(value => value.trim().toLowerCase()).filter(Boolean))];
+    const minimum = q.minPercent === undefined || q.minPercent === "" ? 0 : Number(q.minPercent);
+    assert(Number.isInteger(minimum) && minimum >= 0 && minimum <= 100,
+      422, "FILTER", "Укажите процент от 0 до 100");
+    if (selectedMaterials.length) {
+      assert(selectedMaterials.length <= 30 && selectedMaterials.every(value =>
+        /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value)),
+        422, "FILTER", "Выберите материал из списка");
+      // Indexed JSONB membership first, then (only if needed) percentage check.
+      const terms = selectedMaterials.map(id => {
+        params.push(JSON.stringify([{ materialId: id }]));
+        return "i.composition @> $" + params.length + "::jsonb";
+      });
+      where.push(`(${terms.join(" OR ")})`);
+      if (minimum > 0) {
+        params.push(selectedMaterials);
+        const idsParam = params.length;
+        params.push(minimum);
+        where.push(`EXISTS (SELECT 1 FROM jsonb_array_elements(i.composition) AS part(value)
+          WHERE part.value->>'materialId'=ANY(` + "$" + idsParam + `::text[])
+          AND (part.value->>'percent')::integer >= ` + "$" + params.length + `)`);
+      }
     }
     for (const [key, op] of [
       ["minPrice", ">="],
@@ -223,7 +267,7 @@ export async function registerCatalog(app: FastifyInstance) {
           ? "i.price_minor DESC,i.id"
           : "i.created_at DESC,i.id";
     const { rows } = await pool.query(
-      `SELECT i.id,i.sku,i.title,i.category,i.price_minor,i.publication,i.physical,i.version,i.has_defect,i.defect_description,i.attributes,i.measurements
+      `SELECT i.id,i.sku,i.title,i.category,i.price_minor,i.publication,i.physical,i.version,i.has_defect,i.defect_description,i.attributes,i.composition,i.measurements
          FROM items i WHERE ${where.join(" AND ")} ORDER BY ${sort} LIMIT 41 OFFSET ${offset}`,
       params,
     );
@@ -356,15 +400,19 @@ export async function registerCatalog(app: FastifyInstance) {
       b,
       async (c) => {
         await assertActiveCategory(c, b.category);
+        const composition = await resolveComposition(c, b.composition ?? []);
+        const attributes = normalizeColor(b.attributes ?? {});
+        if (composition.length) attributes.material = formatComposition(composition);
         const { rows } = await c.query(
-          "INSERT INTO items(sku,title,description,category,price_minor,attributes,measurements,storage_location,has_defect,defect_description) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *",
+          "INSERT INTO items(sku,title,description,category,price_minor,attributes,composition,measurements,storage_location,has_defect,defect_description) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *",
           [
             b.sku ?? "V-" + crypto.randomUUID().slice(0, 8).toUpperCase(),
             b.title,
             b.description ?? "",
             b.category,
             b.priceMinor,
-            normalizeColor(b.attributes ?? {}),
+            attributes,
+            JSON.stringify(composition),
             b.measurements ?? {},
             b.storageLocation ?? "",
             b.hasDefect ?? false,
@@ -404,9 +452,15 @@ export async function registerCatalog(app: FastifyInstance) {
           "Сначала согласуйте изменения действующего обращения",
         );
         const hasDefect = b.hasDefect ?? old.has_defect;
+        const composition = b.composition === undefined
+          ? old.composition ?? [] : await resolveComposition(c, b.composition);
+        const attributes = { ...(b.attributes === undefined ? old.attributes :
+          normalizeColor(b.attributes, old.attributes.color)) };
+        if (composition.length) attributes.material = formatComposition(composition);
+        else if ((old.composition ?? []).length) attributes.material = "";
         const row = (
           await c.query(
-            "UPDATE items SET sku=$2,title=$3,description=$4,category=$5,price_minor=$6,attributes=$7,measurements=$8,storage_location=$9,has_defect=$10,defect_description=$11,version=version+1,updated_at=now() WHERE id=$1 RETURNING *",
+            "UPDATE items SET sku=$2,title=$3,description=$4,category=$5,price_minor=$6,attributes=$7,composition=$8,measurements=$9,storage_location=$10,has_defect=$11,defect_description=$12,version=version+1,updated_at=now() WHERE id=$1 RETURNING *",
             [
               id,
               b.sku ?? old.sku,
@@ -414,7 +468,8 @@ export async function registerCatalog(app: FastifyInstance) {
               b.description ?? old.description,
               b.category,
               b.priceMinor,
-              b.attributes === undefined ? old.attributes : normalizeColor(b.attributes, old.attributes.color),
+              attributes,
+              JSON.stringify(composition),
               b.measurements ?? old.measurements,
               b.storageLocation ?? old.storage_location,
               hasDefect,
