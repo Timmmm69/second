@@ -8,6 +8,7 @@ export type ItemRow = {
   id: string;
   sku: string;
   title: string;
+  description: string;
   category: string;
   price_minor: number;
   publication: string;
