@@ -31,5 +31,5 @@ INSERT INTO material_types(name,normalized_name,aliases) VALUES
  ('Кожа','кожа',ARRAY['leather']),
  ('Замша','замша',ARRAY['suede']),
  ('Пух','пух',ARRAY['down']),
- ('Перo','перo',ARRAY['feather']),
+ ('Перо','перо',ARRAY['feather']),
  ('Ацетат','ацетат',ARRAY['acetate']);
