@@ -24,7 +24,7 @@ export async function migrate() {
           "utf8",
         ),
       );
-      if (name === "009.sql") await backfillLegacyCompositions(c);
+      if (name === "010.sql") await backfillLegacyCompositions(c);
       await c.query("INSERT INTO schema_migrations(name) VALUES($1)", [name]);
     }
   });
