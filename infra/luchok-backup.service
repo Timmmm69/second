@@ -1,0 +1,12 @@
+[Unit]
+Description=Encrypted Luchok database, media and configuration backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/luchok
+ExecStart=/usr/bin/bash /opt/luchok/infra/backup.sh
+TimeoutStartSec=infinity
+UMask=0077
+Nice=10
