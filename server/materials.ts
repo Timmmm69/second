@@ -1,6 +1,6 @@
 import type { PoolClient } from "pg";
 import { z } from "zod";
-import { AppError, assert } from "./errors.js";
+import { assert } from "./errors.js";
 
 export type MaterialPart = { materialId: string; name: string; percent: number | null };
 export type MaterialType = { id: string; name: string; aliases: string[] };
