@@ -20,3 +20,7 @@ export function productSize(attributes?: Attributes) {
   if (system === "EU" || system === "US") return `${label} (${system})`;
   return `${label} (старая маркировка)`;
 }
+
+export function compositionText(parts?: readonly { name: string; percent: number | null }[]): string {
+  return (parts ?? []).map(part => part.percent === null ? part.name : `${part.percent}% ${part.name.toLocaleLowerCase("ru")}`).join(", ");
+}
