@@ -59,7 +59,7 @@ test("readItems batches real SQL, preserves response/media/order and reads curre
   assert.deepEqual(JSON.parse(JSON.stringify(items[1])), {
     id: itemIds[0], sku: marker + "1", title: marker + "1", category: "accessories",
     priceMinor: 100, publication: "PUBLISHED", version: 1, hasDefect: true,
-    defectDescription: "Затяжка", attributes: {}, measurements: {}, available: true,
+    defectDescription: "Затяжка", attributes: {}, composition: [], measurements: {}, available: true,
     media: [
       { id: mediaIds[2], width: 480, height: 640, variants: { "480": "/first.webp" }, role: "FRONT", position: 1, url: "/first.webp" },
       { id: mediaIds[1], width: 480, height: 640, variants: { "240": "/fallback.webp" }, role: "FRONT", position: 1, url: "/fallback.webp" },
