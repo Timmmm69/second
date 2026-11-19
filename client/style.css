@@ -2024,3 +2024,46 @@ button > svg, .button > svg { flex-shrink: 0; display: block; }
 }
 
 .about-intro .button:not(.secondary) {background:var(--accent);color:#222;}
+
+/* Item detail: one compact cart action above the existing navigation. */
+.purchase-bar {
+  z-index: 26;
+  width: min(100%, 540px);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -4px 20px #0000000a;
+}
+.purchase-bar-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.purchase-bar-price {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.purchase-bar-price small { font-size: .75rem; }
+.purchase-bar-price strong { font-size: 1.125rem; }
+.purchase-bar-content > .button {
+  flex: 0 1 auto;
+  min-width: 160px;
+  max-width: 65%;
+}
+@media (min-width: 900px) {
+  .item-page .purchase-bar {
+    width: min(100%, 430px);
+    left: auto;
+    right: max(24px, calc((100vw - 1100px) / 2 + 24px));
+    transform: none;
+    border-radius: 16px;
+    bottom: calc(var(--measured-nav-height, var(--nav-height)) + 12px);
+    box-shadow: 0 4px 24px #00000012;
+  }
+}
+@media (max-width: 380px) {
+  .purchase-bar-content > .button { min-width: 0; }
+  .purchase-bar-price strong { font-size: 1rem; }
+}
