@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { mkdir, open, rm, rename } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
-import sharp from "sharp";
+import sharp, { type Metadata } from "sharp";
 import { z } from "zod";
 import { pool, tx } from "./db.js";
 import { config } from "./config.js";
@@ -40,7 +40,7 @@ async function writePhoto(
   target: string,
   rotation = 0,
 ) {
-  let metadata: sharp.Metadata;
+  let metadata: Metadata;
   try {
     metadata = await sharp(input, { limitInputPixels: 40000000 }).metadata();
   } catch {
