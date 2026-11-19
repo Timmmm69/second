@@ -19,6 +19,7 @@ export interface Item {
   id: string;
   sku: string;
   title: string;
+  description?: string;
   category: string;
   priceMinor: number;
   publication: string;

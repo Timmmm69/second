@@ -10,6 +10,7 @@ const itemInput = z
   .object({
     sku: z.string().trim().min(1).max(80).optional(),
     title: z.string().trim().min(1).max(180),
+    description: z.string().trim().max(4000).optional(),
     category: z.string().min(1).max(100),
     priceMinor: z.number().int().min(0).max(100000000),
     attributes: z
@@ -72,6 +73,7 @@ function itemWithMedia(row: any, assets: any[], staff: boolean) {
     id: row.id,
     sku: row.sku,
     title: row.title,
+    ...(row.description !== undefined ? { description: row.description } : {}),
     category: row.category,
     priceMinor: row.price_minor,
     publication: row.publication,
@@ -105,6 +107,8 @@ export async function readItems(itemIds: string[], staff = false) {
 const uuidParam = z.object({ id: z.uuid() });
 const optionValues = z.union([z.string(), z.array(z.string())]).optional();
 const catalogQuery = z.object({
+  category: optionValues,
+  audience: optionValues,
   brand: optionValues,
   color: optionValues,
   material: optionValues,
@@ -139,6 +143,16 @@ export async function registerCatalog(app: FastifyInstance) {
     }));
   });
 
+  app.post("/catalog/availability", async (req) => {
+    const { itemIds } = z.object({ itemIds: z.array(z.uuid()).max(100) }).strict().parse(req.body);
+    if (!itemIds.length) return { availableIds: [] };
+    const { rows } = await pool.query<{ id: string }>(
+      `SELECT i.id FROM items i WHERE i.id=ANY($1::uuid[]) AND ${availableCatalog.join(" AND ")}`,
+      [itemIds],
+    );
+    return { availableIds: rows.map(({ id }) => id) };
+  });
+
   app.get("/catalog", async (req) => {
     const namedColor = "CASE WHEN btrim(i.attributes->>'color') !~* '(#|^[0-9a-f]{6}$|^[0-9a-f]{8}$)' THEN btrim(i.attributes->>'color') END";
     const q = catalogQuery.parse(req.query),
@@ -153,8 +167,14 @@ export async function registerCatalog(app: FastifyInstance) {
         `lower(regexp_replace(concat_ws(' ',i.title,i.sku,i.attributes->>'brand',${namedColor}),'\\s+',' ','g')) LIKE ?`,
         "%" + q.q.toLowerCase().trim().replace(/\s+/g, " ") + "%",
       );
-    if (q.category) add("i.category=?", q.category);
-    if (q.audience) add("lower(i.attributes->>'audience')=lower(?)", q.audience);
+    const categories = (Array.isArray(q.category) ? q.category : [q.category ?? ""])
+      .map((value) => value.trim()).filter(Boolean);
+    if (categories.length) add("i.category=ANY(?::text[])", [...new Set(categories)]);
+    const audiences = (Array.isArray(q.audience) ? q.audience : [q.audience ?? ""])
+      .map((value) => value.trim().toLowerCase()).filter(Boolean);
+    // A unisex item is included when either adult audience is selected.
+    if (audiences.includes("женское") || audiences.includes("мужское")) audiences.push("унисекс");
+    if (audiences.length) add("lower(i.attributes->>'audience')=ANY(?::text[])", [...new Set(audiences)]);
     for (const key of ["brand", "material", "season", "color", "sizeLabel"] as const) {
       const raw = q[key];
       const values = (Array.isArray(raw) ? raw : [raw ?? ""])
@@ -203,7 +223,8 @@ export async function registerCatalog(app: FastifyInstance) {
           ? "i.price_minor DESC,i.id"
           : "i.created_at DESC,i.id";
     const { rows } = await pool.query(
-      `SELECT i.* FROM items i WHERE ${where.join(" AND ")} ORDER BY ${sort} LIMIT 41 OFFSET ${offset}`,
+      `SELECT i.id,i.sku,i.title,i.category,i.price_minor,i.publication,i.physical,i.version,i.has_defect,i.defect_description,i.attributes,i.measurements
+         FROM items i WHERE ${where.join(" AND ")} ORDER BY ${sort} LIMIT 41 OFFSET ${offset}`,
       params,
     );
     return {
@@ -336,10 +357,11 @@ export async function registerCatalog(app: FastifyInstance) {
       async (c) => {
         await assertActiveCategory(c, b.category);
         const { rows } = await c.query(
-          "INSERT INTO items(sku,title,category,price_minor,attributes,measurements,storage_location,has_defect,defect_description) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
+          "INSERT INTO items(sku,title,description,category,price_minor,attributes,measurements,storage_location,has_defect,defect_description) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *",
           [
             b.sku ?? "V-" + crypto.randomUUID().slice(0, 8).toUpperCase(),
             b.title,
+            b.description ?? "",
             b.category,
             b.priceMinor,
             normalizeColor(b.attributes ?? {}),
@@ -384,11 +406,12 @@ export async function registerCatalog(app: FastifyInstance) {
         const hasDefect = b.hasDefect ?? old.has_defect;
         const row = (
           await c.query(
-            "UPDATE items SET sku=$2,title=$3,category=$4,price_minor=$5,attributes=$6,measurements=$7,storage_location=$8,has_defect=$9,defect_description=$10,version=version+1,updated_at=now() WHERE id=$1 RETURNING *",
+            "UPDATE items SET sku=$2,title=$3,description=$4,category=$5,price_minor=$6,attributes=$7,measurements=$8,storage_location=$9,has_defect=$10,defect_description=$11,version=version+1,updated_at=now() WHERE id=$1 RETURNING *",
             [
               id,
               b.sku ?? old.sku,
               b.title,
+              b.description ?? old.description,
               b.category,
               b.priceMinor,
               b.attributes === undefined ? old.attributes : normalizeColor(b.attributes, old.attributes.color),
@@ -469,6 +492,7 @@ export async function registerCatalog(app: FastifyInstance) {
                   hasDefect: item.has_defect,
                   defectDescription: item.has_defect ? item.defect_description : "",
                   title: item.title,
+                  description: item.description,
                   priceMinor: item.price_minor,
                   attributes: item.attributes,
                   measurements: item.measurements,

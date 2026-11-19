@@ -1,4 +1,4 @@
-import { productColor, productSize } from "../shared/catalog-attributes.js";
+import { catalogAudiences, productColor, productSize } from "../shared/catalog-attributes.js";
 import { useEffect, useId, useRef, useState, useMemo, useSyncExternalStore, type FormEvent } from "react";
 import {
   api,
@@ -83,14 +83,22 @@ const catalogOptionFields = [
 ] as const;
 type CatalogOptionKey = typeof catalogOptionFields[number][0];
 type CatalogOptions = Record<CatalogOptionKey, string[]>;
-type CatalogFilters = Partial<CatalogOptions & Record<"sort" | "q" | "category" | "audience" | "minPrice" | "maxPrice", string>>;
+type CatalogFilters = Partial<CatalogOptions & { sort: string; q: string; category: string[]; audience: string[]; minPrice: string; maxPrice: string }>;
 
 function readCatalogFilters(): CatalogFilters {
   const saved = readLocal<Record<string, string | string[]>>("catalogFilters", { sort: "new" });
   const filters: CatalogFilters = {};
-  for (const key of ["sort", "q", "category", "audience", "minPrice", "maxPrice"] as const) {
+  for (const key of ["sort", "q", "minPrice", "maxPrice"] as const) {
     const value = saved[key];
     if (typeof value === "string") filters[key] = value;
+  }
+  // Preserve filters saved as a single value by previous releases.
+  for (const key of ["category", "audience"] as const) {
+    const raw = saved[key];
+    const values = (Array.isArray(raw) ? raw : [raw])
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim()).filter(Boolean);
+    if (values.length) filters[key] = [...new Set(values)];
   }
   for (const [key] of catalogOptionFields) {
     const raw = saved[key];
@@ -142,6 +150,7 @@ function Catalog() {
     saveLocal("catalogFilters", filters);
   }, [filters]);
   const scrollRestored = useRef(false);
+  const lastCatalogRefresh = useRef(Date.now());
   useEffect(() => {
     catalogCache = {
       filterKey: JSON.stringify(filters),
@@ -221,31 +230,26 @@ function Catalog() {
   }, [queryString, refresh, cursor]);
   useEffect(() => {
     const update = () => {
-      if (document.visibilityState !== "visible") return;
+      if (document.visibilityState !== "visible" || Date.now() - lastCatalogRefresh.current < 120_000) return;
+      lastCatalogRefresh.current = Date.now();
       setRefresh((v) => v + 1);
-      const ids = Array.from(
-        document.querySelectorAll<HTMLElement>("article[data-item-id]"),
-      )
+      const ids = Array.from(document.querySelectorAll<HTMLElement>("article[data-item-id]"))
         .filter((el) => {
           const rect = el.getBoundingClientRect();
           return rect.bottom >= 0 && rect.top <= window.innerHeight;
         })
         .map((el) => el.dataset.itemId)
         .filter((id): id is string => Boolean(id));
-      Promise.all(
-        ids.map((id) => api<Item>(`/items/${id}`).catch(() => null)),
-      ).then((current) => {
-        const fresh = new Map(
-          current.filter((i): i is Item => i !== null).map((i) => [i.id, i]),
-        );
-        setItems((previous) =>
-          previous
-            .filter((i) => fresh.get(i.id)?.available !== false)
-            .map((i) => fresh.get(i.id) || i),
-        );
-      });
+      if (!ids.length) return;
+      api<{ availableIds: string[] }>("/catalog/availability", {
+        method: "POST",
+        body: { itemIds: ids },
+      }).then(({ availableIds }) => {
+        const checked = new Set(ids), available = new Set(availableIds);
+        setItems((previous) => previous.filter((item) => !checked.has(item.id) || available.has(item.id)));
+      }).catch(() => {});
     };
-    const timer = setInterval(update, 15000);
+    const timer = setInterval(update, 120_000);
     document.addEventListener("visibilitychange", update);
     window.addEventListener("focus", update);
     return () => {
@@ -254,9 +258,25 @@ function Catalog() {
       window.removeEventListener("focus", update);
     };
   }, []);
-  const change = (key: "q" | "category", value: string) => {
+  const changeSearch = (value: string) => {
     setCursor("");
-    setFilters((v) => ({ ...v, [key]: value }));
+    setFilters((v) => ({ ...v, q: value }));
+  };
+  const toggle = (key: "audience" | "category", value: string) => {
+    setCursor("");
+    setFilters((v) => {
+      const selected = v[key] ?? [];
+      return {
+        ...v,
+        [key]: selected.includes(value)
+          ? selected.filter((entry) => entry !== value)
+          : [...selected, value],
+      };
+    });
+  };
+  const clear = (key: "audience" | "category") => {
+    setCursor("");
+    setFilters((v) => ({ ...v, [key]: undefined }));
   };
   const validRange =
     !draft.minPrice || !draft.maxPrice ||
@@ -295,28 +315,29 @@ function Catalog() {
           className="search-cta"
           aria-label="Найти вещи"
           onClick={() => {
-            change("q", q);
+            changeSearch(q);
             setRefresh((v) => v + 1);
           }}
         >
           <Icon name="search" />
         </button>
       </div>
-      <div className="chips" aria-label="Категории">
-        <button
-          className={!filters.category ? "selected" : ""}
-          onClick={() => change("category", "")}
-        >
-          Всё
-        </button>
+      <div className="chips" role="group" aria-label="Назначение">
+        <button className={!filters.audience?.length ? "selected" : ""}
+          aria-pressed={!filters.audience?.length} onClick={() => clear("audience")}>Все</button>
+        {catalogAudiences.map((audience) => (
+          <button key={audience} className={filters.audience?.includes(audience) ? "selected" : ""}
+            aria-pressed={Boolean(filters.audience?.includes(audience))}
+            onClick={() => toggle("audience", audience)}>{audience}</button>
+        ))}
+      </div>
+      <div className="chips" role="group" aria-label="Категории">
+        <button className={!filters.category?.length ? "selected" : ""}
+          aria-pressed={!filters.category?.length} onClick={() => clear("category")}>Всё</button>
         {categories.map((c) => (
-          <button
-            key={c.id}
-            className={filters.category === c.id ? "selected" : ""}
-            onClick={() => change("category", c.id)}
-          >
-            {c.name}
-          </button>
+          <button key={c.id} className={filters.category?.includes(c.id) ? "selected" : ""}
+            aria-pressed={Boolean(filters.category?.includes(c.id))}
+            onClick={() => toggle("category", c.id)}>{c.name}</button>
         ))}
       </div>
       <div className="section-heading">
@@ -450,23 +471,19 @@ function Catalog() {
               ]}
             />
             <Select
-              label="Категория"
-              value={draft.category || ""}
-              onValueChange={(category) => setDraft((v) => ({ ...v, category }))}
-              searchPlaceholder="Найти категорию"
-              options={[
-                { value: "", label: "Все категории" },
-                ...categories.map((c) => ({ value: c.id, label: c.name })),
-              ]}
+              label="Назначение"
+              multiple
+              value={draft.audience ?? []}
+              onValueChange={(audience) => setDraft((v) => ({ ...v, audience: audience.length ? audience : undefined }))}
+              options={catalogAudiences.map((value) => ({ value, label: value }))}
             />
             <Select
-              label="Назначение"
-              value={draft.audience || ""}
-              onValueChange={(audience) => setDraft((v) => ({ ...v, audience }))}
-              options={[
-                { value: "", label: "Любое" },
-                ...["Женское", "Мужское", "Унисекс", "Детское"].map((value) => ({ value, label: value })),
-              ]}
+              label="Категория"
+              multiple
+              value={draft.category ?? []}
+              onValueChange={(category) => setDraft((v) => ({ ...v, category: category.length ? category : undefined }))}
+              searchPlaceholder="Найти категорию"
+              options={categories.map((c) => ({ value: c.id, label: c.name }))}
             />
             <div className="form-pair">
               <Field
@@ -671,6 +688,12 @@ function ItemPage({ id }: { id: string }) {
                 каталоге.
               </p>
             </div>
+          )}
+          {item.description && (
+            <section className="detail-section">
+              <h2>Описание</h2>
+              <p className="pre-wrap">{item.description}</p>
+            </section>
           )}
           <section className="detail-section">
             <h2>Детали вещи</h2>
