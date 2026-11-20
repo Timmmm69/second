@@ -49,10 +49,14 @@ export async function installMobileMocks(page: Page, browserName: string) {
       width: { configurable: true, get: () => physicalScreen.width },
       height: { configurable: true, get: () => physicalScreen.height },
     });
-    if (screen.orientation) Object.defineProperties(screen.orientation, {
+    // Keep physical orientation independent from the browser's emulated layout
+    // orientation. A native ScreenOrientation object may change on resize.
+    const physicalOrientation = new EventTarget();
+    Object.defineProperties(physicalOrientation, {
       type: { configurable: true, get: () => physicalScreen.type },
       angle: { configurable: true, get: () => physicalScreen.angle },
     });
+    Object.defineProperty(screen, "orientation", { configurable: true, value: physicalOrientation });
     Object.defineProperty(window, "orientation", { configurable: true, get: () => physicalScreen.angle });
     Object.assign(window, {
       Telegram: { WebApp: app },
@@ -61,7 +65,7 @@ export async function installMobileMocks(page: Page, browserName: string) {
           type: size.width > size.height ? "landscape-primary" : "portrait-primary",
           angle: size.width > size.height ? 90 : 0,
         });
-        screen.orientation?.dispatchEvent(new Event("change"));
+        physicalOrientation.dispatchEvent(new Event("change"));
         window.dispatchEvent(new Event("orientationchange"));
       },
       __mobileTelegramUpdate: (change: { height?: number; bottom?: number }) => {
@@ -163,6 +167,15 @@ export async function rotateScreen(page: Page, size: { width: number; height: nu
     (window as unknown as { __mobileScreenRotate: (size: typeof value) => void }).__mobileScreenRotate(value);
   }, size);
   await layoutFrames(page);
+  const actual = await page.evaluate(() => ({
+    width: screen.width, height: screen.height,
+    type: screen.orientation.type, angle: screen.orientation.angle,
+  }));
+  expect(actual, "The physical-screen fixture must match the requested rotation independently of viewport shape").toEqual({
+    ...size,
+    type: size.width > size.height ? "landscape-primary" : "portrait-primary",
+    angle: size.width > size.height ? 90 : 0,
+  });
 }
 
 export async function layoutFrames(page: Page) {

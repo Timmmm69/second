@@ -362,7 +362,14 @@ async function inlinePurchaseGeometry(page: Page) {
   });
 }
 
-test("purchase action follows safe-area updates and the product has at most 40px of spare bottom space", async ({ page, mobile }, info) => {
+function compactBottomSpace(gap: number) {
+  expect(gap, "Content must not run underneath navigation").toBeGreaterThanOrEqual(-1);
+  // Fractional line boxes and integer-rounded scrollY can differ by <1 CSS px.
+  expect(gap, "40px spacing target with at most 1 CSS px of rounding tolerance").toBeLessThanOrEqual(41);
+  expect(gap / 104, "The remaining gap must still be less than 40% of the former 104px reserve").toBeLessThan(0.4);
+}
+
+test("purchase action follows safe-area updates and targets 40px of spare bottom space", async ({ page, mobile }, info) => {
   await page.goto(`/#/items/${sampleId}`);
   await expect(page.getByRole("heading", { name: sampleTitle, exact: true })).toBeVisible();
   await expect(page.locator(".purchase-bar")).toBeVisible();
@@ -411,8 +418,7 @@ test("purchase action follows safe-area updates and the product has at most 40px
   const bridgeBottom = await inlinePurchaseGeometry(page);
   expect(bridgeBottom.hit).toBe(true);
   expect(bridgeBottom.buttonBottom).toBeLessThan(bridgeBottom.navTop);
-  expect(bridgeBottom.gap).toBeGreaterThanOrEqual(-1);
-  expect(bridgeBottom.gap).toBeLessThanOrEqual(40);
+  compactBottomSpace(bridgeBottom.gap);
   await screenshot(page, info, "item-bottom-telegram-viewport-only");
 
   await updateTelegram(page, { height: viewport.height });
@@ -431,8 +437,7 @@ test("purchase action follows safe-area updates and the product has at most 40px
   await expect(page.locator(".purchase-bar")).toHaveCount(0);
   await layoutFrames(page);
   const bottom = await inlinePurchaseGeometry(page);
-  expect(bottom.gap, "Content must not run underneath navigation").toBeGreaterThanOrEqual(-1);
-  expect(bottom.gap, "At most 40px remains from the former 104px reserved padding").toBeLessThanOrEqual(40);
+  compactBottomSpace(bottom.gap);
   expect(bottom.buttonBottom).toBeLessThan(bottom.navTop);
   expect(bottom.hit).toBe(true);
   await screenshot(page, info, "item-bottom");
