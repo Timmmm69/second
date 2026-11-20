@@ -631,8 +631,8 @@ function ItemPage({ id }: { id: string }) {
     };
     schedule();
     const resize = new ResizeObserver(schedule);
-    if (header) resize.observe(header);
-    if (nav) resize.observe(nav);
+    if (header) resize.observe(header, { box: "border-box" });
+    if (nav) resize.observe(nav, { box: "border-box" });
     window.addEventListener("resize", schedule);
     viewport?.addEventListener("resize", schedule);
     viewport?.addEventListener("scroll", schedule);

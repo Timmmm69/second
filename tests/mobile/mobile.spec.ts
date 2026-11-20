@@ -382,5 +382,7 @@ test("gesture arbitration rejects vertical, cancelled and multi-touch gallery dr
   expect(zoomed.firstPrevented).toBe(false);
   expect(zoomed.lastPrevented).toBe(false);
   await expect(title).toHaveText("Фото 2 из 3");
-  expect(await gallery.evaluate((element) => getComputedStyle(element).touchAction)).toContain("pan-x");
+  // Chromium serializes this exact combination as its equivalent keyword.
+  expect(["manipulation", "pan-x pan-y pinch-zoom"])
+    .toContain(await gallery.evaluate((element) => getComputedStyle(element).touchAction));
 });

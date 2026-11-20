@@ -36,7 +36,10 @@ function App() {
   useEffect(() => {
     const nav = navRef.current; if (!nav) return;
     const measure = () => { const height = nav.getBoundingClientRect().height; if (height > 0) document.documentElement.style.setProperty("--measured-nav-height", `${height}px`); };
-    const observer = new ResizeObserver(measure); observer.observe(nav); measure();
+    const observer = new ResizeObserver(measure);
+    // Telegram safe-area updates change padding, not the content-box height.
+    observer.observe(nav, { box: "border-box" });
+    measure();
     return () => observer.disconnect();
   }, []);
   const [path, setPath] = useState(
@@ -242,7 +245,8 @@ function App() {
     };
     let keyboardOpen = false;
     let heightBeforeKeyboard = visibleHeight();
-    let compactLandscape = landscape() && window.innerHeight <= 500;
+    let physicalLandscape = landscape();
+    let compactLandscape = physicalLandscape && window.innerHeight <= 500;
     let frame = 0;
     let closingTimer: number | undefined;
     const sync = (orientationChanged = false) => {
@@ -270,8 +274,10 @@ function App() {
       document.body.classList.toggle("keyboard-open", keyboardOpen);
       // A keyboard can make a portrait viewport wider than it is tall. Keep the
       // physical layout until the keyboard closes or the device really rotates.
-      if (!keyboardOpen || orientationChanged)
-        compactLandscape = landscape() && window.innerHeight <= 500;
+      if (!keyboardOpen || orientationChanged) {
+        physicalLandscape = landscape();
+        compactLandscape = physicalLandscape && window.innerHeight <= 500;
+      }
       document.body.classList.toggle("compact-landscape", compactLandscape);
       if (!keyboardOpen && (!focused || height >= heightBeforeKeyboard)) {
         // Freeze both the baseline and the bottom gap through gradual keyboard
@@ -291,6 +297,12 @@ function App() {
     };
     const focus = () => sync();
     const rotate = () => {
+      if (landscape() === physicalLandscape) {
+        // Some WebViews emit orientation events when only the keyboard changes
+        // the viewport aspect ratio. Preserve the physical-orientation baseline.
+        schedule();
+        return;
+      }
       // The previous portrait height must not keep a rotated phone in the
       // keyboard-closing state after focus leaves its input.
       heightBeforeKeyboard = visibleHeight();

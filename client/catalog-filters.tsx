@@ -138,6 +138,7 @@ export function CatalogFilterSelect(props: FilterSelectProps) {
     };
     const observer = new ResizeObserver(schedule);
     observer.observe(sheet);
+    observer.observe(content);
     if (header) observer.observe(header);
     if (next) observer.observe(next);
     content.addEventListener("focusin", schedule);
@@ -182,7 +183,11 @@ export function CatalogFilterSelect(props: FilterSelectProps) {
         className="field-control select-trigger catalog-filter-trigger"
         aria-expanded={open} aria-controls={`${id}-panel`}
         disabled={props.disabled || (!props.multiple && !props.options.length)}
-        onPointerDown={(event) => event.preventDefault()}
+        onPointerDown={(event) => {
+          // Cancelling a touch pointerdown suppresses the compatibility click in
+          // WebKit. Native taps must reach onClick; mouse focus is set below.
+          if (event.pointerType === "mouse") event.preventDefault();
+        }}
         onClick={() => {
           trigger.current?.focus({ preventScroll: true });
           setQuery("");

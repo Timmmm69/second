@@ -1,4 +1,4 @@
-import { expect, type CDPSession, type Locator, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type CDPSession, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import type { Category, Item, Settings } from "../../client/types.js";
 
@@ -168,6 +168,12 @@ export function filterHeader(page: Page, label: string) {
 export async function visibleTapTarget(locator: Locator) {
   const geometry = await locator.evaluate((element) => {
     const rect = element.getBoundingClientRect();
+    const bounds = (rect: DOMRect) => ({ left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height });
+    const describe = (node: Element | null) => node ? {
+      tag: node.tagName, id: node.id, className: node.className,
+      label: node.getAttribute("aria-label") || node.textContent?.trim().slice(0, 100),
+      bounds: bounds(node.getBoundingClientRect()),
+    } : null;
     const sheet = element.closest(".sheet");
     const sheetBounds = sheet?.getBoundingClientRect();
     const header = sheet?.querySelector(".sheet-header")?.getBoundingClientRect();
@@ -177,23 +183,47 @@ export async function visibleTapTarget(locator: Locator) {
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
     const points = [y, rect.top + 3, rect.bottom - 3];
+    const hitPoints = points.map((point) => {
+      const hit = document.elementFromPoint(x, point);
+      return { x, y: point, hit: describe(hit), matches: hit === element || (hit !== null && element.contains(hit)) };
+    });
+    const clippingAncestors = [];
+    for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+      const css = getComputedStyle(parent);
+      if (/(auto|scroll|hidden|clip)/.test(`${css.overflowX} ${css.overflowY}`)) clippingAncestors.push({
+        ...describe(parent), overflowX: css.overflowX, overflowY: css.overflowY,
+        scrollTop: parent.scrollTop, scrollHeight: parent.scrollHeight, clientHeight: parent.clientHeight,
+        paddingTop: css.paddingTop, paddingBottom: css.paddingBottom, maxHeight: css.maxHeight,
+      });
+    }
     return {
       x, y, width: rect.width, height: rect.height,
       top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right,
       viewportWidth: window.innerWidth, allowedTop: top, allowedBottom: bottom,
-      hit: points.every((point) => {
-        const hit = document.elementFromPoint(x, point);
-        return hit === element || (hit !== null && element.contains(hit));
-      }),
+      hit: hitPoints.every((point) => point.matches),
+      target: describe(element), hitPoints, clippingAncestors,
+      activeElement: describe(document.activeElement),
+      sheet: describe(sheet), stickyHeader: header ? bounds(header) : null,
+      viewport: viewport ? { width: viewport.width, height: viewport.height, offsetTop: viewport.offsetTop, offsetLeft: viewport.offsetLeft, scale: viewport.scale } : null,
+      documentScroll: { x: window.scrollX, y: window.scrollY },
     };
   });
-  expect(geometry.width).toBeGreaterThan(0);
-  expect(geometry.height).toBeGreaterThanOrEqual(44);
-  expect(geometry.left).toBeGreaterThanOrEqual(-1);
-  expect(geometry.right).toBeLessThanOrEqual(geometry.viewportWidth + 1);
-  expect(geometry.top, "Target must already be below the sticky sheet header").toBeGreaterThanOrEqual(geometry.allowedTop - 1);
-  expect(geometry.bottom, "Next target must already fit without a user scroll").toBeLessThanOrEqual(geometry.allowedBottom + 1);
-  expect(geometry.hit, "Target must receive taps, not only exist in the DOM").toBe(true);
+  const diagnostic = `${locator.toString()}\n${JSON.stringify(geometry, null, 2)}`;
+  try {
+    expect(geometry.width, diagnostic).toBeGreaterThan(0);
+    expect(geometry.height, diagnostic).toBeGreaterThanOrEqual(44);
+    expect(geometry.left, diagnostic).toBeGreaterThanOrEqual(-1);
+    expect(geometry.right, diagnostic).toBeLessThanOrEqual(geometry.viewportWidth + 1);
+    expect(geometry.top, `Target must already be below the sticky sheet header\n${diagnostic}`).toBeGreaterThanOrEqual(geometry.allowedTop - 1);
+    expect(geometry.bottom, `Next target must already fit without a user scroll\n${diagnostic}`).toBeLessThanOrEqual(geometry.allowedBottom + 1);
+    expect(geometry.hit, `Target must receive taps, not only exist in the DOM\n${diagnostic}`).toBe(true);
+  } catch (error) {
+    await test.info().attach("tap-target-diagnostics", {
+      body: JSON.stringify({ locator: locator.toString(), ...geometry }, null, 2),
+      contentType: "application/json",
+    });
+    throw error;
+  }
   return geometry;
 }
 
