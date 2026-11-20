@@ -193,12 +193,14 @@ test("Telegram item preview is public, escaped, and never exposes hidden stock",
   const id = itemIds[0];
   const initialTitle = (await pool.query("SELECT title FROM items WHERE id=$1", [id])).rows[0].title;
   await pool.query("UPDATE items SET title=$2 WHERE id=$1", [id, "<script>alert(1)</script> & находка"]);
+  await pool.query("UPDATE media_assets SET variants=$2 WHERE id=$1", [mediaIds[2], { "960": `/media/${mediaIds[2]}/960`, "480": "/first.webp" }]);
   try {
     const spy = t.mock.method(pool, "query");
     const preview = await app.inject("/share/item/" + id);
     assert.equal(preview.statusCode, 200, preview.body);
     assert.match(String(preview.headers["content-type"]), /text\/html/);
     assert.match(preview.body, /property="og:title"/);
+    assert.match(preview.body, new RegExp('property="og:image" content="http://localhost:5173/media/' + mediaIds[2] + '/960"'));
     assert.match(preview.body, /&lt;script&gt;alert\(1\)&lt;\/script&gt; &amp; находка/);
     assert.doesNotMatch(preview.body, /<script>alert\(1\)<\/script>/);
     assert.match(preview.body, /name="robots" content="noindex"/);
@@ -210,5 +212,6 @@ test("Telegram item preview is public, escaped, and never exposes hidden stock",
     assert.equal((await app.inject("/share/item/invalid")).statusCode, 404);
   } finally {
     await pool.query("UPDATE items SET title=$2 WHERE id=$1", [id, initialTitle]);
+    await pool.query("UPDATE media_assets SET variants=$2 WHERE id=$1", [mediaIds[2], { "480": "/first.webp" }]);
   }
 });
