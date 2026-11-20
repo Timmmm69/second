@@ -1,5 +1,5 @@
 import { catalogAudiences, productColor, productSize } from "../shared/catalog-attributes.js";
-import { useCallback, useEffect, useId, useRef, useState, useMemo, useSyncExternalStore, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, useMemo, useSyncExternalStore, type FormEvent, type TouchEvent } from "react";
 import { SEARCH_DEBOUNCE_MS, shouldApplyCatalogSearch } from "./catalog-search";
 import {
   api,
@@ -43,7 +43,7 @@ import { checkoutMethods, recipientErrors, shippingCostNotice } from "../shared/
 import { getDraftSession } from "./checkout-draft";
 import { storeHours } from "../shared/store-hours";
 import { defaultBuyerGuide } from "../shared/buyer-guide";
-import { openTelegram, tg } from "./telegram";
+import { openTelegram, openTelegramDraft, shareTelegramItem, tapFeedback, tg } from "./telegram";
 const draftDefault: Draft = {
   method: "PICKUP",
   phone: "",
@@ -265,6 +265,7 @@ function Catalog() {
     };
   }, []);
   const toggle = (key: "audience" | "category", value: string) => {
+    tapFeedback("selection");
     setCursor("");
     setFilters((v) => {
       const selected = v[key] ?? [];
@@ -277,6 +278,7 @@ function Catalog() {
     });
   };
   const clear = (key: "audience" | "category") => {
+    tapFeedback("selection");
     setCursor("");
     setFilters((v) => ({ ...v, [key]: undefined }));
   };
@@ -287,6 +289,19 @@ function Catalog() {
   const appliedCount = Object.entries(filters).filter(
     ([key, value]) => !["q", "sort"].includes(key) && (Array.isArray(value) ? value.length : value),
   ).length;
+  // Relax the most restrictive active constraint first, without a separate recommendations request.
+  const relaxKey = (["q", "sizeLabel", "category", "audience", "brand", "color", "material", "season", "minPrice", "maxPrice"] as const)
+    .find((key) => {
+      const value = filters[key];
+      return Array.isArray(value) ? value.length > 0 : Boolean(value);
+    });
+  const relaxFilter = () => {
+    if (!relaxKey) return;
+    setCursor("");
+    if (relaxKey === "q") setQ("");
+    setFilters((previous) => ({ ...previous, [relaxKey]: undefined }));
+    tapFeedback("selection");
+  };
   return (
     <div className="page catalog-page">
       <p className="catalog-kicker">Секонд-хенд · Минск</p>
@@ -380,74 +395,34 @@ function Catalog() {
       ) : !items.length && !error ? (
         <Empty
           title="Пока ничего не нашли"
-          action={
-            <Button
-              secondary
-              onClick={() => {
-                setQ("");
-                setCursor("");
-                setFilters({ sort: "new" });
-              }}
-            >
-              Сбросить фильтры
-            </Button>
-          }
+          action={<div className="button-stack">
+            {relaxKey && <Button onClick={relaxFilter}>
+              {relaxKey === "q" ? "Убрать поисковый запрос" : "Ослабить один фильтр"}
+            </Button>}
+            <Button secondary onClick={() => {
+              setQ("");
+              setCursor("");
+              setFilters({ sort: "new" });
+              tapFeedback("selection");
+            }}>Показать все вещи</Button>
+          </div>}
         >
-          Попробуйте другую категорию или более широкий диапазон.
+          Попробуйте ослабить условие поиска.
         </Empty>
       ) : (
         <div className="product-grid">
           {items.map((item, i) => (
-            <article
-              key={item.id}
-              data-item-id={item.id}
-              className="product-card"
-            >
-              <button
-                className="product-link"
-                onClick={() => go(`/items/${item.id}`)}
-              >
-                <Photo
-                  media={item.media?.find((photo) => photo.role !== "MEASUREMENT")}
-                  alt={item.title}
-                  priority={i < 4}
-                />
-                <h2>{item.title}</h2>
-                <p className="muted">
-                  {productSize(item.attributes) || categories.find((c) => c.id === item.category)?.name}
-                </p>
-                {item.hasDefect && <span className="defect-badge">Есть дефект</span>}
-                <strong className="price">{money(item.priceMinor)}</strong>
-              </button>
-              <button
-                className={`save-item ${selectionIds.includes(item.id) ? "selected" : ""}`}
-                aria-label={
-                  selectionIds.includes(item.id)
-                    ? `Убрать ${item.title} из корзины`
-                    : `Добавить ${item.title} в корзину`
-                }
-                onClick={() =>
-                  setSelection(
-                    selectionIds.includes(item.id)
-                      ? selectionIds.filter((id) => id !== item.id)
-                      : [...selectionIds, item.id],
-                  )
-                    .then(() =>
-                      toast(
-                        selectionIds.includes(item.id)
-                          ? "Вещь убрана из корзины"
-                          : "В корзине. Закрепим при оформлении.",
-                      ),
-                    )
-                    .catch(setError)
-                }
-              >
-                <Icon
-                  name={selectionIds.includes(item.id) ? "check" : "plus"}
-                  size={18}
-                />
-              </button>
-            </article>
+            <CatalogProductCard key={item.id} item={item} priority={i < 4}
+              onOpen={() => go(`/items/${item.id}`)}
+              selected={selectionIds.includes(item.id)}
+              onToggle={() => {
+                const chosen = selectionIds.includes(item.id);
+                setSelection(chosen ? selectionIds.filter((id) => id !== item.id) : [...selectionIds, item.id])
+                  .then(() => {
+                    tapFeedback("success");
+                    toast(chosen ? "Вещь убрана из корзины" : "В корзине. Закрепим при оформлении.");
+                  }).catch(setError);
+              }} />
           ))}
         </div>
       )}
@@ -561,6 +536,63 @@ function Catalog() {
     </div>
   );
 }
+
+/** Catalogue image swipes reuse media from the current catalogue response. */
+function CatalogProductCard({ item, priority, onOpen, selected, onToggle }: {
+  item: Item; priority: boolean; onOpen: () => void; selected: boolean; onToggle: () => void;
+}) {
+  const { categories } = useApp();
+  const photos = item.media?.filter((photo) => photo.role !== "MEASUREMENT") ?? [];
+  const [photoIndex, setPhotoIndex] = useState(0);
+  const start = useRef<{ x: number; y: number } | null>(null);
+  const suppressClick = useRef(false);
+  const changePhoto = (delta: number) => {
+    setPhotoIndex((index) => Math.min(photos.length - 1, Math.max(0, index + delta)));
+    tapFeedback("selection");
+  };
+  const touchStart = (e: TouchEvent<HTMLButtonElement>) => {
+    const point = e.touches[0];
+    start.current = { x: point.clientX, y: point.clientY };
+    suppressClick.current = false;
+  };
+  const touchEnd = (e: TouchEvent<HTMLButtonElement>) => {
+    const first = start.current;
+    start.current = null;
+    if (!first || photos.length < 2) return;
+    const dx = e.changedTouches[0].clientX - first.x;
+    const dy = e.changedTouches[0].clientY - first.y;
+    if (Math.abs(dx) < 42 || Math.abs(dx) < Math.abs(dy) * 1.3) return;
+    suppressClick.current = true;
+    changePhoto(dx < 0 ? 1 : -1);
+  };
+  return <article className="product-card" data-item-id={item.id}>
+    <div className="catalog-photo">
+      <button className="product-image-button" aria-label={`Открыть ${item.title}`}
+        onClick={() => { if (suppressClick.current) { suppressClick.current = false; return; } onOpen(); }}
+        onTouchStart={touchStart} onTouchEnd={touchEnd}
+        onTouchCancel={() => { start.current = null; }}>
+        <Photo media={photos[photoIndex]} alt={item.title} priority={priority && photoIndex === 0} />
+      </button>
+      {photos.length > 1 && <div className="catalog-photo-nav" aria-label="Фотографии">
+        <button type="button" aria-label="Предыдущее фото" disabled={photoIndex === 0}
+          onClick={() => changePhoto(-1)}><Icon name="back" size={15} /></button>
+        <span aria-live="off">{photoIndex + 1} / {photos.length}</span>
+        <button type="button" aria-label="Следующее фото" disabled={photoIndex === photos.length - 1}
+          onClick={() => changePhoto(1)}><Icon name="next" size={15} /></button>
+      </div>}
+    </div>
+    <button className="product-link" onClick={onOpen}>
+      <h2>{item.title}</h2>
+      <p className="muted">{productSize(item.attributes) || categories.find((c) => c.id === item.category)?.name}</p>
+      {item.hasDefect && <span className="defect-badge">Есть дефект</span>}
+      <strong className="price">{money(item.priceMinor)}</strong>
+    </button>
+    <button className={`save-item ${selected ? "selected" : ""}`}
+      aria-label={selected ? `Убрать ${item.title} из корзины` : `Добавить ${item.title} в корзину`}
+      onClick={onToggle}><Icon name={selected ? "check" : "bag"} size={18} /></button>
+  </article>;
+}
+
 function ItemPage({ id }: { id: string }) {
   const { go, selectionIds, setSelection, settings, toast } = useApp();
   const { data: item, error, loading, reload } = useLoad<Item>(`/items/${id}`);
@@ -622,6 +654,7 @@ function ItemPage({ id }: { id: string }) {
     setActionError(null);
     try {
       await setSelection([...selectionIds, id]);
+      tapFeedback("success");
       toast("Вещь в корзине");
     } catch (e) {
       setActionError(e);
@@ -694,6 +727,22 @@ function ItemPage({ id }: { id: string }) {
           </p>
           <p className="item-price">{money(item.priceMinor)}</p>
           <Defect item={item} expanded />
+          <div className="item-social-actions">
+            <Button secondary onClick={() => {
+              tapFeedback("light");
+              shareTelegramItem(item.id, item.title, money(item.priceMinor));
+            }}>
+              <Icon name="share" size={18} /> Поделиться в Telegram
+            </Button>
+            <Button ghost onClick={() => {
+              const message = `Здравствуйте! Подскажите, пожалуйста, по вещи «${item.title}» (арт. ${item.sku}): `;
+              tapFeedback("light");
+              if (settings?.telegramUsername) openTelegramDraft(settings.telegramUsername, message);
+              else go("/support");
+            }}>
+              <Icon name="message" size={18} /> Спросить о вещи
+            </Button>
+          </div>
           {!item.available && (
             <div className="notice">
               <strong>Сейчас недоступно</strong>
@@ -998,6 +1047,7 @@ function Checkout() {
     recordPending(null);
     saveLocal(leaseStorage, null);
     session.finish();
+    tapFeedback("success");
     refreshSelection().catch(() => {});
     go(`/orders/${order.id}`);
   };
@@ -1091,6 +1141,7 @@ function Checkout() {
   return (
     <div className="page narrow checkout-page">
       <h1>Оформление заявки</h1>
+      <p className="muted">Выберите способ получения, укажите контакты и отправьте заявку на подтверждение.</p>
       <ErrorBox error={error || draftState.error} />
       {pending && (
         <section className="notice">
@@ -1121,9 +1172,20 @@ function Checkout() {
               </label>
             ))}
           </div>
-          {method === "PICKUP"
-            ? settings?.address && <p className="muted">{settings.address}</p>
-            : <p className="muted">{shippingCostNotice}. {settings?.carriers[method]?.terms}</p>}
+          {method === "PICKUP" ? (
+            <div className="checkout-method-note">
+              <strong>Бесплатная бронь с примеркой</strong>
+              <p>Наличие сначала подтвердит сотрудник. Оплата только в магазине после примерки.</p>
+              {settings?.address && <p><strong>Адрес:</strong> {settings.address} · <MapLink address={settings.address} /></p>}
+              {settings?.calendar && <p>{storeHours(settings.calendar).schedule}</p>}
+            </div>
+          ) : (
+            <div className="checkout-method-note">
+              <strong>Доставка в отделение</strong>
+              <p>{shippingCostNotice}. Стоимость и порядок оплаты согласуем с вами до отправки. Отправку оформит сотрудник вручную.</p>
+              {settings?.carriers[method]?.terms && <p>{settings.carriers[method].terms}</p>}
+            </div>
+          )}
         </fieldset>
         <fieldset className="checkout-fields" disabled={Boolean(pending) || busy || draftState.clearing}>
           <legend>Контакты</legend>
