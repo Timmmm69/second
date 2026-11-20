@@ -712,21 +712,49 @@ export function Sheet({
     window.__veshiCloseSheet = close;
     tg()?.BackButton.show();
     const prev = document.activeElement as HTMLElement;
+    const route = location.hash;
+    const scrollPosition = { left: window.scrollX, top: window.scrollY };
     const old = document.body.style.overflow;
+    const oldOverscroll = document.body.style.overscrollBehavior;
     document.body.style.overflow = "hidden";
+    document.body.style.overscrollBehavior = "none";
     const backdrop = ref.current?.parentElement;
     const viewport = window.visualViewport;
+    const app = tg();
+    let revealFrame = 0;
     const syncViewport = () => {
-      if (!backdrop || !viewport) return;
-      const top = viewport.scale === 1 ? viewport.offsetTop : 0;
-      const bottom = viewport.scale === 1 ? Math.max(0, window.innerHeight - viewport.height - top) : 0;
+      if (!backdrop) return;
+      const top = viewport?.scale === 1 ? viewport.offsetTop : 0;
+      const visualBottom = viewport?.scale === 1 ? viewport.height + top : window.innerHeight;
+      const telegramBottom = app?.viewportHeight && app.viewportHeight > 0
+        ? app.viewportHeight : app?.viewportStableHeight || window.innerHeight;
+      const visibleBottom = Math.min(window.innerHeight, visualBottom, telegramBottom);
+      const bottom = Math.max(0, window.innerHeight - visibleBottom);
       backdrop.style.setProperty("--sheet-top", `${top}px`);
       backdrop.style.setProperty("--sheet-bottom", `${bottom}px`);
+      cancelAnimationFrame(revealFrame);
+      revealFrame = requestAnimationFrame(() => {
+        const sheet = ref.current;
+        const active = document.activeElement;
+        if (!sheet || !(active instanceof HTMLElement) || !sheet.contains(active) ||
+          !active.matches("input,textarea,[contenteditable='true']")) return;
+        const bounds = sheet.getBoundingClientRect();
+        const header = sheet.querySelector(".sheet-header")?.getBoundingClientRect();
+        const field = active.getBoundingClientRect();
+        const upper = Math.max(bounds.top, header?.bottom ?? bounds.top) + 8;
+        const lower = Math.min(bounds.bottom, visibleBottom) - 12;
+        // Reveal only the obscured field within this sheet. Never scroll the
+        // underlying page to compensate for the software keyboard.
+        if (field.bottom > lower) sheet.scrollTop += field.bottom - lower;
+        else if (field.top < upper) sheet.scrollTop -= upper - field.top;
+      });
     };
     syncViewport();
+    window.addEventListener("resize", syncViewport);
     viewport?.addEventListener("resize", syncViewport);
     viewport?.addEventListener("scroll", syncViewport);
-    ref.current?.focus();
+    app?.onEvent("viewportChanged", syncViewport);
+    ref.current?.focus({ preventScroll: true });
     const handler = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
       if (e.key === "Escape") close();
@@ -752,8 +780,12 @@ export function Sheet({
     document.addEventListener("keydown", handler);
     return () => {
       document.body.style.overflow = old;
+      document.body.style.overscrollBehavior = oldOverscroll;
+      cancelAnimationFrame(revealFrame);
+      window.removeEventListener("resize", syncViewport);
       viewport?.removeEventListener("resize", syncViewport);
       viewport?.removeEventListener("scroll", syncViewport);
+      app?.offEvent("viewportChanged", syncViewport);
       document.removeEventListener("keydown", handler);
       window.__veshiCloseSheet = previousClose;
       if (
@@ -769,7 +801,11 @@ export function Sheet({
         ].includes(location.hash.slice(1) || "/catalog")
       )
         tg()?.BackButton.hide();
-      prev?.focus();
+      if (location.hash === route) {
+        if (prev?.isConnected) prev.focus({ preventScroll: true });
+        if (window.scrollX !== scrollPosition.left || window.scrollY !== scrollPosition.top)
+          window.scrollTo({ ...scrollPosition, behavior: "instant" });
+      }
     };
   }, [close]);
   return (

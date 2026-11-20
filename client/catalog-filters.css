@@ -1,0 +1,74 @@
+/* Inline filters keep the next control in view instead of covering it. */
+.sheet:has(.catalog-filter-accordion),
+.catalog-filter-accordion {
+  overflow-anchor: none;
+  scroll-behavior: auto;
+}
+.catalog-filter-select { min-width: 0; }
+.catalog-filter-trigger {
+  min-height: 64px;
+  padding-block: 9px;
+}
+.catalog-filter-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.catalog-filter-title { font-size: .875rem; font-weight: 650; line-height: 1.35; }
+.catalog-filter-count { white-space: nowrap; }
+.catalog-filter-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--mute);
+  font-size: .8125rem;
+  line-height: 1.4;
+}
+.catalog-filter-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  min-height: 0;
+  overflow: hidden;
+  margin-top: 8px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--field-radius);
+  background: #fff;
+}
+.catalog-filter-panel[hidden] { display: none; }
+.catalog-filter-options {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+.catalog-filter-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.catalog-filter-option > span { min-width: 0; }
+.catalog-filter-option[data-selected] { background: var(--field-selected); font-weight: 650; }
+/* Above the software keyboard, keep search, choices and the next header usable. */
+.keyboard-open .sheet:has(.catalog-filter-accordion) { padding-bottom: 12px; max-height: 100%; }
+.keyboard-open .sheet:has(.catalog-filter-accordion) .sheet-header {
+  padding-block: 4px;
+  margin-bottom: 0;
+}
+.keyboard-open .catalog-filter-accordion { gap: 8px; }
+.keyboard-open .catalog-filter-trigger { min-height: 44px; padding-block: 6px; }
+.keyboard-open .catalog-filter-summary { display: none; }
+.keyboard-open .catalog-filter-panel { padding: 4px; gap: 4px; margin-top: 4px; }
+.keyboard-open .catalog-filter-panel .select-search { margin: 0; }
+@media (hover: hover) {
+  .catalog-filter-option:hover { background: var(--soft); }
+}

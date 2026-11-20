@@ -1,6 +1,8 @@
 import { catalogAudiences, productColor, productSize } from "../shared/catalog-attributes.js";
-import { useCallback, useEffect, useId, useRef, useState, useMemo, useSyncExternalStore, type FormEvent, type TouchEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, useMemo, useSyncExternalStore, type FormEvent } from "react";
 import { SEARCH_DEBOUNCE_MS, shouldApplyCatalogSearch } from "./catalog-search";
+import { CatalogFilterAccordion, CatalogFilterSelect } from "./catalog-filters";
+import { useHorizontalSwipe } from "./use-horizontal-swipe";
 import {
   api,
   ApiError,
@@ -20,7 +22,6 @@ import {
   ItemMeasurements,
   Loading,
   Photo,
-  Select,
   Sheet,
   Summary,
   Textarea,
@@ -447,8 +448,8 @@ function Catalog() {
           title="Фильтры и сортировка"
           onClose={() => setFilterOpen(false)}
         >
-          <div className="form-stack">
-            <Select
+          <CatalogFilterAccordion>
+            <CatalogFilterSelect
               label="Сначала показывать"
               value={draft.sort || "new"}
               onValueChange={(sort) => setDraft((v) => ({ ...v, sort }))}
@@ -458,14 +459,14 @@ function Catalog() {
                 { value: "price_desc", label: "Дороже" },
               ]}
             />
-            <Select
+            <CatalogFilterSelect
               label="Назначение"
               multiple
               value={draft.audience ?? []}
               onValueChange={(audience) => setDraft((v) => ({ ...v, audience: audience.length ? audience : undefined }))}
               options={catalogAudiences.map((value) => ({ value, label: value }))}
             />
-            <Select
+            <CatalogFilterSelect
               label="Категория"
               multiple
               value={draft.category ?? []}
@@ -497,7 +498,7 @@ function Catalog() {
             </div>
             {Boolean(catalogOptions.error) && <ErrorBox error={catalogOptions.error} retry={catalogOptions.reload} />}
             {catalogOptionFields.map(([key, label, searchPlaceholder]) => (
-              <Select
+              <CatalogFilterSelect
                 key={key}
                 label={label}
                 multiple
@@ -530,7 +531,7 @@ function Catalog() {
                 Сбросить
               </Button>
             </div>
-          </div>
+          </CatalogFilterAccordion>
         </Sheet>
       )}
     </div>
@@ -544,33 +545,18 @@ function CatalogProductCard({ item, categoryName, priority, onOpen, selected, on
   const photos = item.media?.filter((photo) => photo.role !== "MEASUREMENT") ?? [];
   const [photoIndex, setPhotoIndex] = useState(0);
   const photo = photos[photoIndex];
-  const start = useRef<{ x: number; y: number } | null>(null);
-  const suppressClick = useRef(false);
   const changePhoto = (delta: number) => {
     setPhotoIndex((index) => Math.min(photos.length - 1, Math.max(0, index + delta)));
     tapFeedback("selection");
   };
-  const touchStart = (e: TouchEvent<HTMLButtonElement>) => {
-    const point = e.touches[0];
-    start.current = { x: point.clientX, y: point.clientY };
-    suppressClick.current = false;
-  };
-  const touchEnd = (e: TouchEvent<HTMLButtonElement>) => {
-    const first = start.current;
-    start.current = null;
-    if (!first || photos.length < 2) return;
-    const dx = e.changedTouches[0].clientX - first.x;
-    const dy = e.changedTouches[0].clientY - first.y;
-    if (Math.abs(dx) < 42 || Math.abs(dx) < Math.abs(dy) * 1.3) return;
-    suppressClick.current = true;
-    changePhoto(dx < 0 ? 1 : -1);
-  };
+  const swipeRef = useHorizontalSwipe<HTMLButtonElement>({
+    enabled: photos.length > 1,
+    onSwipe: changePhoto,
+  });
   return <article className="product-card" data-item-id={item.id}>
     <div className="catalog-photo">
       <button className="product-image-button" aria-label={`Открыть ${item.title}`}
-        onClick={() => { if (suppressClick.current) { suppressClick.current = false; return; } onOpen(); }}
-        onTouchStart={touchStart} onTouchEnd={touchEnd}
-        onTouchCancel={() => { start.current = null; }}>
+        ref={swipeRef} onClick={onOpen}>
         <Photo key={photo?.id} media={photo} alt={item.title} priority={priority && photoIndex === 0} />
       </button>
       {photos.length > 1 && <div className="catalog-photo-nav" aria-label="Фотографии">
@@ -610,30 +596,65 @@ function ItemPage({ id }: { id: string }) {
     if (!available || !button) return;
     const nav = document.querySelector(".bottom-nav");
     const header = document.querySelector(".app-header");
+    const app = tg();
+    const viewport = window.visualViewport;
     let observer: IntersectionObserver | undefined;
+    let frame = 0;
     const observe = () => {
       observer?.disconnect();
       const fixedHeight = (element: Element | null) => element &&
         ["fixed", "sticky"].includes(getComputedStyle(element).position) ? Math.ceil(element.getBoundingClientRect().height) : 0;
+      const css = getComputedStyle(document.body);
+      const bottomOffset = Math.max(0, parseFloat(css.getPropertyValue("--app-bottom-offset")) || 0);
+      const safeBottom = Math.max(0,
+        parseFloat(css.getPropertyValue("--device-safe-bottom")) || 0,
+        parseFloat(css.getPropertyValue("--tg-bottom")) || 0,
+      );
+      const navBounds = nav?.getBoundingClientRect();
+      const bottom = nav && navBounds && navBounds.height > 0 && getComputedStyle(nav).position === "fixed"
+        ? Math.max(0, window.innerHeight - navBounds.top)
+        : bottomOffset + safeBottom;
       observer = new IntersectionObserver(([entry]) => setShowPurchaseBar(entry.intersectionRatio < 0.99), {
-        rootMargin: `-${fixedHeight(header)}px 0px -${fixedHeight(nav)}px 0px`,
+        rootMargin: `-${fixedHeight(header)}px 0px -${Math.ceil(bottom)}px 0px`,
         threshold: [0.99],
       });
       observer.observe(button);
     };
-    observe();
-    const resize = new ResizeObserver(observe);
-    if (header) resize.observe(header);
-    if (nav) resize.observe(nav);
-    window.addEventListener("resize", observe);
+    const schedule = () => {
+      if (frame) return;
+      // App's viewport listener is mounted before this fetched item. Read the
+      // updated bottom offset after its animation-frame style update.
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        observe();
+      });
+    };
+    schedule();
+    const resize = new ResizeObserver(schedule);
+    if (header) resize.observe(header, { box: "border-box" });
+    if (nav) resize.observe(nav, { box: "border-box" });
+    window.addEventListener("resize", schedule);
+    viewport?.addEventListener("resize", schedule);
+    viewport?.addEventListener("scroll", schedule);
+    for (const event of ["viewportChanged", "safeAreaChanged", "contentSafeAreaChanged"])
+      app?.onEvent(event, schedule);
     return () => {
+      cancelAnimationFrame(frame);
       observer?.disconnect();
       resize.disconnect();
-      window.removeEventListener("resize", observe);
+      window.removeEventListener("resize", schedule);
+      viewport?.removeEventListener("resize", schedule);
+      viewport?.removeEventListener("scroll", schedule);
+      for (const event of ["viewportChanged", "safeAreaChanged", "contentSafeAreaChanged"])
+        app?.offEvent(event, schedule);
     };
   }, [available]);
   const size = productSize(item?.attributes);
   const media = item?.media.filter((photo) => photo.role !== "MEASUREMENT") ?? [];
+  const gallerySwipeRef = useHorizontalSwipe<HTMLDivElement>({
+    enabled: zoom === 1 && media.length > 1,
+    onSwipe: (delta) => setIndex((current) => (current + delta + media.length) % media.length),
+  });
   if (loading && !item) return <Loading cards />;
   if (!item)
     return (
@@ -824,20 +845,8 @@ function ItemPage({ id }: { id: string }) {
         >
           <div
             className="gallery-view"
-            onTouchStart={(e) => {
-              e.currentTarget.dataset.startX = String(e.touches[0].clientX);
-            }}
-            onTouchEnd={(e) => {
-              const delta =
-                e.changedTouches[0].clientX -
-                Number(e.currentTarget.dataset.startX);
-              if (Math.abs(delta) > 60 && zoom === 1)
-                setIndex(
-                  (i) =>
-                    (i + (delta < 0 ? 1 : -1) + media.length) %
-                    media.length,
-                );
-            }}
+            ref={gallerySwipeRef}
+            style={{ touchAction: zoom === 1 ? "pan-y pinch-zoom" : "pan-x pan-y pinch-zoom" }}
           >
             <div
               style={{ transform: `scale(${zoom})`, transformOrigin: "center" }}

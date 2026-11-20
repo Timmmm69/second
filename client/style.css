@@ -25,6 +25,8 @@
   --field-selected: #fff1f4;
   --tg-top: 0px;
   --tg-bottom: 0px;
+  --app-bottom-offset: 0px;
+  --device-safe-bottom: env(safe-area-inset-bottom, 0px);
   --nav-height: 76px;
   --gutter: 16px;
   --viewport-height: 100dvh;
@@ -37,6 +39,7 @@ html {
   scroll-padding-top: 90px;
 }
 body {
+  --bottom-nav-space: var(--measured-nav-height, calc(var(--nav-height) + max(env(safe-area-inset-bottom, 0px), var(--tg-bottom))));
   margin: 0;
   min-width: 0;
   overflow-x: hidden;
@@ -153,8 +156,7 @@ button:focus:not(:focus-visible) {
   margin: 0 auto;
   min-height: 100dvh;
   padding-bottom: calc(
-    var(--nav-height) +
-      max(env(safe-area-inset-bottom, 0px), var(--tg-bottom)) + 16px
+    var(--app-bottom-offset) + var(--bottom-nav-space) + 16px
   );
 }
 .app-header {
@@ -305,6 +307,12 @@ button:focus:not(:focus-visible) {
 .chips::-webkit-scrollbar {
   display: none;
 }
+.catalog-page > .chips + .chips {
+  margin-top: 6px;
+}
+.catalog-page > .chips:has(+ .chips) {
+  margin-bottom: 6px;
+}
 .chips > button {
   border: 1px solid var(--line);
   border-radius: 50px;
@@ -336,6 +344,11 @@ button:focus:not(:focus-visible) {
 .catalog-page .section-heading h1 {
   font-size: 1.375rem;
   line-height: 1.3;
+}
+.catalog-page > .section-heading {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+  margin-bottom: 16px;
 }
 .small-count {
   position: absolute;
@@ -468,7 +481,7 @@ button:focus:not(:focus-visible) {
 .bottom-nav {
   position: fixed;
   z-index: 30;
-  bottom: 0;
+  bottom: var(--app-bottom-offset);
   left: 50%;
   transform: translateX(-50%);
   max-width: 1100px;
@@ -1022,7 +1035,7 @@ textarea.field-control {
   position: fixed;
   z-index: 100;
   left: 50%;
-  bottom: calc(96px + max(env(safe-area-inset-bottom, 0px), var(--tg-bottom)));
+  bottom: calc(var(--app-bottom-offset) + var(--bottom-nav-space) + 20px);
   transform: translateX(-50%);
   background: #222;
   color: white;
@@ -1148,7 +1161,7 @@ textarea.field-control {
   text-align: center;
 }
 .item-page.has-purchase-bar {
-  padding-bottom: 88px;
+  padding-bottom: 16px;
 }
 .item-cta[data-floating] > .button {
   visibility: hidden;
@@ -1156,7 +1169,7 @@ textarea.field-control {
 .purchase-bar {
   position: fixed;
   z-index: 25;
-  bottom: var(--measured-nav-height, var(--nav-height));
+  bottom: calc(var(--app-bottom-offset) + var(--bottom-nav-space));
   left: 50%;
   transform: translateX(-50%);
   width: min(100%, 540px);
@@ -1173,11 +1186,11 @@ textarea.field-control {
 .purchase-bar .button {
   flex: 0 1 58%;
 }
-.app-shell:has(.purchase-bar) .toast {
-  bottom: calc(var(--measured-nav-height, var(--nav-height)) + 84px);
+.app-shell:has(.purchase-bar) ~ .toast {
+  bottom: calc(var(--app-bottom-offset) + var(--bottom-nav-space) + 84px);
 }
-@media (orientation: landscape) and (max-height: 500px) {
-  .purchase-bar { bottom: env(safe-area-inset-bottom, 0px); }
+.compact-landscape .purchase-bar {
+  bottom: calc(var(--app-bottom-offset) + max(env(safe-area-inset-bottom, 0px), var(--tg-bottom)));
 }
 .gallery-view {
   overflow: auto;
@@ -1624,9 +1637,6 @@ textarea.field-control {
 .keyboard-open .bottom-nav {
   display: none;
 }
-.keyboard-open .app-shell {
-  padding-bottom: 16px;
-}
 .keyboard-open .bottom-action {
   position: static;
 }
@@ -1762,58 +1772,57 @@ textarea.field-control {
     flex-basis: 36px;
   }
 }
-@media (orientation: landscape) and (max-height: 500px) {
-  :root {
-    --nav-height: 60px;
-  }
-  .app-header {
-    position: static;
-    padding-top: 8px;
-    min-height: 52px;
-  }
-  .bottom-nav {
-    position: static;
-    transform: none;
-    margin-top: 16px;
-    min-height: 56px;
-    padding: 4px 8px;
-  }
-  .bottom-nav > button {
-    flex-direction: row;
-    gap: 8px;
-  }
-  .app-shell {
-    padding-bottom: 0;
-  }
-  .product-grid,
-  .skeleton-grid {
-    grid-template-columns: repeat(auto-fit, minmax(min(10rem, 100%), 1fr));
-  }
-  .item-layout {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
-  }
-  .gallery-cover .photo-wrap,
-  .gallery-cover .photo-placeholder {
-    max-height: 340px;
-  }
-  .toast {
-    bottom: 16px;
-  }
-  .sheet-backdrop {
-    align-items: center;
-    padding: 12px;
-  }
-  .sheet {
-    border-radius: 20px;
-    max-height: min(100%, calc(100dvh - 24px));
-  }
-  .sheet-header {
-    padding: 8px 0;
-  }
-  .gallery-view,
-  .gallery-view .photo-wrap img {
-    max-height: 50dvh;
-  }
+/* Physical orientation: opening the keyboard must not switch page layouts. */
+.compact-landscape {
+  --nav-height: 60px;
+}
+.compact-landscape .app-header {
+  position: static;
+  padding-top: 8px;
+  min-height: 52px;
+}
+.compact-landscape .bottom-nav {
+  position: static;
+  transform: none;
+  margin-top: 16px;
+  min-height: 56px;
+  padding: 4px 8px;
+}
+.compact-landscape .bottom-nav > button {
+  flex-direction: row;
+  gap: 8px;
+}
+.compact-landscape .app-shell {
+  padding-bottom: 0;
+}
+.compact-landscape .product-grid,
+.compact-landscape .skeleton-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(10rem, 100%), 1fr));
+}
+.compact-landscape .item-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+}
+.compact-landscape .gallery-cover .photo-wrap,
+.compact-landscape .gallery-cover .photo-placeholder {
+  max-height: 340px;
+}
+.compact-landscape .toast {
+  bottom: 16px;
+}
+.compact-landscape .sheet-backdrop {
+  align-items: center;
+  padding: 12px;
+}
+.compact-landscape .sheet {
+  border-radius: 20px;
+  max-height: min(100%, calc(100dvh - 24px));
+}
+.compact-landscape .sheet-header {
+  padding: 8px 0;
+}
+.compact-landscape .gallery-view,
+.compact-landscape .gallery-view .photo-wrap img {
+  max-height: 50dvh;
 }
 @media (prefers-reduced-motion: reduce) {
   * {
@@ -1950,26 +1959,23 @@ button > svg, .button > svg { flex-shrink: 0; display: block; }
   .selection-checkout { padding-inline: 12px; }
   .form-pair { grid-template-columns: 1fr; }
 }
-@media (max-height: 500px) and (orientation: landscape) {
-  .bottom-action { position: static; }
-  .selection-checkout { box-shadow:none; }
-}
+.compact-landscape .bottom-action { position: static; }
+.compact-landscape .selection-checkout { box-shadow:none; }
 
 .preview-note { padding: 10px var(--gutter); font-size: .75rem; line-height: 1.5; color: var(--mute); text-align: center; background: var(--soft); border-bottom: 1px solid #eee; margin-bottom: 16px; }
 .selection-checkout > .button, .checkout-page .button:not(.secondary):not(.ghost):not(.danger) { background: var(--accent); color: #222; }
 
 .service-shell .chips > button { max-width:100%; }
 
-.app-shell { padding-bottom: calc(var(--measured-nav-height, var(--nav-height)) + 16px); }
-.toast { bottom: calc(var(--measured-nav-height, var(--nav-height)) + 20px); }
 .selection-page .item-row { display: grid; grid-template-columns: 76px minmax(0,1fr); align-items:start; }
 .selection-page .row-photo { grid-row: 1/3; }
 .selection-page .row-content { grid-column: 2; }
 .selection-page .remove-button { grid-column:2; justify-self:start; margin:0; align-self:start; padding-top:0; font-size:.8125rem; }
 @media (max-width:350px) { .selection-page .item-row { grid-template-columns:60px minmax(0,1fr); } }
-@media (orientation:landscape) and (max-height:500px) { .app-shell { padding-bottom:0; } }
 
-.keyboard-open .app-shell { padding-bottom: calc(var(--measured-nav-height, var(--nav-height)) + 16px); }
+/* Keep the document height stable while the keyboard temporarily hides navigation. */
+.keyboard-open .app-shell { padding-bottom: calc(var(--app-bottom-offset) + var(--bottom-nav-space) + 16px); }
+.keyboard-open .purchase-bar { display: none; }
 
 .selection-items-heading { margin: 28px 0 4px; }
 
@@ -2059,7 +2065,7 @@ button > svg, .button > svg { flex-shrink: 0; display: block; }
     right: max(24px, calc((100vw - 1100px) / 2 + 24px));
     transform: none;
     border-radius: 16px;
-    bottom: calc(var(--measured-nav-height, var(--nav-height)) + 12px);
+    bottom: calc(var(--app-bottom-offset) + var(--bottom-nav-space) + 12px);
     box-shadow: 0 4px 24px #00000012;
   }
 }
@@ -2070,7 +2076,7 @@ button > svg, .button > svg { flex-shrink: 0; display: block; }
 
 /* Buyer UX: swiping uses existing /catalog media and never prefetches extra data. */
 .catalog-photo { position:relative; }
-.product-image-button { display:block; width:100%; padding:0; text-align:left; touch-action:pan-y; }
+.product-image-button { display:block; width:100%; padding:0; text-align:left; touch-action:pan-y pinch-zoom; }
 .catalog-photo-nav { position:absolute; bottom:9px; left:50%; transform:translateX(-50%);
   display:flex; align-items:center; gap:3px; padding:3px; border-radius:30px;
   background:#fffffff0; box-shadow:0 2px 10px #0002; font-size:.7rem; font-weight:650; }
