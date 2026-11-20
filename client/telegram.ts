@@ -1,12 +1,14 @@
 export interface TelegramApp {
   initData: string;
+  platform?: string;
   ready: () => void;
   expand: () => void;
   setHeaderColor?: (color: string) => void;
   setBackgroundColor?: (color: string) => void;
   setBottomBarColor?: (color: string) => void;
-  safeAreaInset?: { top: number; bottom: number };
-  contentSafeAreaInset?: { top: number; bottom: number };
+  safeAreaInset?: { top: number; bottom: number; left?: number; right?: number };
+  contentSafeAreaInset?: { top: number; bottom: number; left?: number; right?: number };
+  viewportHeight?: number;
   viewportStableHeight?: number;
   BackButton: {
     show: () => void;

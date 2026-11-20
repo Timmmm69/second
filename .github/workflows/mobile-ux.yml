@@ -1,0 +1,51 @@
+name: Mobile UX
+
+on:
+  push:
+    paths:
+      - 'client/**'
+      - 'shared/**'
+      - 'tests/mobile/**'
+      - 'preview/catalog.json'
+      - 'package*.json'
+      - 'vite.config.ts'
+      - '.github/workflows/mobile-ux.yml'
+  pull_request:
+    paths:
+      - 'client/**'
+      - 'shared/**'
+      - 'tests/mobile/**'
+      - 'preview/catalog.json'
+      - 'package*.json'
+      - 'vite.config.ts'
+      - '.github/workflows/mobile-ux.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-ux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mobile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium webkit
+      - run: npm run test:mobile
+      - name: Upload mobile screenshots and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-ux-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14

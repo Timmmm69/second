@@ -216,19 +216,110 @@ function App() {
     return () => app.BackButton.offClick(back);
   }, [path, menu, go, sdkReady]);
   useEffect(() => {
-    const focus = () => {
-      const isInput = ["INPUT", "TEXTAREA", "SELECT"].includes(
-        document.activeElement?.tagName || "",
-      );
-      document.body.classList.toggle("keyboard-open", isInput && (Boolean(tg()?.initData) || window.matchMedia("(pointer: coarse)").matches));
+    const app = tg();
+    const viewport = window.visualViewport;
+    const coarsePointer = window.matchMedia("(pointer: coarse)");
+    const mobile = () => coarsePointer.matches || ["android", "android_x", "ios"].includes(app?.platform ?? "");
+    const editable = () => {
+      const active = document.activeElement;
+      if (active instanceof HTMLTextAreaElement) return !active.disabled && !active.readOnly;
+      if (active instanceof HTMLInputElement)
+        return !active.disabled && !active.readOnly &&
+          ["text", "search", "email", "url", "tel", "password", "number"].includes(active.type);
+      return active instanceof HTMLElement && active.isContentEditable;
     };
+    const visibleHeight = () => Math.min(
+      window.innerHeight,
+      viewport?.scale === 1 ? viewport.height : window.innerHeight,
+      app?.viewportHeight && app.viewportHeight > 0 ? app.viewportHeight : window.innerHeight,
+    );
+    const landscape = () => {
+      if (!mobile()) return window.innerWidth > window.innerHeight;
+      if (screen.orientation?.type) return screen.orientation.type.startsWith("landscape");
+      const legacy = (window as Window & { orientation?: number }).orientation;
+      if (typeof legacy === "number") return Math.abs(legacy) === 90;
+      return screen.width > screen.height;
+    };
+    let keyboardOpen = false;
+    let heightBeforeKeyboard = visibleHeight();
+    let compactLandscape = landscape() && window.innerHeight <= 500;
+    let frame = 0;
+    let closingTimer: number | undefined;
+    const sync = (orientationChanged = false) => {
+      const height = visibleHeight();
+      const focused = editable();
+      const shrunk = heightBeforeKeyboard - height > 80;
+      // Android can dismiss its keyboard while the input keeps DOM focus.
+      // Focus alone must not leave the navigation hidden afterwards.
+      keyboardOpen = mobile() && shrunk && (focused || keyboardOpen);
+      if (focused || !keyboardOpen) {
+        window.clearTimeout(closingTimer);
+        closingTimer = undefined;
+      } else if (closingTimer === undefined) {
+        closingTimer = window.setTimeout(() => {
+          closingTimer = undefined;
+          if (!editable()) {
+            // The Mini App itself may have been resized while typing. Do not
+            // wait forever for an old viewport height after the input blurs.
+            keyboardOpen = false;
+            heightBeforeKeyboard = visibleHeight();
+            sync();
+          }
+        }, 700);
+      }
+      document.body.classList.toggle("keyboard-open", keyboardOpen);
+      // A keyboard can make a portrait viewport wider than it is tall. Keep the
+      // physical layout until the keyboard closes or the device really rotates.
+      if (!keyboardOpen || orientationChanged)
+        compactLandscape = landscape() && window.innerHeight <= 500;
+      document.body.classList.toggle("compact-landscape", compactLandscape);
+      if (!keyboardOpen && (!focused || height >= heightBeforeKeyboard)) {
+        // Freeze both the baseline and the bottom gap through gradual keyboard
+        // animation, including its first few pixels before the threshold.
+        heightBeforeKeyboard = height;
+        const visualBottom = viewport?.scale === 1
+          ? viewport.offsetTop + viewport.height : window.innerHeight;
+        const stableBottom = app?.viewportStableHeight && app.viewportStableHeight > 0
+          ? app.viewportStableHeight : window.innerHeight;
+        const bottom = Math.min(window.innerHeight, visualBottom, stableBottom);
+        document.documentElement.style.setProperty("--app-bottom-offset", `${Math.max(0, window.innerHeight - bottom)}px`);
+      }
+    };
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => sync());
+    };
+    const focus = () => sync();
+    const rotate = () => {
+      // The previous portrait height must not keep a rotated phone in the
+      // keyboard-closing state after focus leaves its input.
+      heightBeforeKeyboard = visibleHeight();
+      sync(true);
+    };
+    sync();
     document.addEventListener("focusin", focus);
-    document.addEventListener("focusout", focus);
+    document.addEventListener("focusout", schedule);
+    window.addEventListener("resize", schedule);
+    window.addEventListener("orientationchange", rotate);
+    screen.orientation?.addEventListener("change", rotate);
+    viewport?.addEventListener("resize", schedule);
+    viewport?.addEventListener("scroll", schedule);
+    app?.onEvent("viewportChanged", schedule);
     return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(closingTimer);
       document.removeEventListener("focusin", focus);
-      document.removeEventListener("focusout", focus);
+      document.removeEventListener("focusout", schedule);
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("orientationchange", rotate);
+      screen.orientation?.removeEventListener("change", rotate);
+      viewport?.removeEventListener("resize", schedule);
+      viewport?.removeEventListener("scroll", schedule);
+      app?.offEvent("viewportChanged", schedule);
+      document.body.classList.remove("keyboard-open", "compact-landscape");
+      document.documentElement.style.removeProperty("--app-bottom-offset");
     };
-  }, []);
+  }, [sdkReady]);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(""), 4500);

@@ -11,5 +11,6 @@
     "rootDir": ".",
     "sourceMap": true
   },
-  "include": ["server", "scripts", "tests"]
+  "include": ["server", "scripts", "tests"],
+  "exclude": ["tests/mobile"]
 }
