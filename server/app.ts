@@ -204,7 +204,7 @@ export async function buildApp({ staticFiles = true } = {}) {
     const description = escape(`${item.title} · ${(item.priceMinor / 100).toFixed(2)} BYN · секонд-хенд «Лучок»`);
     const photo = item.media.find((asset: { role?: string }) => asset.role !== "MEASUREMENT");
     const picture = photo?.variants?.["960"] || photo?.url;
-    const image = picture && /^\/media\/[0-9a-fA-F-]{36}\/(240|480|960|1600)$/ ? config.origin + picture : null;
+    const image = picture && /^\/media\/[0-9a-fA-F-]{36}\/(240|480|960|1600)$/.test(picture) ? config.origin + picture : null;
     const page = `${config.origin}/share/item/${parsed.data.id}`;
     const destination = `${config.origin}/#/items/${parsed.data.id}`;
     reply.header("Cache-Control", "public, max-age=60");
