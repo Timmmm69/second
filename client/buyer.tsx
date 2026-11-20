@@ -412,7 +412,7 @@ function Catalog() {
       ) : (
         <div className="product-grid">
           {items.map((item, i) => (
-            <CatalogProductCard key={item.id} item={item} priority={i < 4}
+            <CatalogProductCard key={item.id} item={item} categoryName={categories.find((c) => c.id === item.category)?.name} priority={i < 4}
               onOpen={() => go(`/items/${item.id}`)}
               selected={selectionIds.includes(item.id)}
               onToggle={() => {
@@ -538,10 +538,9 @@ function Catalog() {
 }
 
 /** Catalogue image swipes reuse media from the current catalogue response. */
-function CatalogProductCard({ item, priority, onOpen, selected, onToggle }: {
-  item: Item; priority: boolean; onOpen: () => void; selected: boolean; onToggle: () => void;
+function CatalogProductCard({ item, categoryName, priority, onOpen, selected, onToggle }: {
+  item: Item; categoryName?: string; priority: boolean; onOpen: () => void; selected: boolean; onToggle: () => void;
 }) {
-  const { categories } = useApp();
   const photos = item.media?.filter((photo) => photo.role !== "MEASUREMENT") ?? [];
   const [photoIndex, setPhotoIndex] = useState(0);
   const start = useRef<{ x: number; y: number } | null>(null);
@@ -583,7 +582,7 @@ function CatalogProductCard({ item, priority, onOpen, selected, onToggle }: {
     </div>
     <button className="product-link" onClick={onOpen}>
       <h2>{item.title}</h2>
-      <p className="muted">{productSize(item.attributes) || categories.find((c) => c.id === item.category)?.name}</p>
+      <p className="muted">{productSize(item.attributes) || categoryName}</p>
       {item.hasDefect && <span className="defect-badge">Есть дефект</span>}
       <strong className="price">{money(item.priceMinor)}</strong>
     </button>
@@ -735,10 +734,17 @@ function ItemPage({ id }: { id: string }) {
               <Icon name="share" size={18} /> Поделиться в Telegram
             </Button>
             <Button ghost onClick={() => {
-              const message = `Здравствуйте! Подскажите, пожалуйста, по вещи «${item.title}» (арт. ${item.sku}): `;
+              const url = `${window.location.origin}/share/item/${encodeURIComponent(item.id)}`;
+              const message = `Здравствуйте! Подскажите, пожалуйста, по вещи «${item.title}» (арт. ${item.sku}, ${url}): `;
               tapFeedback("light");
-              if (settings?.telegramUsername) openTelegramDraft(settings.telegramUsername, message);
-              else go("/support");
+              if (settings?.telegramUsername) {
+                openTelegramDraft(settings.telegramUsername, message);
+              } else {
+                go("/support");
+                navigator.clipboard?.writeText(message)
+                  .then(() => toast("Вопрос скопирован. Контакт магазина указан в разделе поддержки."))
+                  .catch(() => {});
+              }
             }}>
               <Icon name="message" size={18} /> Спросить о вещи
             </Button>
