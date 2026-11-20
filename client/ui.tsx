@@ -218,7 +218,7 @@ export function Field({
   );
 }
 
-type SelectOption = { value: string; label: string };
+type SelectOption = { value: string; label: string; searchText?: string };
 
 function searchText(text: string) {
   return text.trim().toLocaleLowerCase("ru").replaceAll("ё", "е");
@@ -233,7 +233,7 @@ export function Select(props: {
   searchPlaceholder?: string;
   disabled?: boolean;
 } & (
-  | { multiple?: false; value: string; onValueChange: (value: string) => void }
+  | { multiple?: false; value: string; onValueChange: (value: string) => void; allowCustom?: boolean }
   | { multiple: true; value: readonly string[]; onValueChange: (value: string[]) => void; allowCustom?: boolean }
 )) {
   const { label, error, options, searchPlaceholder, disabled = false } = props;
@@ -255,18 +255,18 @@ export function Select(props: {
   const matches = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
   const selected = selectedValues.map((value) => options.find((option) => matches(option.value, value))?.label ?? value);
   const selectedLabel = selected.join(", ");
-  const choices = props.multiple
+  const choices: SelectOption[] = props.multiple
     ? [...options, ...props.value.filter((value) => !options.some((option) => matches(option.value, value)))
       .map((value) => ({ value, label: value }))]
-    : options;
+    : [...options];
   const filter = searchText(query);
   const customValue = query.trim();
-  const custom = props.multiple && props.allowCustom && customValue &&
-    !choices.some((option) => matches(option.value, customValue))
+  const custom = props.allowCustom && customValue &&
+    !choices.some((option) => matches(option.value, customValue) || searchText(option.label) === searchText(customValue))
     ? { value: customValue, label: `Добавить «${customValue}»` }
     : null;
   const visible = searchPlaceholder && filter
-    ? [...choices.filter((option) => searchText(option.label).includes(filter)), ...(custom ? [custom] : [])]
+    ? [...choices.filter((option) => searchText(`${option.label} ${option.searchText ?? ""}`).includes(filter)), ...(custom ? [custom] : [])]
     : choices;
   const activeIndex = visible.findIndex((option) => option.value === activeValue);
   const activeId = open && activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined;
@@ -472,7 +472,7 @@ export function Select(props: {
                 aria-controls={listId}
                 aria-activedescendant={activeId}
                 placeholder={searchPlaceholder}
-                maxLength={props.multiple && props.allowCustom ? 200 : undefined}
+                maxLength={props.allowCustom ? 120 : undefined}
                 value={query}
                 onChange={(event) => {
                   setQuery(event.target.value);

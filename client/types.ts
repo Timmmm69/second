@@ -13,6 +13,8 @@ export interface Media {
   role?: string;
   position?: number;
 }
+export interface CompositionPart { materialId: string; name: string; percent: number | null }
+export interface MaterialOption { id: string; name: string; aliases: string[] }
 export interface Item {
   hasDefect?: boolean;
   defectDescription?: string;
@@ -26,6 +28,7 @@ export interface Item {
   physical: string;
   version: number;
   attributes: Record<string, string | number>;
+  composition: CompositionPart[];
   measurements?: Record<string, number>;
   media: Media[];
   available: boolean;

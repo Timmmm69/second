@@ -1,4 +1,4 @@
-import { catalogAudiences, productColor, productSize } from "../shared/catalog-attributes.js";
+import { catalogAudiences, compositionText, productColor, productSize } from "../shared/catalog-attributes.js";
 import { useCallback, useEffect, useId, useRef, useState, useMemo, useSyncExternalStore, type FormEvent } from "react";
 import { SEARCH_DEBOUNCE_MS, shouldApplyCatalogSearch } from "./catalog-search";
 import { CatalogFilterAccordion, CatalogFilterSelect } from "./catalog-filters";
@@ -80,17 +80,16 @@ const catalogOptionFields = [
   ["sizeLabel", "Размер", "Найти или добавить размер"],
   ["brand", "Бренд", "Найти или добавить бренд"],
   ["color", "Цвет"],
-  ["material", "Материал"],
   ["season", "Сезон"],
 ] as const;
 type CatalogOptionKey = typeof catalogOptionFields[number][0];
-type CatalogOptions = Record<CatalogOptionKey, string[]>;
-type CatalogFilters = Partial<CatalogOptions & { sort: string; q: string; category: string[]; audience: string[]; minPrice: string; maxPrice: string }>;
+type CatalogOptions = Record<CatalogOptionKey, string[]> & { materials: { id: string; name: string }[] };
+type CatalogFilters = Partial<Record<CatalogOptionKey | "material", string[]> & { sort: string; q: string; category: string[]; audience: string[]; minPrice: string; maxPrice: string; minPercent: string }>;
 
 function readCatalogFilters(): CatalogFilters {
   const saved = readLocal<Record<string, string | string[]>>("catalogFilters", { sort: "new" });
   const filters: CatalogFilters = {};
-  for (const key of ["sort", "q", "minPrice", "maxPrice"] as const) {
+  for (const key of ["sort", "q", "minPrice", "maxPrice", "minPercent"] as const) {
     const value = saved[key];
     if (typeof value === "string") filters[key] = value;
   }
@@ -110,6 +109,11 @@ function readCatalogFilters(): CatalogFilters {
       .map((value) => key === "color" ? productColor(value) : value.trim()).filter(Boolean);
     if (values.length) filters[key] = values;
   }
+  const legacyMaterial = saved.material;
+  const selected = (Array.isArray(legacyMaterial) ? legacyMaterial : [legacyMaterial])
+    .filter((value): value is string => typeof value === "string" && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(value));
+  if (selected.length) filters.material = selected;
+  else delete filters.minPercent;
   return filters;
 }
 
@@ -286,9 +290,12 @@ function Catalog() {
   const validRange =
     !draft.minPrice || !draft.maxPrice ||
     Number(draft.minPrice) <= Number(draft.maxPrice);
+  const validPercent = !draft.minPercent ||
+    (draft.material?.length && /^\d+$/.test(draft.minPercent) &&
+      Number(draft.minPercent) <= 100);
   const searchId = useId();
   const appliedCount = Object.entries(filters).filter(
-    ([key, value]) => !["q", "sort"].includes(key) && (Array.isArray(value) ? value.length : value),
+    ([key, value]) => !["q", "sort", "minPercent"].includes(key) && (Array.isArray(value) ? value.length : value),
   ).length;
   // Relax the most restrictive active constraint first, without a separate recommendations request.
   const relaxKey = (["q", "sizeLabel", "category", "audience", "brand", "color", "material", "season", "minPrice", "maxPrice"] as const)
@@ -510,6 +517,41 @@ function Catalog() {
                 onValueChange={(values) => setDraft((v) => ({ ...v, [key]: values.length ? values : undefined }))}
               />
             ))}
+            <Select
+              label="Материалы"
+              multiple
+              value={draft.material ?? []}
+              options={(catalogOptions.data?.materials ?? []).map(material => ({
+                value: material.id, label: material.name,
+              }))}
+              searchPlaceholder="Найти материал"
+              disabled={catalogOptions.loading}
+              onValueChange={(values) => setDraft(v => ({
+                ...v,
+                material: values.length ? values : undefined,
+                minPercent: values.length ? v.minPercent : undefined,
+              }))}
+            />
+            {Boolean(draft.material?.length) && (
+              <div className="material-filter-percent">
+                <Field label="Минимальное содержание, %" type="number"
+                  min="0" max="100" step="1" inputMode="numeric"
+                  value={draft.minPercent ?? ""}
+                  error={!validPercent ? "Укажите целое число от 0 до 100" : undefined}
+                  placeholder="Любое количество"
+                  onChange={e => setDraft(v => ({ ...v, minPercent: e.target.value }))}
+                />
+                <div className="chips" aria-label="Быстрый выбор доли материала">
+                  {["0", "50", "80", "100"].map(percent => (
+                    <button key={percent} className={(draft.minPercent || "0") === percent ? "selected" : ""}
+                      onClick={() => setDraft(v => ({ ...v, minPercent: percent }))}>
+                      {percent === "0" ? "Любая доля" : `От ${percent}%`}
+                    </button>
+                  ))}
+                </div>
+                <p className="small-text">Если выбрано несколько материалов, достаточно соответствия одному. Вещи без указанного процента подходят только для «Любой доли».</p>
+              </div>
+            )}
             {!validRange && (
               <p className="field-error">
                 Значение «от» не может быть больше значения «до».
@@ -517,7 +559,7 @@ function Catalog() {
             )}
             <div className="button-stack">
               <Button
-                disabled={!validRange}
+                disabled={!validRange || !validPercent}
                 onClick={() => {
                   setCursor("");
                   setQ(draft.q ?? "");
@@ -702,7 +744,8 @@ function ItemPage({ id }: { id: string }) {
     .map(([key, label]) => ({
       label,
       value: String((key === "sizeLabel" ? size : key === "color"
-        ? productColor(item.attributes.color) : item.attributes[key]) ?? "").trim(),
+        ? productColor(item.attributes.color) : key === "material" && item.composition?.length
+          ? compositionText(item.composition) : item.attributes[key]) ?? "").trim(),
     }))
     .filter(detail => detail.value);
   return (

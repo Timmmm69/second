@@ -2031,6 +2031,38 @@ button > svg, .button > svg { flex-shrink: 0; display: block; }
 
 .about-intro .button:not(.secondary) {background:var(--accent);color:#222;}
 
+/* Material composition uses existing form controls and spacing. */
+.composition-section { display: grid; gap: 12px; min-width: 0; }
+.composition-section h2 { margin: 0; }
+.composition-editor { display: grid; gap: 12px; min-width: 0; }
+.composition-editor > .small-text { margin: 0; }
+.composition-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px 44px;
+  gap: 8px;
+  align-items: end;
+  min-width: 0;
+}
+.composition-remove { align-self: end; margin-bottom: 4px; }
+.composition-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.composition-actions .button { min-height: 44px; font-size: .875rem; padding: 8px 16px; }
+.composition-actions .small-text { margin: 0; }
+.material-filter-percent { display: grid; gap: 8px; min-width: 0; }
+.material-filter-percent .chips { margin: 0; padding-bottom: 4px; }
+.material-filter-percent .chips > button { min-height: 40px; }
+.material-filter-percent .small-text { margin: 0; }
+@media (max-width: 350px) {
+  .composition-row { grid-template-columns: minmax(0,1fr) 44px; gap: 8px; }
+  .composition-row > :first-child { grid-column: 1 / -1; }
+  .composition-row > :nth-child(2) { grid-column: 1; }
+  .composition-remove { grid-column: 2; }
+}
+
 /* Item detail: one compact cart action above the existing navigation. */
 .purchase-bar {
   z-index: 26;
