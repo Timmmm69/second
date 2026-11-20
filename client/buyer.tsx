@@ -543,6 +543,7 @@ function CatalogProductCard({ item, categoryName, priority, onOpen, selected, on
 }) {
   const photos = item.media?.filter((photo) => photo.role !== "MEASUREMENT") ?? [];
   const [photoIndex, setPhotoIndex] = useState(0);
+  const photo = photos[photoIndex];
   const start = useRef<{ x: number; y: number } | null>(null);
   const suppressClick = useRef(false);
   const changePhoto = (delta: number) => {
@@ -570,7 +571,7 @@ function CatalogProductCard({ item, categoryName, priority, onOpen, selected, on
         onClick={() => { if (suppressClick.current) { suppressClick.current = false; return; } onOpen(); }}
         onTouchStart={touchStart} onTouchEnd={touchEnd}
         onTouchCancel={() => { start.current = null; }}>
-        <Photo media={photos[photoIndex]} alt={item.title} priority={priority && photoIndex === 0} />
+        <Photo key={photo?.id} media={photo} alt={item.title} priority={priority && photoIndex === 0} />
       </button>
       {photos.length > 1 && <div className="catalog-photo-nav" aria-label="Фотографии">
         <button type="button" aria-label="Предыдущее фото" disabled={photoIndex === 0}
