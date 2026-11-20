@@ -13,7 +13,7 @@ import { config } from "./config.js";
 import { pool } from "./db.js";
 import { AppError, assert } from "./errors.js";
 import { authenticate, registerAuth } from "./auth.js";
-import { registerCatalog } from "./catalog.js";
+import { readItems, registerCatalog } from "./catalog.js";
 import { registerCategories } from "./categories.js";
 import { registerSettings } from "./settings.js";
 import { registerMedia, serveMedia } from "./media.js";
@@ -190,6 +190,35 @@ export async function buildApp({ staticFiles = true } = {}) {
     { prefix: "/api" },
   );
   await serveMedia(app);
+
+  // Public item preview for Telegram: one DB lookup when link is opened/unfurled,
+  // no additional requests for customers browsing the catalog.
+  app.get("/share/item/:id", async (req, reply) => {
+    const parsed = z.object({ id: z.uuid() }).safeParse(req.params);
+    if (!parsed.success) return reply.code(404).send("Not found");
+    const item = (await readItems([parsed.data.id]))[0];
+    if (!item || item.publication !== "PUBLISHED") return reply.code(404).send("Not found");
+    const escape = (text: string) => text.replace(/[&<>"']/g, (char) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] || char);
+    const title = escape(item.title);
+    const description = escape(`${item.title} · ${(item.priceMinor / 100).toFixed(2)} BYN · секонд-хенд «Лучок»`);
+    const photo = item.media.find((asset: { role?: string }) => asset.role !== "MEASUREMENT");
+    const picture = photo?.variants?.["960"] || photo?.url;
+    const image = picture && /^\/media\/[0-9a-fA-F-]{36}\/(240|480|960|1600)$/.test(picture) ? config.origin + picture : null;
+    const page = `${config.origin}/share/item/${parsed.data.id}`;
+    const destination = `${config.origin}/#/items/${parsed.data.id}`;
+    reply.header("Cache-Control", "public, max-age=60");
+    reply.type("text/html; charset=utf-8");
+    return `<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="robots" content="noindex"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title} · Лучок</title>
+<meta property="og:type" content="product"><meta property="og:title" content="${title}">
+<meta property="og:description" content="${description}">
+<meta property="og:url" content="${escape(page)}">
+${image ? `<meta property="og:image" content="${escape(image)}">` : ""}
+<meta http-equiv="refresh" content="0;url=${escape(destination)}">
+</head><body><p><a href="${escape(destination)}">Открыть ${title} в «Лучке»</a></p></body></html>`;
+  });
   await mkdir(config.mediaDir, { recursive: true });
   let hasStatic = false;
   if (staticFiles) {

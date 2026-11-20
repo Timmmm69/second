@@ -56,6 +56,8 @@ export function Icon({ name, size = 22 }: { name: string; size?: number }) {
       </>
     ),
     plus: <path d="M12 4v16M4 12h16" />,
+    share: <><circle cx="18" cy="5" r="2.5" /><circle cx="5" cy="12" r="2.5" /><circle cx="18" cy="19" r="2.5" /><path d="m7.2 10.7 8.7-4.5M7.2 13.3l8.7 4.5" /></>,
+    message: <><path d="M20 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-4.5a8.5 8.5 0 1 1 15.1-5Z" /><path d="M8 11h8M8 14h5" /></>,
     menu: (
       <>
         <circle cx="4" cy="12" r="1" />
