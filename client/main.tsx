@@ -222,6 +222,7 @@ function App() {
     const app = tg();
     const viewport = window.visualViewport;
     const coarsePointer = window.matchMedia("(pointer: coarse)");
+    const keyboardThreshold = 80;
     let bridgeWidth = window.innerWidth;
     let staleTelegramViewport: { height?: number; stableHeight?: number } | null = null;
     const telegramViewportIsStale = () => {
@@ -278,14 +279,20 @@ function App() {
       }
       const height = visibleHeight();
       const focused = editable();
-      const shrunk = heightBeforeKeyboard - height > 80;
+      const shrunk = heightBeforeKeyboard - height > keyboardThreshold;
       // Android can dismiss its keyboard while the input keeps DOM focus.
       // Focus alone must not leave the navigation hidden afterwards.
       if (rotatedKeyboardHeight !== null) {
         // The old portrait baseline cannot describe a landscape keyboard.
-        // Observe the new reduced height, then its recovery without requiring blur.
+        // Use the new layout width to pick the screen axes even before the
+        // orientation event arrives. A near-full viewport signals dismissal.
+        const shortSide = Math.min(screen.width, screen.height);
+        const longSide = Math.max(screen.width, screen.height);
+        const screenHeight = window.innerWidth > (shortSide + longSide) / 2 ? shortSide : longSide;
+        const nearFullHeight = Math.abs(screenHeight - height) <= keyboardThreshold;
         rotatedKeyboardHeight = Math.min(rotatedKeyboardHeight, height);
-        keyboardOpen = mobile() && height - rotatedKeyboardHeight <= 80 && (focused || keyboardOpen);
+        keyboardOpen = mobile() && !nearFullHeight &&
+          height - rotatedKeyboardHeight <= keyboardThreshold && (focused || keyboardOpen);
         if (!keyboardOpen) heightBeforeKeyboard = height;
       } else keyboardOpen = mobile() && shrunk && (focused || keyboardOpen);
       if (!keyboardOpen) rotatedKeyboardHeight = null;

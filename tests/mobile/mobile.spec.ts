@@ -332,6 +332,33 @@ test("physical rotation preserves an open keyboard in either event order and res
   }
 });
 
+test("rotation that dismisses the keyboard restores navigation with search still focused", async ({ page }) => {
+  const portrait = page.viewportSize()!;
+  const landscape = { width: portrait.height, height: portrait.width };
+  await page.goto("/#/catalog");
+  const input = page.getByRole("searchbox", { name: "Что ищем?" });
+  await input.tap();
+  const resize = async (size: { width: number; height: number }) => {
+    await page.setViewportSize(size);
+    await updateTelegram(page, { height: size.height });
+  };
+
+  await resize({ ...portrait, height: 330 });
+  await expect(page.locator(".bottom-nav")).toBeHidden();
+  await rotateScreen(page, landscape);
+  await resize(landscape);
+  await expect(input).toBeFocused();
+  await expect(page.locator(".bottom-nav")).toBeVisible();
+
+  await resize({ ...landscape, height: landscape.height - 140 });
+  await expect(page.locator(".bottom-nav")).toBeHidden();
+  // Report the resized viewport first and leave room for native chrome.
+  await resize({ ...portrait, height: portrait.height - 32 });
+  await rotateScreen(page, portrait);
+  await expect(input).toBeFocused();
+  await expect(page.locator(".bottom-nav")).toBeVisible();
+});
+
 async function purchaseGeometry(page: Page) {
   return page.evaluate(() => {
     const nav = document.querySelector<HTMLElement>(".bottom-nav")!;
