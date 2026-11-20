@@ -41,6 +41,7 @@ import {
 } from "./types";
 import { checkoutMethods, recipientErrors, shippingCostNotice } from "../shared/checkout.js";
 import { getDraftSession } from "./checkout-draft";
+import { trackShopMilestone } from "./posthog";
 import { storeHours } from "../shared/store-hours";
 import { defaultBuyerGuide } from "../shared/buyer-guide";
 import { openTelegram, openTelegramDraft, shareTelegramItem, tapFeedback, tg } from "./telegram";
@@ -594,7 +595,7 @@ function CatalogProductCard({ item, categoryName, priority, onOpen, selected, on
 }
 
 function ItemPage({ id }: { id: string }) {
-  const { go, selectionIds, setSelection, settings, toast } = useApp();
+  const { go, selectionIds, setSelection, settings, toast, posthog } = useApp();
   const { data: item, error, loading, reload } = useLoad<Item>(`/items/${id}`);
   const [gallery, setGallery] = useState(false),
     [index, setIndex] = useState(0),
@@ -605,6 +606,10 @@ function ItemPage({ id }: { id: string }) {
   const [busy, setBusy] = useState(false);
   const [showPurchaseBar, setShowPurchaseBar] = useState(false);
   const available = item?.available === true;
+  const hasItem = item?.id === id;
+  useEffect(() => {
+    if (hasItem) trackShopMilestone(posthog, "product_viewed");
+  }, [hasItem, posthog]);
   useEffect(() => {
     const button = mainPurchase.current?.querySelector("button");
     if (!available || !button) return;
@@ -997,7 +1002,7 @@ type CheckoutOperation = {
 };
 
 function Checkout() {
-  const { user, settings, selection, selectionIds, refreshSelection, refreshSettings, go, toast, offline, demo } = useApp();
+  const { user, settings, selection, selectionIds, refreshSelection, refreshSettings, go, toast, offline, demo, posthog } = useApp();
   const account = user?.id || "anonymous";
   const operationStorage = `${account}:checkout-operation`;
   const leaseStorage = `${account}:checkout-lease`;
@@ -1044,6 +1049,10 @@ function Checkout() {
     ...(attempted ? recipientErrors(method, draft) : {}),
   };
   const unavailable = selectionIds.length !== selection.length || selection.some(item => !item.available);
+  const canStartCheckout = Boolean(user && loaded && settings?.acceptingOrders && selection.length && !unavailable && !offline);
+  useEffect(() => {
+    if (canStartCheckout) trackShopMilestone(posthog, "checkout_started");
+  }, [canStartCheckout, posthog]);
 
   const recordPending = (operation: CheckoutOperation | string | null) => {
     saveLocal(operationStorage, operation);
@@ -1051,6 +1060,7 @@ function Checkout() {
   };
   const complete = (order: Order) => {
     if (!order?.id) throw new Error("Не удалось получить подтверждение сохранения заявки");
+    trackShopMilestone(posthog, "order_submitted");
     recordPending(null);
     saveLocal(leaseStorage, null);
     session.finish();

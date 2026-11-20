@@ -68,7 +68,7 @@ export async function settings() {
 export async function registerSettings(app: FastifyInstance) {
   app.get("/settings", async () => {
     const s = await settings();
-    return publicSettings(s);
+    return { ...publicSettings(s), posthog: config.posthog };
   });
   app.get("/delivery/options", async () => {
     const s = await settings();

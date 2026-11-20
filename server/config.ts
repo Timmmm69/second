@@ -1,4 +1,5 @@
 import path from "node:path";
+import { postHogConfig } from "../shared/posthog.js";
 export function loadConfig(env = process.env) {
   const production = env.NODE_ENV === "production";
   const localDev = env.APP_MODE === "local" && !production;
@@ -58,6 +59,7 @@ export function loadConfig(env = process.env) {
     dataKey: key,
     mediaDir: path.resolve(env.MEDIA_DIR ?? "var/media"),
     botDeliveryMode: env.BOT_DELIVERY_MODE ?? "dry-run",
+    posthog: postHogConfig(env),
     sessionHours: 12,
   };
 }

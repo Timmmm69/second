@@ -13,8 +13,11 @@ import { AppContext } from "./context";
 import { tg } from "./telegram";
 import { Button, ErrorBox, Icon, Loading, Sheet } from "./ui";
 import type { Category, Item, Settings, User, Role } from "./types";
+import type { PublicPostHog } from "../shared/posthog.js";
 import Buyer from "./buyer";
 import "./style.css";
+
+type RuntimeSettings = Settings & { posthog?: PublicPostHog };
 const Staff = lazy(() => import("./staff"));
 const Owner = lazy(() => import("./owner"));
 function miniAppRouteHint() {
@@ -46,7 +49,7 @@ function App() {
     [dev, setDev] = useState(false),
     [authLoading, setAuthLoading] = useState(true),
     [authError, setAuthError] = useState<unknown>(null),
-    [settings, setSettings] = useState<Settings | null>(null),
+    [settings, setSettings] = useState<RuntimeSettings | null>(null),
     [categories, setCategories] = useState<Category[]>([]),
     [selectionIds, setSelectionIds] = useState<string[]>(() =>
       readLocal("selection", []),
@@ -108,7 +111,7 @@ function App() {
     };
   }, [refreshUser, sdkReady]);
   const refreshSettings = useCallback(async () => {
-    setSettings(await api<Settings>("/settings"));
+    setSettings(await api<RuntimeSettings>("/settings"));
   }, []);
   const refreshCategories = useCallback(async () => {
     const service = path.startsWith("/staff") || path.startsWith("/owner");
@@ -312,6 +315,8 @@ function App() {
         dev,
         demo: import.meta.env.VITE_PUBLIC_DEMO === "1",
         settings,
+        posthog: !authLoading && !authError && !dev && import.meta.env.VITE_PUBLIC_DEMO !== "1" &&
+          (!user || user.role === "BUYER") ? settings?.posthog : undefined,
         categories,
         refreshCategories,
         refreshSettings,
