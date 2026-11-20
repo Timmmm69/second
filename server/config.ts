@@ -54,6 +54,8 @@ export function loadConfig(env = process.env) {
     databasePoolMax,
     origin: env.APP_ORIGIN ?? "http://localhost:5173",
     botToken: env.BOT_TOKEN ?? "",
+    botUsername: /^[a-zA-Z0-9_]{5,32}$/.test((env.BOT_USERNAME ?? "").replace(/^@/, ""))
+      ? (env.BOT_USERNAME ?? "").replace(/^@/, "") : "",
     webhookSecret: env.WEBHOOK_SECRET ?? "",
     dataKey: key,
     mediaDir: path.resolve(env.MEDIA_DIR ?? "var/media"),
