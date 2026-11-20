@@ -188,3 +188,27 @@ test("description is editable and omitted from catalog lists; availability is ba
     payload: { title: marker + "1", category: "accessories", priceMinor: 100, version: 2, description: "x".repeat(4001) },
   })).statusCode, 422);
 });
+
+test("Telegram item preview is public, escaped, and never exposes hidden stock", async (t) => {
+  const id = itemIds[0];
+  const initialTitle = (await pool.query("SELECT title FROM items WHERE id=$1", [id])).rows[0].title;
+  await pool.query("UPDATE items SET title=$2 WHERE id=$1", [id, "<script>alert(1)</script> & находка"]);
+  try {
+    const spy = t.mock.method(pool, "query");
+    const preview = await app.inject("/share/item/" + id);
+    assert.equal(preview.statusCode, 200, preview.body);
+    assert.match(String(preview.headers["content-type"]), /text\/html/);
+    assert.match(preview.body, /property="og:title"/);
+    assert.match(preview.body, /&lt;script&gt;alert\(1\)&lt;\/script&gt; &amp; находка/);
+    assert.doesNotMatch(preview.body, /<script>alert\(1\)<\/script>/);
+    assert.match(preview.body, /name="robots" content="noindex"/);
+    assert.match(preview.body, new RegExp("/#/items/" + id));
+    assert.equal(spy.mock.calls.filter(call => String(call.arguments[0]).includes("FROM items i WHERE i.id=ANY")).length, 1);
+    assert.equal(spy.mock.calls.filter(call => String(call.arguments[0]).includes("FROM media_assets")).length, 1);
+    spy.mock.restore();
+    assert.equal((await app.inject("/share/item/" + itemIds[41])).statusCode, 404);
+    assert.equal((await app.inject("/share/item/invalid")).statusCode, 404);
+  } finally {
+    await pool.query("UPDATE items SET title=$2 WHERE id=$1", [id, initialTitle]);
+  }
+});
