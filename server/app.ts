@@ -19,6 +19,7 @@ import { registerSettings } from "./settings.js";
 import { registerMedia, serveMedia } from "./media.js";
 import { registerOrders } from "./orders.js";
 import { registerCheckoutData } from "./checkout-data.js";
+import { registerItemShare } from "./share.js";
 export async function buildApp({ staticFiles = true } = {}) {
   const app = Fastify({
     logger: false,
@@ -189,6 +190,7 @@ export async function buildApp({ staticFiles = true } = {}) {
     },
     { prefix: "/api" },
   );
+  await registerItemShare(app);
   await serveMedia(app);
   await mkdir(config.mediaDir, { recursive: true });
   let hasStatic = false;
