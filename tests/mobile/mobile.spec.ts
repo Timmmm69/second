@@ -1,6 +1,6 @@
 import { expect, test as base, type Page } from "@playwright/test";
 import {
-  filterHeader, installMobileMocks, layoutFrames, openFilters, sampleId, sampleTitle,
+  filterHeader, installMobileMocks, layoutFrames, openFilters, rotateScreen, sampleId, sampleTitle,
   screenshot, syntheticDrag, tapVisible, touchDrag, updateTelegram, visibleTapTarget,
 } from "./helpers.js";
 
@@ -153,6 +153,22 @@ test("focusing price and shrinking the keyboard viewport preserves the route, fo
   await expect(price).toBeFocused();
   await expect(page.locator('.catalog-filter-trigger[aria-expanded="true"]')).toHaveCount(0);
   const viewport = page.viewportSize()!;
+  // Telegram can report keyboard space while the browser viewport stays full.
+  await updateTelegram(page, { height: 330 });
+  expect(page.viewportSize()).toEqual(viewport);
+  await expect(page.locator("body")).toHaveClass(/keyboard-open/);
+  await expect(page.locator(".bottom-nav")).toBeHidden();
+  await expect(price).toBeFocused();
+  const bridgePrice = await visibleTapTarget(price);
+  expect(bridgePrice.bottom).toBeLessThanOrEqual(331);
+  expect(await page.evaluate(() => location.hash)).toBe(before.hash);
+  expect(Math.abs(await page.evaluate(() => scrollY) - before.scrollY)).toBeLessThanOrEqual(1);
+  await screenshot(page, info, "price-telegram-keyboard-only");
+  await updateTelegram(page, { height: viewport.height });
+  await expect(price).toBeFocused();
+  await expect(page.locator("body")).not.toHaveClass(/keyboard-open/);
+  await expect(page.locator(".bottom-nav")).toBeVisible();
+
   await page.setViewportSize({ width: viewport.width, height: 330 });
   await updateTelegram(page, { height: 330 });
   await expect(price).toBeFocused();
@@ -203,6 +219,116 @@ test("search on a short keyboard viewport leaves a result and the next filter us
     await screenshot(page, info, `${label === "Категория" ? "category" : "brand"}-search-keyboard`);
     await page.setViewportSize(viewport);
     await updateTelegram(page, { height: viewport.height });
+  }
+});
+
+test("catalog search outside a sheet keeps its route, focus and scroll through keyboard and Enter", async ({ page, mobile }, info) => {
+  await page.goto("/#/catalog");
+  await expect(page.locator(".product-card").first()).toBeVisible();
+  const input = page.getByRole("searchbox", { name: "Что ищем?" });
+  const viewport = page.viewportSize()!;
+  const before = await page.evaluate(() => ({ hash: location.hash, y: scrollY }));
+  const catalogRequests = () => mobile.apiRequests.filter((request) => /^GET \/catalog(?:\?|$)/.test(request)).length;
+  const requestsBefore = catalogRequests();
+  await input.tap();
+  await page.keyboard.insertText("Линия");
+  await page.setViewportSize({ width: viewport.width, height: 330 });
+  await updateTelegram(page, { height: 330 });
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("Линия");
+  await expect(page.locator("body")).toHaveClass(/keyboard-open/);
+  await expect(page.locator("body")).not.toHaveClass(/compact-landscape/);
+  await expect(page.locator(".bottom-nav")).toBeHidden();
+  await visibleTapTarget(page.locator(".search-pill"));
+  await expect(input).toBeInViewport({ ratio: 1 });
+  expect(await page.evaluate(() => location.hash)).toBe(before.hash);
+  expect(Math.abs(await page.evaluate(() => scrollY) - before.y)).toBeLessThanOrEqual(1);
+  await screenshot(page, info, "catalog-search-keyboard");
+  await expect.poll(catalogRequests).toBe(requestsBefore + 1);
+  const navigations: string[] = [];
+  page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) navigations.push(frame.url()); });
+  await page.keyboard.press("Enter");
+  // Observe one full debounce period: an accidental repeat request is delayed.
+  await page.waitForTimeout(800);
+  expect(catalogRequests()).toBe(requestsBefore + 1);
+  expect(navigations).toEqual([]);
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("Линия");
+  await page.setViewportSize(viewport);
+  await updateTelegram(page, { height: viewport.height });
+  await expect(page.locator(".bottom-nav")).toBeVisible();
+  await expect(page.locator("body")).not.toHaveClass(/keyboard-open/);
+  await expect(input).toBeFocused();
+  expect(Math.abs(await page.evaluate(() => scrollY) - before.y)).toBeLessThanOrEqual(1);
+  await screenshot(page, info, "catalog-search-keyboard-dismissed");
+});
+
+test("physical rotation preserves an open keyboard in either event order and restores navigation on dismissal", async ({ page }, info) => {
+  const portrait = page.viewportSize()!;
+  const landscape = { width: portrait.height, height: portrait.width };
+  const portraitKeyboard = { width: portrait.width, height: 330 };
+  const landscapeKeyboard = { width: landscape.width, height: landscape.height - 140 };
+  const resize = async (size: { width: number; height: number }) => {
+    await page.setViewportSize(size);
+    await updateTelegram(page, { height: size.height });
+  };
+
+  for (const order of ["orientation-first", "resize-first"] as const) {
+    await page.goto("/#/catalog");
+    await expect(page.locator(".product-card").first()).toBeVisible();
+    const input = page.getByRole("searchbox", { name: "Что ищем?" });
+    await input.tap();
+    await resize(portraitKeyboard);
+    await expect(page.locator("body")).toHaveClass(/keyboard-open/);
+    const rotate = async (screen: { width: number; height: number }, viewport: { width: number; height: number }) => {
+      if (order === "orientation-first") {
+        await rotateScreen(page, screen);
+        await resize(viewport);
+      } else {
+        await resize(viewport);
+        await rotateScreen(page, screen);
+      }
+    };
+    await rotate(landscape, landscapeKeyboard);
+    await expect(input).toBeFocused();
+    await expect(page.locator("body")).toHaveClass(/keyboard-open/);
+    await expect(page.locator(".bottom-nav")).toBeHidden();
+    expect(await page.evaluate(() => location.hash)).toBe("#/catalog");
+    await screenshot(page, info, `landscape-keyboard-${order}`);
+
+    // Closing the keyboard in the new physical orientation retains DOM focus.
+    await resize(landscape);
+    await expect(input).toBeFocused();
+    await expect(page.locator("body")).not.toHaveClass(/keyboard-open/);
+    await expect(page.locator(".bottom-nav")).toBeVisible();
+    await screenshot(page, info, `landscape-keyboard-dismissed-${order}`);
+
+    // Turning back grows the keyboard viewport. Growth alone is not dismissal.
+    await resize(landscapeKeyboard);
+    await expect(page.locator("body")).toHaveClass(/keyboard-open/);
+    await rotate(portrait, portraitKeyboard);
+    await expect(input).toBeFocused();
+    await expect(page.locator("body")).toHaveClass(/keyboard-open/);
+    await expect(page.locator(".bottom-nav")).toBeHidden();
+    await expect(page.locator("body")).not.toHaveClass(/compact-landscape/);
+    await screenshot(page, info, `portrait-keyboard-after-rotation-${order}`);
+    await resize(portrait);
+    await expect(input).toBeFocused();
+    await expect(page.locator("body")).not.toHaveClass(/keyboard-open/);
+    await expect(page.locator(".bottom-nav")).toBeVisible();
+
+    // A retained DOM focus after Android Back does not mean a keyboard is open.
+    // A subsequent real rotation must not compare landscape height with an old
+    // portrait baseline and hide navigation again.
+    await rotate(landscape, landscape);
+    await expect(input).toBeFocused();
+    await expect(page.locator("body")).not.toHaveClass(/keyboard-open/);
+    await expect(page.locator(".bottom-nav")).toBeVisible();
+    await screenshot(page, info, `landscape-retained-focus-without-keyboard-${order}`);
+    await rotate(portrait, portrait);
+    await expect(input).toBeFocused();
+    await expect(page.locator("body")).not.toHaveClass(/keyboard-open/);
+    await expect(page.locator(".bottom-nav")).toBeVisible();
   }
 });
 

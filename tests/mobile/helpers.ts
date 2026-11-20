@@ -23,6 +23,7 @@ export async function installMobileMocks(page: Page, browserName: string) {
     const listeners = new Map<string, Set<() => void>>();
     const emit = (name: string) => listeners.get(name)?.forEach((listener) => listener());
     const noOp = () => {};
+    const physicalScreen = { ...viewport, type: "portrait-primary", angle: 0 };
     const app = {
       initData: "",
       platform: browserName === "webkit" ? "ios" : "android",
@@ -45,15 +46,24 @@ export async function installMobileMocks(page: Page, browserName: string) {
     };
     // A keyboard changes the available viewport, not the physical screen.
     Object.defineProperties(screen, {
-      width: { configurable: true, get: () => viewport.width },
-      height: { configurable: true, get: () => viewport.height },
+      width: { configurable: true, get: () => physicalScreen.width },
+      height: { configurable: true, get: () => physicalScreen.height },
     });
     if (screen.orientation) Object.defineProperties(screen.orientation, {
-      type: { configurable: true, get: () => "portrait-primary" },
-      angle: { configurable: true, get: () => 0 },
+      type: { configurable: true, get: () => physicalScreen.type },
+      angle: { configurable: true, get: () => physicalScreen.angle },
     });
+    Object.defineProperty(window, "orientation", { configurable: true, get: () => physicalScreen.angle });
     Object.assign(window, {
       Telegram: { WebApp: app },
+      __mobileScreenRotate: (size: { width: number; height: number }) => {
+        Object.assign(physicalScreen, size, {
+          type: size.width > size.height ? "landscape-primary" : "portrait-primary",
+          angle: size.width > size.height ? 90 : 0,
+        });
+        screen.orientation?.dispatchEvent(new Event("change"));
+        window.dispatchEvent(new Event("orientationchange"));
+      },
       __mobileTelegramUpdate: (change: { height?: number; bottom?: number }) => {
         if (change.height !== undefined) {
           app.viewportHeight = change.height;
@@ -145,6 +155,13 @@ export async function updateTelegram(page: Page, change: { height?: number; bott
   await page.evaluate((value) => {
     (window as unknown as { __mobileTelegramUpdate: (change: typeof value) => void }).__mobileTelegramUpdate(value);
   }, change);
+  await layoutFrames(page);
+}
+
+export async function rotateScreen(page: Page, size: { width: number; height: number }) {
+  await page.evaluate((value) => {
+    (window as unknown as { __mobileScreenRotate: (size: typeof value) => void }).__mobileScreenRotate(value);
+  }, size);
   await layoutFrames(page);
 }
 
