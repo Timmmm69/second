@@ -232,10 +232,10 @@ ${image ? `<meta property="og:image" content="${escape(image)}">` : ""}
           const relative = path.relative(root, filePath).split(path.sep).join("/");
           if (relative === "index.html") {
             // Revalidate entry HTML, including the SPA fallback, after deploys.
-            res.setHeader("Cache-Control", "no-cache");
+            res.header("Cache-Control", "no-cache");
           } else if (/^assets\/[^/]+-[A-Za-z0-9_-]{8,}\.(?:js|css)$/.test(relative)) {
             // Only Vite-fingerprinted assets are safe to keep indefinitely.
-            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+            res.header("Cache-Control", "public, max-age=31536000, immutable");
           }
         },
       });

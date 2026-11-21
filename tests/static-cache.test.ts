@@ -19,13 +19,13 @@ test("fingerprinted assets are immutable, HTML revalidates, and API stays privat
     app = await buildApp();
 
     for (const url of ["/", "/index.html", "/deep/catalog/route"]) {
-      const response = await app.inject(url);
+      const response: { statusCode: number; body: string; headers: Record<string, unknown> } = await app.inject(url);
       assert.equal(response.statusCode, 200, url + ": " + response.body);
       assert.match(response.body, /Mini App/);
       assert.equal(response.headers["cache-control"], "no-cache");
     }
     for (const extension of ["js", "css"]) {
-      const response = await app.inject("/assets/index-Ab12cd34." + extension);
+      const response: { statusCode: number; body: string; headers: Record<string, unknown> } = await app.inject("/assets/index-Ab12cd34." + extension);
       assert.equal(response.statusCode, 200, response.body);
       assert.equal(response.headers["cache-control"], "public, max-age=31536000, immutable");
     }
