@@ -23,10 +23,16 @@ async function oneOpen(page: Page, label: string) {
 test("Telegram enables native close confirmation without disabling vertical swipes", async ({ page, mobile }) => {
   await page.goto("/#/catalog");
   await expect(page.locator(".product-card").first()).toBeVisible();
-  const appState = await page.evaluate(() => ({
-    closingConfirmation: window.Telegram?.WebApp.isClosingConfirmationEnabled,
-    verticalSwipesStillEnabled: window.Telegram?.WebApp.isVerticalSwipesEnabled,
-  }));
+  const appState = await page.evaluate(() => {
+    const bridge = (window as Window & { Telegram?: { WebApp: {
+      isClosingConfirmationEnabled?: boolean;
+      isVerticalSwipesEnabled?: boolean;
+    } } }).Telegram?.WebApp;
+    return {
+      closingConfirmation: bridge?.isClosingConfirmationEnabled,
+      verticalSwipesStillEnabled: bridge?.isVerticalSwipesEnabled,
+    };
+  });
   expect(appState.closingConfirmation).toBe(true);
   expect(appState.verticalSwipesStillEnabled).toBe(true);
   expect(mobile.pageErrors).toEqual([]);
