@@ -697,17 +697,94 @@ function ItemEditor({ id }: { id: string }) {
           <span>Версия {item.version}</span>
         </div>
       )}
+      <section className="detail-section photo-editor-section" id="editor-photos">
+        <div className="section-heading">
+          <h2>Фотографии <span className="muted photo-count">{item?.media.length ?? 0}/12</span></h2>
+          <Button secondary disabled={uploading || mediaBusy || mutation.busy || (item?.media.length ?? 0) >= 12}
+            onClick={() => fileInput.current?.click()}>
+            <Icon name="plus" size={18} /> Добавить
+          </Button>
+        </div>
+        <div className={`photo-drop-zone ${dropActive ? "is-dragging" : ""}`}
+          role="button" tabIndex={0} aria-label="Выбрать фотографии"
+          onClick={() => { if (!uploading) fileInput.current?.click(); }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); fileInput.current?.click(); }
+          }}
+          onDragOver={(event) => { event.preventDefault(); setDropActive(true); }}
+          onDragLeave={() => setDropActive(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDropActive(false);
+            if (!uploading) void upload(Array.from(event.dataTransfer.files));
+          }}>
+          <Icon name="photo" size={24} />
+          <span><strong>Выбрать или перетащить фото</strong><small>До 6 за один раз, до 12 всего · JPEG, PNG, WebP · 15 МБ/файл</small></span>
+        </div>
+        <input ref={fileInput} hidden type="file"
+          accept="image/jpeg,image/png,image/webp" multiple
+          onChange={(event: ChangeEvent<HTMLInputElement>) => {
+            if (event.target.files) void upload(Array.from(event.target.files));
+            event.target.value = "";
+          }} />
+        {uploadStatus && <p className="small-text" role="status" aria-live="polite">{uploadStatus}</p>}
+        {uploading && <progress className="photo-upload-progress"
+          value={uploadedCount} max={Math.max(1, uploadedCount + uploadFiles.length)}
+          aria-label="Прогресс загрузки фотографий" />}
+        {previewUrls.length > 0 && <div className="photo-upload-preview" aria-label="Выбранные фотографии">
+          {previewUrls.map((url, index) => <img key={url} src={url} alt={`Ожидает загрузки ${index + 1}`} />)}
+        </div>}
+        {!uploading && uploadFiles.length > 0 && (
+          <Button secondary onClick={() => void upload(uploadFiles)}>Повторить оставшиеся фото</Button>
+        )}
+        <p className="small-text">Первое фото станет обложкой. Порядок можно изменить стрелками или перетаскиванием на компьютере. Геоданные удаляются при обработке.</p>
+        <div className="media-editor">
+          {item?.media.map((media, index) => (
+            <div key={media.id} className="media-tile"
+              draggable={!uploading && !mediaBusy && !mutation.busy && !window.matchMedia("(pointer: coarse)").matches}
+              onDragStart={(event) => {
+                draggedMedia.current = media.id;
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("text/plain", media.id);
+              }}
+              onDragOver={(event) => { if (draggedMedia.current) event.preventDefault(); }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const sourceId = draggedMedia.current;
+                draggedMedia.current = null;
+                if (sourceId) void reorderMedia(sourceId, index);
+              }}
+              onDragEnd={() => { draggedMedia.current = null; }}>
+              <span className={index === 0 ? "photo-order-badge cover" : "photo-order-badge"}>
+                {index === 0 ? "Основное · 1" : `Фото ${index + 1}`}
+              </span>
+              <Photo media={media} alt={`Фото ${index + 1}`} />
+              <div className="photo-actions">
+                <button type="button" className="icon-button" aria-label={`Фото ${index + 1}: раньше`}
+                  disabled={index === 0 || mediaBusy || uploading || mutation.busy}
+                  onClick={() => void reorderMedia(media.id, index - 1)}><Icon name="back" size={18} /></button>
+                <button type="button" className="icon-button" aria-label={`Фото ${index + 1}: позже`}
+                  disabled={index === (item?.media.length ?? 0) - 1 || mediaBusy || uploading || mutation.busy}
+                  onClick={() => void reorderMedia(media.id, index + 1)}><Icon name="next" size={18} /></button>
+                <button type="button" className="icon-button" aria-label={`Повернуть фото ${index + 1}`}
+                  disabled={mediaBusy || uploading || mutation.busy}
+                  onClick={() => void mediaAction(media, { rotation: 90 })}>↻</button>
+                <button type="button" className="icon-button" aria-label={`Удалить фото ${index + 1}`}
+                  disabled={mediaBusy || uploading || mutation.busy}
+                  onClick={() => {
+                    if (confirm("Удалить фотографию из карточки?")) void mediaAction(media, {}, "DELETE");
+                  }}><Icon name="close" size={18} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
       <form
         ref={formRef}
         className="form-stack editor-form"
         onSubmit={(e) => {
           e.preventDefault();
-          setAttempted(true);
-          if (missing.length) {
-            requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
-            return;
-          }
-          save();
+          void save();
         }}
       >
         <fieldset id="editor-basic"><legend>Основное</legend>
@@ -872,99 +949,15 @@ function ItemEditor({ id }: { id: string }) {
           />
         ))}
         </fieldset>
-        <Button type="submit" disabled={mutation.busy}>
-          {mutation.busy ? "Сохраняем…" : "Сохранить карточку"}
+        <Button type="submit" disabled={mutation.busy || uploading || mediaBusy}>
+          {mutation.busy ? "Сохраняем…" : item?.publication === "PUBLISHED" ? "Сохранить карточку" : "Сохранить черновик"}
         </Button>
         {dirty && (
           <p className="small-text">
-            Есть несохранённые изменения. Сохраните их перед выходом.
+            Есть несохранённые изменения. Их копия останется на этом устройстве до сохранения на сервере.
           </p>
         )}
       </form>
-      <section className="detail-section">
-        <div className="section-heading">
-          <h2 id="editor-photos">Фотографии</h2>
-          <Button
-            secondary
-            className={item && !item.media.length ? "empty-photo-control" : ""}
-            disabled={!item || Boolean(uploadFiles.length)}
-            onClick={() => fileInput.current?.click()}
-          >
-            <Icon name="plus" size={18} />
-            Добавить
-          </Button>
-        </div>
-        <input
-          ref={fileInput}
-          hidden
-          type="file"
-          accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
-          multiple
-          onChange={(e: ChangeEvent<HTMLInputElement>) => {
-            if (e.target.files) upload(Array.from(e.target.files));
-            e.target.value = "";
-          }}
-        />
-        <p className="small-text">
-          {demo ? "До 12 тестовых фото по 4 МБ. Фотографии остаются в вашем браузере." : "До 12 фото по 15 МБ. Общий вид, обратная сторона, бирка и детали. Геолокация удаляется сервером."}
-        </p>
-        {uploadStatus && <p role="status">{uploadStatus}</p>}
-        {uploadFiles.length > 0 && (
-          <Button secondary onClick={() => upload(uploadFiles)}>
-            Повторить оставшиеся файлы
-          </Button>
-        )}
-        <div className="media-editor">
-          {item?.media.map((media, index) => (
-            <div key={media.id}>
-              <Photo media={media} alt={`Фото ${index + 1}`} />
-              <Select
-                label={`Тип фото ${index + 1}`}
-                value={media.role || "FRONT"}
-                onValueChange={(role) => mediaAction(media, { role, position: index })}
-                options={[
-                  ...(media.role === "MEASUREMENT"
-                    ? [{ value: "MEASUREMENT", label: "Архивный тип" }]
-                    : []),
-                  { value: "FRONT", label: "Общий вид" },
-                  { value: "BACK", label: "Сзади" },
-                  { value: "LABEL", label: "Бирка" },
-                  { value: "DETAIL", label: "Деталь" },
-                ]}
-              />
-              <div className="photo-actions">
-                <button
-                  className="icon-button"
-                  aria-label="Переместить раньше"
-                  disabled={index === 0 || mutation.busy}
-                  onClick={() => mediaAction(media, { position: index - 1 })}
-                >
-                  <Icon name="back" size={18} />
-                </button>
-                <button
-                  className="icon-button"
-                  aria-label="Повернуть фото"
-                  disabled={mutation.busy}
-                  onClick={() => mediaAction(media, { rotation: 90 })}
-                >
-                  ↻
-                </button>
-                <button
-                  className="icon-button"
-                  aria-label="Удалить фото"
-                  disabled={mutation.busy}
-                  onClick={() => {
-                    if (confirm("Удалить фотографию из карточки?"))
-                      mediaAction(media, {}, "DELETE");
-                  }}
-                >
-                  <Icon name="close" size={18} />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
       {item && (
         <section className="detail-section">
           <h2>Публикация и наличие</h2>
