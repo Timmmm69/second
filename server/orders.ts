@@ -328,7 +328,7 @@ export async function readOrders(c: PoolClient, ids: string[], actor: Actor) {
   if (actor.role !== "BUYER")
     // One durable audit row per order, identical to readOrder's semantics.
     await c.query(
-      "INSERT INTO access_events(actor_id,action,entity_id) SELECT $1,'order.read',id::text FROM unnest($2::uuid[]) AS id",
+      "INSERT INTO access_events(actor_id,action,entity_id) SELECT $1,'order.read',requested.order_id::text FROM unnest($2::uuid[]) AS requested(order_id)",
       [actor.id, ids],
     );
   const lines = groupOrderRows(

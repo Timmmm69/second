@@ -15,7 +15,7 @@ test("queue refreshes 20 times per visible 10 minutes, never polls hidden, catch
     schedule: (fn, interval) => {
       assert.equal(interval, 30000);
       callbacks.add(fn);
-      return 1 as ReturnType<typeof setInterval>;
+      return 1 as unknown as ReturnType<typeof setInterval>;
     },
     cancel: () => { callbacks.clear(); cancelCount++; },
     now: () => time,
@@ -39,6 +39,7 @@ test("queue refreshes 20 times per visible 10 minutes, never polls hidden, catch
   assert.equal(refreshes, 21, "return + focus + timer must send only one request");
   advance(10);
   assert.equal(refreshes, 41);
+  time += 1500;
   browser.dispatchEvent(new Event("blur"));
   browser.dispatchEvent(new Event("focus"));
   assert.equal(refreshes, 42);
@@ -57,7 +58,7 @@ test("initially hidden queue never polls until visible", () => {
   let count = 0, tick: () => void = () => {};
   const stop = startVisibleQueuePolling(() => count++, {
     page, browser,
-    schedule: (fn) => { tick = fn; return 1 as ReturnType<typeof setInterval>; },
+    schedule: (fn) => { tick = fn; return 1 as unknown as ReturnType<typeof setInterval>; },
     cancel: () => { tick = () => {}; },
     now: () => 1500,
   });
