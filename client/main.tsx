@@ -304,8 +304,10 @@ function App() {
     window.addEventListener("touchcancel", finish, { passive: true });
     return () => {
       window.clearTimeout(settleTimer);
-      for (const type of ["touchstart", "touchmove", "touchend", "touchcancel"])
-        window.removeEventListener(type, type === "touchstart" ? start : type === "touchmove" ? move : finish);
+      window.removeEventListener("touchstart", start);
+      window.removeEventListener("touchmove", move);
+      window.removeEventListener("touchend", finish);
+      window.removeEventListener("touchcancel", finish);
       shell.classList.remove("is-pulling", "pull-settling");
       shell.style.removeProperty("--pull-distance");
       shell.style.removeProperty("--pull-reveal-opacity");
