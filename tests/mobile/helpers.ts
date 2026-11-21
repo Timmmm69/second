@@ -23,6 +23,8 @@ export async function installMobileMocks(page: Page, browserName: string) {
     const listeners = new Map<string, Set<() => void>>();
     const emit = (name: string) => listeners.get(name)?.forEach((listener) => listener());
     const noOp = () => {};
+    let closingConfirmationEnabled = false;
+    let verticalSwipesEnabled = true;
     const physicalScreen = { ...viewport, type: "portrait-primary", angle: 0 };
     const app = {
       initData: "",
@@ -33,8 +35,12 @@ export async function installMobileMocks(page: Page, browserName: string) {
       safeAreaInset: { top: systemTop, right: 0, bottom: systemBottom, left: 0 },
       contentSafeAreaInset: { top: 0, right: 0, bottom: 0, left: 0 },
       ready: noOp, expand: noOp,
+      enableClosingConfirmation: () => { closingConfirmationEnabled = true; },
+      get isClosingConfirmationEnabled() { return closingConfirmationEnabled; },
       setHeaderColor: noOp, setBackgroundColor: noOp, setBottomBarColor: noOp,
-      disableVerticalSwipes: noOp, enableVerticalSwipes: noOp,
+      disableVerticalSwipes: () => { verticalSwipesEnabled = false; },
+      enableVerticalSwipes: () => { verticalSwipesEnabled = true; },
+      get isVerticalSwipesEnabled() { return verticalSwipesEnabled; },
       BackButton: { show: noOp, hide: noOp, onClick: noOp, offClick: noOp },
       HapticFeedback: { impactOccurred: noOp, notificationOccurred: noOp, selectionChanged: noOp },
       isVersionAtLeast: () => true,

@@ -204,6 +204,8 @@ function App() {
     if (!app) return;
     app.ready();
     app.expand();
+    // Telegram shows its native confirmation when the user tries to close the Mini App.
+    if (app.isVersionAtLeast?.("6.2")) app.enableClosingConfirmation?.();
     app.setHeaderColor?.("#ffffff");
     app.setBackgroundColor?.("#ffffff");
     app.setBottomBarColor?.("#ffffff");
