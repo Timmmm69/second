@@ -1,6 +1,7 @@
 import { catalogAudiences, isLetterSize, letterSizePattern, productColor, productSize } from "../shared/catalog-attributes.js";
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
-import { api, readLocal, saveLocal } from "./api";
+import { api, operationKey, readLocal, saveLocal } from "./api";
+import { clothingBrands, clothingColors, clothingSeasons, russianCountries, canonicalChoice } from "./clothing-options";
 import { useApp } from "./context";
 import { OrderCard } from "./buyer";
 import { useMutation } from "./mutations";
@@ -391,6 +392,15 @@ function Items() {
     </div>
   );
 }
+const countrySuggestions = russianCountries();
+const valueOptions = (values: readonly string[], current = "") =>
+  [...values, ...(current && !values.some((value) => value.toLocaleLowerCase("ru") === current.toLocaleLowerCase("ru")) ? [current] : [])]
+    .map((value) => ({ value, label: value }));
+const validMeasurement = (raw: string) => {
+  const value = raw.trim().replace(",", ".");
+  if (!/^\d+(?:\.\d)?$/.test(value) || Number(value) > 2000) return null;
+  return Math.round(Number(value) * 10);
+};
 const initialItem = {
   hasDefect: false,
   defectDescription: "",
@@ -434,9 +444,23 @@ function ItemEditor({ id }: { id: string }) {
     [dirty, setDirty] = useState(false),
     [preview, setPreview] = useState(false),
     [uploadStatus, setUploadStatus] = useState(""),
-    [uploadFiles, setUploadFiles] = useState<File[]>([]);
+    [uploadFiles, setUploadFiles] = useState<File[]>([]),
+    [uploading, setUploading] = useState(false),
+    [uploadedCount, setUploadedCount] = useState(0),
+    [dropActive, setDropActive] = useState(false),
+    [mediaBusy, setMediaBusy] = useState(false),
+    [measurementGroup, setMeasurementGroup] = useState<"base" | "top" | "bottom">("base"),
+    [measurementInputs, setMeasurementInputs] = useState<Record<string, string>>({}),
+    [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const mutation = useMutation();
   const fileInput = useRef<HTMLInputElement>(null);
+  const draftKey = useRef(operationKey());
+  const uploadLock = useRef(false);
+  const draggedMedia = useRef<string | null>(null);
+  const backupKey = `staff-editor:${user?.id ?? "unknown"}:${id}`;
+  const [backup, setBackup] = useState<null | { form: typeof initialItem; price: string; size: string }>(
+    () => readLocal(backupKey, null),
+  );
   const [checked, setChecked] = useState(false);
   const [price, setPrice] = useState("");
   const [size, setSize] = useState("");
@@ -450,7 +474,8 @@ function ItemEditor({ id }: { id: string }) {
   const previousColor = item?.attributes.color;
   const legacyColor = previousColor && !productColor(previousColor) ? String(previousColor) : "";
   useEffect(() => {
-    if (item) {
+    // Refreshing media must never overwrite edits made while uploading.
+    if (item && !dirty) {
       setForm({
         hasDefect: item.hasDefect ?? false,
         defectDescription: item.defectDescription ?? "",
@@ -463,8 +488,9 @@ function ItemEditor({ id }: { id: string }) {
         measurements: item.measurements ?? {},
         storageLocation: item.storageLocation || "",
       });
-      setPrice(String(item.priceMinor / 100));
+      setPrice(item.priceMissing ? "" : String(item.priceMinor / 100));
       setSize(editableSize(item));
+      setMeasurementInputs(Object.fromEntries(Object.entries(item.measurements ?? {}).map(([key, value]) => [key, String(value / 10)])));
       setDirty(false);
     }
   }, [item]);
@@ -478,6 +504,14 @@ function ItemEditor({ id }: { id: string }) {
     window.addEventListener("beforeunload", unload);
     return () => window.removeEventListener("beforeunload", unload);
   }, [dirty]);
+  useEffect(() => {
+    const urls = uploadFiles.map((file) => URL.createObjectURL(file));
+    setPreviewUrls(urls);
+    return () => urls.forEach((url) => URL.revokeObjectURL(url));
+  }, [uploadFiles]);
+  useEffect(() => {
+    if (dirty) saveLocal(backupKey, { form, price, size });
+  }, [dirty, form, price, size, backupKey]);
   const set = (key: string, value: string | boolean) => {
     setForm((v) => ({ ...v, [key]: value }));
     setDirty(true);
@@ -497,6 +531,9 @@ function ItemEditor({ id }: { id: string }) {
   }
   const priceInput = price.trim().replace(",", ".");
   const priceMinor = Math.round(Number(priceInput) * 100);
+  const invalidMeasurements = Object.entries(measurementInputs)
+    .filter(([, raw]) => raw.trim() && validMeasurement(raw) === null)
+    .map(([key]) => key);
   const fieldErrors = {
     title: form.title.trim() ? undefined : "Укажите название вещи",
     category: form.category ? undefined : "Выберите категорию",
