@@ -206,6 +206,9 @@ function App() {
     app.expand();
     // Telegram shows its native confirmation when the user tries to close the Mini App.
     if (app.isVersionAtLeast?.("6.2")) app.enableClosingConfirmation?.();
+    // Do not let content scrolling collapse the Telegram Mini App sheet.
+    // Native header gestures remain under Telegram control.
+    if (app.isVersionAtLeast?.("7.7")) app.disableVerticalSwipes?.();
     app.setHeaderColor?.("#ffffff");
     app.setBackgroundColor?.("#ffffff");
     app.setBottomBarColor?.("#ffffff");
