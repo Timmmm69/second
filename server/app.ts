@@ -36,7 +36,7 @@ export async function buildApp({ staticFiles = true } = {}) {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'", "https://telegram.org"],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", "data:"],
+        imgSrc: ["'self'", "data:", "blob:"],
         connectSrc: ["'self'"],
         frameAncestors: [
           "'self'",
@@ -201,7 +201,7 @@ export async function buildApp({ staticFiles = true } = {}) {
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] || char);
     const title = escape(item.title);
     const description = escape(`${item.title} · ${(item.priceMinor / 100).toFixed(2)} BYN · секонд-хенд «Лучок»`);
-    const photo = item.media.find((asset: { role?: string }) => asset.role !== "MEASUREMENT");
+    const photo = item.media[0];
     const picture = photo?.variants?.["960"] || photo?.url;
     const image = picture && /^\/media\/[0-9a-fA-F-]{36}\/(240|480|960|1600)$/.test(picture) ? config.origin + picture : null;
     const page = `${config.origin}/share/item/${parsed.data.id}`;
