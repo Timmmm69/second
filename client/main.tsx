@@ -104,7 +104,6 @@ function App() {
     [menu, setMenu] = useState(false),
     [toast, setToast] = useState(""),
     [offline, setOffline] = useState(!navigator.onLine),
-    [ownerCode, setOwnerCode] = useState(""),
     [sdkReady, setSdkReady] = useState(Boolean(tg()));
   const go = useCallback((to: string) => {
     if ((location.hash.slice(1) || "/catalog") === "/catalog")
@@ -512,8 +511,6 @@ function App() {
         toast: setToast,
         authenticated,
         offline,
-        ownerCode,
-        setOwnerCode,
       }}
     >
       <div className={`app-shell ${staff ? "service-shell" : ""}`}>
