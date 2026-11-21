@@ -38,6 +38,7 @@ export async function cloneMediaFiles(sourceId: string, duplicateId: string) {
     await rm(target, { recursive: true, force: true });
     throw error;
   }
+  return target;
 }
 let photoBusy = false;
 // No waiting queue: acquire before reading an upload or opening a transaction.
