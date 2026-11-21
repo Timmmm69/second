@@ -737,7 +737,22 @@ function ItemEditor({ id }: { id: string }) {
   const missing = Object.values(fieldErrors).filter(Boolean);
   return (
     <div className="page narrow item-editor">
-      <h1>{id === "new" ? "Новая вещь" : "Карточка вещи"}</h1>
+      <div className="section-heading">
+        <h1>{id === "new" ? "Новая вещь" : "Карточка вещи"}</h1>
+        {item && <Button secondary
+          disabled={dirty || Boolean(backup) || mutation.busy || draftSaving || uploading || mediaBusy}
+          onClick={async () => {
+            const copy = await mutation.run<Item>(`/staff/items/${item.id}/duplicate`);
+            if (copy) {
+              toast("Создан независимый черновик. Проверьте фото, состояние и сведения о вещи.");
+              go(`/staff/items/${copy.id}`);
+            }
+          }}>
+          <Icon name="copy" size={18} /> Дублировать
+        </Button>}
+      </div>
+      {item && (dirty || backup) &&
+        <p className="small-text">Перед дублированием сохраните или проверьте незавершённые изменения.</p>}
       <nav className="editor-shortcuts" aria-label="Разделы карточки"><a href="#editor-photos" onClick={e => { e.preventDefault(); document.getElementById("editor-photos")?.scrollIntoView(); }}>Фото</a><a href="#editor-basic" onClick={e => { e.preventDefault(); document.getElementById("editor-basic")?.scrollIntoView(); }}>Данные</a></nav>
       <p className="muted">Поля со * обязательны только при публикации. Черновик можно сохранить незаполненным.</p>
       <ErrorBox error={error} retry={reload} />

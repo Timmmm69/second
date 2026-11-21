@@ -1540,6 +1540,7 @@ textarea.field-control {
   flex-shrink: 0;
 }
 
+.item-editor > .section-heading { flex-wrap: wrap; }
 .photo-editor-section { margin-top: 4px; }
 .photo-count { font-size: .75rem; font-weight: 500; }
 .photo-drop-zone {

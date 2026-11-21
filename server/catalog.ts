@@ -1,10 +1,12 @@
 import { productColor } from "../shared/catalog-attributes.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { rm } from "node:fs/promises";
 import { pool } from "./db.js";
 import { AppError, assert } from "./errors.js";
 import { lockItems, setPhysical, audit, idem } from "./inventory.js";
 import { assertActiveCategory } from "./categories.js";
+import { cloneMediaFiles, widths } from "./media.js";
 const ids = z.array(z.uuid()).max(10000);
 const itemInput = z
   .object({
@@ -356,6 +358,77 @@ export async function registerCatalog(app: FastifyInstance) {
     assert(i, 404, "NOT_FOUND", "Вещь не найдена");
     return i;
   });
+
+  // A duplicate is a separate physical item, never a second listing of the
+  // original. Only descriptive fields and READY photos are copied. Inventory
+  // state, reservations, published snapshot and history are intentionally reset.
+  app.post(
+    "/staff/items/:id/duplicate",
+    { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
+    async (req) => {
+      const { id } = uuidParam.parse(req.params);
+      z.object({}).strict().parse(req.body ?? {});
+      const copiedDirectories: string[] = [];
+      try {
+        return await idem(req.actor, req.headers["idempotency-key"], "items.duplicate:" + id, {}, async (c) => {
+          // The row lock serializes source edits, uploads and rotations while
+          // cloning, so metadata and image files represent one coherent state.
+          await lockItems(c, [id]);
+          const sku = "V-" + crypto.randomUUID().replaceAll("-", "").slice(0, 16).toUpperCase();
+          const copy = (await c.query(
+            `INSERT INTO items(
+                sku,title,description,category,price_minor,attributes,measurements,
+                storage_location,has_defect,defect_description
+              )
+              SELECT $2,title,description,category,price_minor,attributes,measurements,
+                     storage_location,has_defect,defect_description
+                FROM items WHERE id=$1 RETURNING *`,
+            [id, sku],
+          )).rows[0];
+          assert(copy, 404, "ITEM_NOT_FOUND", "Исходная карточка не найдена");
+          const sourceMedia = (await c.query(
+            "SELECT * FROM media_assets WHERE item_id=$1 AND state='READY' ORDER BY position,created_at,id",
+            [id],
+          )).rows;
+          const copiedMedia = [];
+          for (const [position, media] of sourceMedia.entries()) {
+            const newId = crypto.randomUUID();
+            try {
+              copiedDirectories.push(await cloneMediaFiles(media.id, newId));
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code === "ENOENT")
+                throw new AppError(409, "SOURCE_MEDIA_MISSING",
+                  "Одно из фото исходной карточки недоступно. Повторите позже");
+              throw error;
+            }
+            const variants = Object.fromEntries(widths.map((width) => [
+              String(width), `/media/${newId}/${width}`,
+            ]));
+            const photo = (await c.query(
+              `INSERT INTO media_assets(
+                  id,item_id,original_key,checksum,mime,width,height,variants,position,role
+                ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+              [
+                newId, copy.id, newId + "/original.webp", media.checksum,
+                media.mime, media.width, media.height, variants, position, media.role,
+              ],
+            )).rows[0];
+            copiedMedia.push(photo);
+          }
+          await audit(c, req.actor.id, "ITEM_DUPLICATE", "ITEM", copy.id, {
+            sourceItemId: id, photoCount: copiedMedia.length,
+          });
+          // Avoid fetching uncommitted photo rows on a different pool connection.
+          return itemWithMedia(copy, copiedMedia, true);
+        });
+      } catch (error) {
+        // DB transaction was rolled back: no newly linked files may remain.
+        await Promise.allSettled(copiedDirectories.map((dir) =>
+          rm(dir, { recursive: true, force: true })));
+        throw error;
+      }
+    },
+  );
 
   // Explicit draft creation: opening the editor never creates a database row.
   app.post("/staff/items/draft", async (req) => {
