@@ -9,10 +9,11 @@ import { audit, idem } from "./inventory.js";
 const measurementKeys = [
   "chest", "waist", "hips", "length", "sleeve", "inseam", "rise",
   "width", "height", "depth", "strap", "shoulders",
+  "chestCircumference", "waistCircumference", "hipCircumference", "outseam",
 ] as const;
 const input = z.object({
   name: z.string().trim().min(1).max(100),
-  measurements: z.array(z.enum(measurementKeys)).max(12)
+  measurements: z.array(z.enum(measurementKeys)).max(16)
     .refine(v => new Set(v).size === v.length, "Замеры не должны повторяться").optional(),
   sortOrder: z.number().int().min(0).max(1000000),
   archived: z.boolean(),
