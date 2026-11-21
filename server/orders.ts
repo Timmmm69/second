@@ -353,7 +353,7 @@ export async function readOrders(c: PoolClient, ids: string[], actor: Actor) {
         "SELECT id,state,order_id FROM handovers WHERE order_id=ANY($1::uuid[])",
         [ids],
       )
-    ).rows.map((row) => [row.order_id, row]),
+    ).rows.map(({ order_id, id, state }) => [order_id, { id, state }]),
   );
   const returns = groupOrderRows(
     (
