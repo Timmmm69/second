@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 import { installMobileMocks, updateTelegram, sampleId } from "./helpers.js";
 import type { Item, Media } from "../../client/types.js";
 
@@ -13,7 +13,7 @@ async function editorFixture(page: Page, browserName: string) {
   let uploaded = 0;
   let draftCreates = 0;
   let savedOrder: string[] = [];
-  const respond = (route: Parameters<Parameters<Page["route"]>[1]>[0], data: unknown) => route.fulfill({ json: data });
+  const respond = (route: Route, data: unknown) => route.fulfill({ json: data });
   await page.route("**/api/auth/me", (route) => respond(route, {
     user: { id: "staff-editor-mobile", telegramId: "990000002", role: "STAFF" }, dev: false,
   }));
