@@ -16,11 +16,12 @@ async function checkout(page: Page) {
 test("full card to saved order is private and deduplicated after reload", async ({ page, browserName }) => {
   const mocks = await installMobileMocks(page, browserName, { buyer: true, settings: true });
   await page.goto(campaign + card.slice(1));
-  const add = page.getByRole("button", { name: "В корзину", exact: true }).first();
+  const add = page.getByRole("button", { name: "В корзину", exact: true }).filter({ visible: true }).first();
   await expect(add).toBeVisible();
   await expect.poll(() => mocks.capturedEvents.length).toBe(1);
   await add.click();
-  await page.getByRole("button", { name: "Перейти в корзину", exact: true }).first().click();
+  await expect(page.getByRole("button", { name: "Перейти в корзину", exact: true }).filter({ visible: true }).first()).toBeVisible();
+  await page.getByRole("navigation", { name: "Навигация покупателя" }).getByRole("button", { name: /Корзина/ }).click();
   await page.getByRole("button", { name: "Перейти к оформлению", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Оформление заявки" })).toBeVisible();
   await expect.poll(() => mocks.capturedEvents.length).toBe(2);
@@ -84,15 +85,15 @@ test("disabling settings after a tab is open suppresses a new checkout milestone
   await page.goto(card);
   await expect.poll(() => mocks.capturedEvents.length).toBe(1);
   expect(mocks.capturedEvents[0].body).toMatchObject({ event: "product_viewed" });
-  await page.getByRole("button", { name: "В корзину", exact: true }).first().click();
-  await expect(page.getByRole("button", { name: "Перейти в корзину", exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: "В корзину", exact: true }).filter({ visible: true }).first().click();
+  await expect(page.getByRole("button", { name: "Перейти в корзину", exact: true }).filter({ visible: true }).first()).toBeVisible();
 
   await page.waitForLoadState("networkidle");
   settings.settings = false;
   const refreshedSettings = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/settings" && response.ok());
   await page.reload();
   expect(await (await refreshedSettings).json()).not.toHaveProperty("posthog");
-  await page.getByRole("button", { name: "Перейти в корзину", exact: true }).first().click();
+  await page.getByRole("navigation", { name: "Навигация покупателя" }).getByRole("button", { name: /Корзина/ }).click();
   await page.getByRole("button", { name: "Перейти к оформлению", exact: true }).click();
   await expect(page.getByRole("button", { name: "Отправить заявку", exact: true })).toBeEnabled();
   expect(await page.evaluate((key) => sessionStorage.getItem(key + ":checkout_started"), captureMarker)).toBeNull();
