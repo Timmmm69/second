@@ -112,7 +112,7 @@ test("one action duplicates fields and photos but not SKU, stock, published snap
     measurements: { chestCircumference: 940, waistCircumference: 900 },
     hasDefect: true, defectDescription: "Небольшая затяжка",
   });
-  const images = [];
+  const images: string[] = [];
   for (const red of [30, 210]) {
     const result = await upload(source.id, await photo(red));
     assert.equal(result.statusCode, 200, result.body);
