@@ -439,6 +439,8 @@
           422, 'PUBLISH', 'Заполните название, категорию и цену');
         ensure(!item.hasDefect || item.defectDescription.trim(), 422, 'PUBLISH', 'Укажите описание дефекта');
         item.publication = 'PUBLISHED';
+        // Match the real API: intake becomes available only after staff checks it.
+        if (item.physical === 'INTAKE') item.physical = 'AVAILABLE';
       }
       if (action === 'hide') item.publication = 'HIDDEN';
       if (action === 'inspect') { ensure(item.physical === 'INSPECTION' && body.suitable, 409, 'INSPECTION', 'Сначала подтвердите осмотр'); item.physical = 'AVAILABLE'; }
