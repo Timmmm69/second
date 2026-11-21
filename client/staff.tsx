@@ -454,7 +454,12 @@ function ItemEditor({ id }: { id: string }) {
     [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const mutation = useMutation();
   const fileInput = useRef<HTMLInputElement>(null);
-  const draftKey = useRef(operationKey());
+  // Preserve the original payload and key across dropped responses and retries.
+  const draftCreation = useRef<{
+    key: string;
+    payload: Record<string, unknown>;
+    snapshot: { form: typeof initialItem; price: string; size: string };
+  } | null>(null);
   const uploadLock = useRef(false);
   const draggedMedia = useRef<string | null>(null);
   const backupKey = `staff-editor:${user?.id ?? "unknown"}:${id}`;
@@ -465,6 +470,9 @@ function ItemEditor({ id }: { id: string }) {
   const [price, setPrice] = useState("");
   const [size, setSize] = useState("");
   const [attempted, setAttempted] = useState(false);
+  const [draftSaving, setDraftSaving] = useState(false);
+  // The version of the actual editable fields, not the most recently fetched media.
+  const [editVersion, setEditVersion] = useState<number | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   // Read current inputs after awaited uploads, not a stale event closure.
   const latestInputs = useRef({ form, price, size, dirty });
@@ -500,6 +508,7 @@ function ItemEditor({ id }: { id: string }) {
       });
       setPrice(item.priceMissing ? "" : String(item.priceMinor / 100));
       setSize(editableSize(item));
+      setEditVersion(item.version);
       setMeasurementInputs(Object.fromEntries(Object.entries(item.measurements ?? {}).map(([key, value]) => [key, String(value / 10)])));
       setDirty(false);
     }
@@ -516,8 +525,8 @@ function ItemEditor({ id }: { id: string }) {
   }, [dirty]);
   useEffect(() => () => previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url)), []);
   useEffect(() => {
-    if (dirty) saveLocal(backupKey, { form, price, size, version: item?.version });
-  }, [dirty, form, price, size, backupKey]);
+    if (dirty) saveLocal(backupKey, { form, price, size, version: editVersion ?? item?.version });
+  }, [dirty, form, price, size, backupKey, editVersion]);
   const set = (key: string, value: string | boolean) => {
     setForm((v) => ({ ...v, [key]: value }));
     setDirty(true);
@@ -556,32 +565,66 @@ function ItemEditor({ id }: { id: string }) {
     priceMinor: !fieldErrors.price ? priceMinor : null,
     // A draft can omit any of these values; no synthetic prices/categories.
   });
+  const createDraft = () => {
+    const attempt = draftCreation.current ?? {
+      key: operationKey(),
+      payload: draftPayload(),
+      snapshot: { form: latestInputs.current.form, price: latestInputs.current.price, size: latestInputs.current.size },
+    };
+    draftCreation.current = attempt;
+    return api<Item>("/staff/items/draft", {
+      method: "POST",
+      body: attempt.payload,
+      key: attempt.key,
+    });
+  };
   const save = async () => {
     setAttempted(true);
-    if (uploading || mediaBusy || invalidMeasurements.length ||
+    if (uploading || mediaBusy || draftSaving || invalidMeasurements.length ||
       (priceInput && fieldErrors.price) ||
       (item && item.publication !== "DRAFT" && missing.length)) {
       requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
       return;
     }
-    const data = { ...draftPayload(), ...(item ? { version: item.version } : {}) };
-    const result = await mutation.run<Item>(
-      item ? `/staff/items/${item.id}` : "/staff/items/draft",
-      data,
-      item ? "PATCH" : "POST",
-    );
+    const data = { ...draftPayload(), ...(item ? { version: editVersion ?? item.version } : {}) };
+    let result: Item | undefined;
+    if (item) {
+      result = await mutation.run<Item>(`/staff/items/${item.id}`, data, "PATCH");
+    } else {
+      setDraftSaving(true);
+      try {
+        result = await createDraft();
+      } catch (e) {
+        mutation.setError(e);
+      } finally {
+        setDraftSaving(false);
+      }
+    }
     if (result) {
+      // An earlier attempt might have committed while its response was lost.
+      // Never discard edits made since that original, idempotent request.
+      const latest = latestInputs.current;
+      const snapshot = draftCreation.current?.snapshot;
+      const hasNewerInput = id === "new" && snapshot &&
+        JSON.stringify({ form: latest.form, price: latest.price, size: latest.size }) !== JSON.stringify(snapshot);
+      if (hasNewerInput) {
+        saveLocal(`staff-editor:${user?.id ?? "unknown"}:${result.id}`, {
+          form: latest.form, price: latest.price, size: latest.size, version: result.version,
+        });
+      }
       setData(result);
+      setEditVersion(result.version);
       setDirty(false);
       saveLocal(backupKey, null);
       setBackup(null);
-      toast(item?.publication === "PUBLISHED" ? "Карточка сохранена" : "Черновик сохранён");
+      toast(hasNewerInput ? "Черновик создан. Проверьте несохранённые изменения." :
+        item?.publication === "PUBLISHED" ? "Карточка сохранена" : "Черновик сохранён");
       if (id === "new") go(`/staff/items/${result.id}`);
     }
     return result;
   };
   const upload = async (files: File[]) => {
-    if (uploadLock.current || !files.length) return;
+    if (uploadLock.current || draftSaving || mutation.busy || !files.length) return;
     if (files.length > 6 || (item?.media.length ?? 0) + files.length > 12) {
       mutation.setError(new Error("Выберите до 6 файлов за раз; всего в карточке допускается 12 фото."));
       return;
@@ -599,10 +642,8 @@ function ItemEditor({ id }: { id: string }) {
     try {
       if (!target) {
         setUploadStatus("Создаём черновик для фотографий…");
-        // One stable key protects against duplicate drafts after a dropped response.
-        target = await api<Item>("/staff/items/draft", {
-          method: "POST", body: draftPayload(), key: draftKey.current,
-        });
+        // The original payload is retained if a committed response was lost.
+        target = await createDraft();
         setData(target);
       }
       for (let i = 0; i < files.length; i++) {
@@ -712,6 +753,7 @@ function ItemEditor({ id }: { id: string }) {
           setPrice(backup.price);
           setSize(backup.size);
           setMeasurementInputs(Object.fromEntries(Object.entries(backup.form.measurements ?? {}).map(([key, value]) => [key, String(value / 10)])));
+          setEditVersion(backup.version ?? item?.version ?? null);
           setDirty(true);
           setBackup(null);
         }}>Восстановить ввод</Button>
@@ -987,8 +1029,8 @@ function ItemEditor({ id }: { id: string }) {
           />
         ))}
         </fieldset>
-        <Button type="submit" disabled={mutation.busy || uploading || mediaBusy}>
-          {mutation.busy ? "Сохраняем…" : item?.publication === "PUBLISHED" ? "Сохранить карточку" : "Сохранить черновик"}
+        <Button type="submit" disabled={mutation.busy || uploading || mediaBusy || draftSaving}>
+          {mutation.busy || draftSaving ? "Сохраняем…" : item?.publication === "PUBLISHED" ? "Сохранить карточку" : "Сохранить черновик"}
         </Button>
         {dirty && (
           <p className="small-text">
