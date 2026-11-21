@@ -928,24 +928,36 @@ function ItemEditor({ id }: { id: string }) {
         </fieldset>
         <fieldset><legend>Сведения с бирки</legend>
         <p className="small-text">Указывайте только известные сведения. Не заменяйте отсутствующую маркировку предположениями.</p>
+        {([
+          ["brand", "Бренд", clothingBrands],
+          ["color", "Цвет", clothingColors],
+          ["season", "Сезон", clothingSeasons],
+          ["origin", "Страна происхождения", countrySuggestions],
+        ] as const).map(([key, label, suggestions]) => (
+          <Select
+            key={key}
+            label={label}
+            markEmpty={!(key === "color" && legacyColor)}
+            searchPlaceholder={key === "origin" ? "Найти страну" : `Найти или указать ${label.toLocaleLowerCase("ru")}`}
+            allowCustom
+            value={String(form.attributes[key] ?? "")}
+            onValueChange={(value) => attr(key, canonicalChoice(value, suggestions))}
+            options={[{ value: "", label: "Не указано" }, ...valueOptions(suggestions, String(form.attributes[key] ?? ""))]}
+          />
+        ))}
         {[
-          ["brand", "Бренд"],
-          ["color", "Цвет"],
-          ["season", "Сезон"],
           ["material", "Состав"],
           ["care", "Уход"],
           ["manufacturer", "Изготовитель"],
           ["importer", "Импортёр"],
-          ["origin", "Страна происхождения"],
           ["documents", "Маркировка и документы"],
         ].map(([key, label]) => (
           <Field
             key={key}
             label={label}
-            markEmpty={!(key === "color" && legacyColor && String(form.attributes.color) === legacyColor)}
-            value={key === "color" && String(form.attributes.color) === legacyColor ? "" : String(form.attributes[key] ?? "")}
-            hint={key === "color" && legacyColor ? `Сохранён цветовой код ${legacyColor}. Введите известное название цвета. Пустое поле сохранит код.` : undefined}
-            onChange={(e) => attr(key, e.target.value || (key === "color" ? legacyColor : ""))}
+            markEmpty
+            value={String(form.attributes[key] ?? "")}
+            onChange={(event) => attr(key, event.target.value)}
           />
         ))}
         </fieldset>
