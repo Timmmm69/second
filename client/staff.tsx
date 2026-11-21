@@ -458,7 +458,7 @@ function ItemEditor({ id }: { id: string }) {
   const uploadLock = useRef(false);
   const draggedMedia = useRef<string | null>(null);
   const backupKey = `staff-editor:${user?.id ?? "unknown"}:${id}`;
-  const [backup, setBackup] = useState<null | { form: typeof initialItem; price: string; size: string }>(
+  const [backup, setBackup] = useState<null | { form: typeof initialItem; price: string; size: string; version?: number }>(
     () => readLocal(backupKey, null),
   );
   const [checked, setChecked] = useState(false);
@@ -510,7 +510,7 @@ function ItemEditor({ id }: { id: string }) {
     return () => urls.forEach((url) => URL.revokeObjectURL(url));
   }, [uploadFiles]);
   useEffect(() => {
-    if (dirty) saveLocal(backupKey, { form, price, size });
+    if (dirty) saveLocal(backupKey, { form, price, size, version: item?.version });
   }, [dirty, form, price, size, backupKey]);
   const set = (key: string, value: string | boolean) => {
     setForm((v) => ({ ...v, [key]: value }));
@@ -621,7 +621,7 @@ function ItemEditor({ id }: { id: string }) {
       if (id === "new" && target) {
         // Replace the transient /new route with the real server-backed draft.
         if (dirty) {
-          saveLocal(`staff-editor:${user?.id ?? "unknown"}:${target.id}`, { form, price, size });
+          saveLocal(`staff-editor:${user?.id ?? "unknown"}:${target.id}`, { form, price, size, version: target.version });
         }
         saveLocal(backupKey, null);
         go(`/staff/items/${target.id}`);
@@ -690,6 +690,21 @@ function ItemEditor({ id }: { id: string }) {
       <p className="muted">Красным отмечены незаполненные поля. Обязательные поля помечены *.</p>
       <ErrorBox error={error} retry={reload} />
       {mutation.recovery}
+      {backup && !dirty && <div className="notice">
+        <p>На этом устройстве остались несохранённые поля. Серверная карточка не изменена.</p>
+        <Button secondary onClick={() => {
+          if (item && backup.version !== undefined && backup.version !== item.version) {
+            mutation.setError(new Error("Карточку изменили на другом устройстве. Сначала сверьте данные, чтобы не перезаписать правки."));
+            return;
+          }
+          setForm(backup.form);
+          setPrice(backup.price);
+          setSize(backup.size);
+          setMeasurementInputs(Object.fromEntries(Object.entries(backup.form.measurements ?? {}).map(([key, value]) => [key, String(value / 10)])));
+          setDirty(true);
+          setBackup(null);
+        }}>Восстановить ввод</Button>
+      </div>}
       {item && (
         <div className="status-strip">
           <span>{statusNames[item.publication] || item.publication}</span>
@@ -977,6 +992,9 @@ function ItemEditor({ id }: { id: string }) {
             <Button secondary onClick={() => setPreview(true)}>
               Предпросмотр карточки
             </Button>
+            {item.publication !== "PUBLISHED" && missing.length > 0 && (
+              <p className="small-text">Перед публикацией заполните: {missing.join("; ")}.</p>
+            )}
             {item.publication === "PUBLISHED" ? (
               <Button
                 secondary
@@ -1007,19 +1025,19 @@ function ItemEditor({ id }: { id: string }) {
                 </label>
                 <Button
                   disabled={!checked || dirty || mutation.busy}
-                  onClick={() =>
-                    mutation
-                      .run<Item>(`/staff/items/${id}/publish`, {
-                        version: item.version,
-                        checked: true,
-                      })
-                      .then((result) => {
-                        if (result) {
-                          setData(result);
-                          toast("Вещь опубликована");
-                        }
-                      })
-                  }
+                  onClick={() => {
+                    setAttempted(true);
+                    if (missing.length) {
+                      requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+                      return;
+                    }
+                    void mutation.run<Item>(`/staff/items/${item.id}/publish`, {
+                      version: item.version,
+                      checked: true,
+                    }).then((result) => {
+                      if (result) { setData(result); toast("Вещь опубликована"); }
+                    });
+                  }}
                 >
                   Опубликовать
                 </Button>
@@ -1075,10 +1093,10 @@ function ItemEditor({ id }: { id: string }) {
       )}
       {preview && (
         <Sheet title="Предпросмотр" onClose={() => setPreview(false)}>
-          <Photo media={item?.media.find((photo) => photo.role !== "MEASUREMENT")} alt={form.title} contain />
+          <Photo media={item?.media[0]} alt={form.title} contain />
           <h1>{form.title || "Название не заполнено"}</h1>
           {productSize(attributes) && <p>{productSize(attributes)}</p>}
-          <strong>{money(priceMinor)}</strong>
+          <strong>{!priceInput ? "Цена не указана" : money(priceMinor)}</strong>
           {form.description.trim() && <p className="pre-wrap">{form.description}</p>}
           {productColor(attributes.color) && <p>{productColor(attributes.color)}</p>}
           {String(form.attributes.material ?? "").trim() && <p>{form.attributes.material}</p>}
