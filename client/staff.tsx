@@ -1951,7 +1951,7 @@ function Counter() {
   );
 }
 function Returns() {
-  const { user, go, toast, ownerCode, setOwnerCode } = useApp();
+  const { user, go, toast } = useApp();
   const { data, error, loading, reload } = useLoad<{ returns: Return[] }>(
     "/staff/returns",
   );
@@ -1959,15 +1959,6 @@ function Returns() {
   return (
     <div className="page narrow">
       <h1>Возвраты и осмотр</h1>
-      {user?.role === "OWNER" && (
-        <Field
-          label="Код владельца для принятия решения"
-          value={ownerCode}
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          onChange={(e) => setOwnerCode(e.target.value)}
-        />
-      )}
       <p className="muted">
         До физического приёма и проверки вещи остаются недоступны.
       </p>
