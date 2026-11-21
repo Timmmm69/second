@@ -541,53 +541,120 @@ function ItemEditor({ id }: { id: string }) {
       !/^\d+(\.\d{1,2})?$/.test(priceInput) || priceMinor > 100000000 ? "Укажите цену от 0 до 1 000 000 BYN с точностью до копеек" : undefined,
     defect: form.hasDefect && !form.defectDescription.trim() ? "Опишите конкретный дефект" : undefined,
   };
+  const draftPayload = () => ({
+    ...form,
+    title: form.title.trim() || null,
+    category: form.category || null,
+    attributes,
+    sku: form.sku.trim() || undefined,
+    priceMinor: !fieldErrors.price ? priceMinor : null,
+    // A draft can omit any of these values; no synthetic prices/categories.
+  });
   const save = async () => {
-    const data = {
-      ...form,
-      attributes,
-      sku: form.sku.trim() || undefined,
-      priceMinor,
-      ...(item ? { version: item.version } : {}),
-    };
+    setAttempted(true);
+    if (uploading || mediaBusy || invalidMeasurements.length ||
+      (priceInput && fieldErrors.price) ||
+      (item && item.publication !== "DRAFT" && missing.length)) {
+      requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+      return;
+    }
+    const data = { ...draftPayload(), ...(item ? { version: item.version } : {}) };
     const result = await mutation.run<Item>(
-      id === "new" ? "/staff/items" : `/staff/items/${id}`,
+      item ? `/staff/items/${item.id}` : "/staff/items/draft",
       data,
-      id === "new" ? "POST" : "PATCH",
+      item ? "PATCH" : "POST",
     );
     if (result) {
       setData(result);
       setDirty(false);
-      toast("Карточка сохранена");
+      saveLocal(backupKey, null);
+      setBackup(null);
+      toast(item?.publication === "PUBLISHED" ? "Карточка сохранена" : "Черновик сохранён");
       if (id === "new") go(`/staff/items/${result.id}`);
     }
     return result;
   };
   const upload = async (files: File[]) => {
-    if (!item) {
-      mutation.setError(
-        new Error("Сначала сохраните карточку, затем добавьте фотографии."),
-      );
+    if (uploadLock.current || !files.length) return;
+    if (files.length > 6 || (item?.media.length ?? 0) + files.length > 12) {
+      mutation.setError(new Error("Выберите до 6 файлов за раз; всего в карточке допускается 12 фото."));
       return;
     }
-    setUploadFiles(files);
-    for (let i = 0; i < files.length; i++) {
-      setUploadStatus(`Загружаем ${i + 1} из ${files.length}…`);
-      const body = new FormData();
-      body.append("itemId", item.id);
-      body.append("file", files[i]);
-      try {
-        await api<Media>("/staff/media/uploads", { method: "POST", body });
-        setUploadFiles(files.slice(i + 1));
-      } catch (e) {
-        mutation.setError(e);
-        setUploadStatus("Загрузка прервана. Остальные файлы можно повторить.");
-        reload();
-        return;
-      }
+    if (files.some((file) => file.size > 15 * 1024 * 1024)) {
+      mutation.setError(new Error("Каждый файл должен быть не больше 15 МБ."));
+      return;
     }
-    setUploadFiles([]);
-    setUploadStatus("Фотографии обработаны и сохранены");
-    reload();
+    uploadLock.current = true;
+    setUploading(true);
+    setUploadedCount(0);
+    setUploadFiles(files);
+    let target = item;
+    try {
+      if (!target) {
+        setUploadStatus("Создаём черновик для фотографий…");
+        // One stable key protects against duplicate drafts after a dropped response.
+        target = await api<Item>("/staff/items/draft", {
+          method: "POST", body: draftPayload(), key: draftKey.current,
+        });
+        setData(target);
+      }
+      for (let i = 0; i < files.length; i++) {
+        setUploadStatus(`Загружаем фото ${i + 1} из ${files.length}…`);
+        const body = new FormData();
+        body.append("itemId", target.id);
+        body.append("file", files[i]);
+        try {
+          await api<Media>("/staff/media/uploads", { method: "POST", body });
+        } catch (e) {
+          setUploadFiles(files.slice(i));
+          setUploadStatus(`Загружено ${i} из ${files.length}. Повторите оставшиеся файлы.`);
+          mutation.setError(e);
+          reload();
+          return;
+        }
+        setUploadedCount(i + 1);
+        setUploadFiles(files.slice(i + 1));
+      }
+      setUploadFiles([]);
+      setUploadStatus("Фотографии сохранены");
+      reload();
+      if (id === "new" && target) {
+        // Replace the transient /new route with the real server-backed draft.
+        if (dirty) {
+          saveLocal(`staff-editor:${user?.id ?? "unknown"}:${target.id}`, { form, price, size });
+        }
+        saveLocal(backupKey, null);
+        go(`/staff/items/${target.id}`);
+      }
+    } catch (e) {
+      mutation.setError(e);
+      setUploadStatus("Не удалось подготовить загрузку. Повторите выбор фотографий.");
+    } finally {
+      uploadLock.current = false;
+      setUploading(false);
+    }
+  };
+  const reorderMedia = async (sourceId: string, targetIndex: number) => {
+    if (!item || mediaBusy || mutation.busy || uploading) return;
+    const expectedOrder = item.media.map((media) => media.id);
+    const ids = expectedOrder.filter((id) => id !== sourceId);
+    if (ids.length === expectedOrder.length) return;
+    ids.splice(Math.max(0, Math.min(targetIndex, ids.length)), 0, sourceId);
+    if (ids.every((id, index) => id === expectedOrder[index])) return;
+    setMediaBusy(true);
+    try {
+      await api(`/staff/items/${item.id}/media-order`, {
+        method: "PUT", body: { ids, expectedOrder },
+      });
+      setData({ ...item, media: ids.map((id, position) => ({
+        ...item.media.find((photo) => photo.id === id)!, position,
+      })) });
+    } catch (e) {
+      mutation.setError(e);
+      reload();
+    } finally {
+      setMediaBusy(false);
+    }
   };
   const mediaAction = async (
     media: Media,
