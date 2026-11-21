@@ -686,8 +686,8 @@ function ItemEditor({ id }: { id: string }) {
   return (
     <div className="page narrow item-editor">
       <h1>{id === "new" ? "Новая вещь" : "Карточка вещи"}</h1>
-      <nav className="editor-shortcuts" aria-label="Разделы карточки"><a href="#editor-basic" onClick={e => { e.preventDefault(); document.getElementById("editor-basic")?.scrollIntoView(); }}>Данные</a><a href="#editor-photos" onClick={e => { e.preventDefault(); document.getElementById("editor-photos")?.scrollIntoView(); }}>Фото</a></nav>
-      <p className="muted">Красным отмечены незаполненные поля. Обязательные поля помечены *.</p>
+      <nav className="editor-shortcuts" aria-label="Разделы карточки"><a href="#editor-photos" onClick={e => { e.preventDefault(); document.getElementById("editor-photos")?.scrollIntoView(); }}>Фото</a><a href="#editor-basic" onClick={e => { e.preventDefault(); document.getElementById("editor-basic")?.scrollIntoView(); }}>Данные</a></nav>
+      <p className="muted">Поля со * обязательны только при публикации. Черновик можно сохранить незаполненным.</p>
       <ErrorBox error={error} retry={reload} />
       {mutation.recovery}
       {backup && !dirty && <div className="notice">
@@ -937,7 +937,7 @@ function ItemEditor({ id }: { id: string }) {
             maxLength={4000}
             value={form.defectDescription}
             onChange={(value) => set("defectDescription", value)}
-            hint="Укажите конкретную особенность. Добавьте фото дефекта ниже. При выключении флага текст удалится после сохранения."
+            hint="Укажите конкретную особенность и при необходимости добавьте её фотографию выше. При выключении флага текст удалится после сохранения."
           />
         )}
         </fieldset>
