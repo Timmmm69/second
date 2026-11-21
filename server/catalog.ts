@@ -63,7 +63,7 @@ async function mapItems(rows: any[], staff = false) {
   if (!rows.length) return [];
   const assets = (
     await pool.query(
-      "SELECT item_id,id,width,height,variants,role,position FROM media_assets WHERE item_id=ANY($1::uuid[]) AND state='READY' ORDER BY item_id,position,created_at",
+      "SELECT item_id,id,width,height,variants,role,position FROM media_assets WHERE item_id=ANY($1::uuid[]) AND state='READY' ORDER BY item_id,position,created_at,id",
       [rows.map((row) => row.id)],
     )
   ).rows;
