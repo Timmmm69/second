@@ -542,7 +542,7 @@ function Catalog() {
 function CatalogProductCard({ item, categoryName, priority, onOpen, selected, onToggle }: {
   item: Item; categoryName?: string; priority: boolean; onOpen: () => void; selected: boolean; onToggle: () => void;
 }) {
-  const photos = item.media?.filter((photo) => photo.role !== "MEASUREMENT") ?? [];
+  const photos = item.media ?? [];
   const [photoIndex, setPhotoIndex] = useState(0);
   const photo = photos[photoIndex];
   const changePhoto = (delta: number) => {
@@ -650,7 +650,7 @@ function ItemPage({ id }: { id: string }) {
     };
   }, [available]);
   const size = productSize(item?.attributes);
-  const media = item?.media.filter((photo) => photo.role !== "MEASUREMENT") ?? [];
+  const media = item?.media ?? [];
   const gallerySwipeRef = useHorizontalSwipe<HTMLDivElement>({
     enabled: zoom === 1 && media.length > 1,
     onSwipe: (delta) => setIndex((current) => (current + delta + media.length) % media.length),
@@ -961,7 +961,7 @@ function Selection() {
                   className="row-photo"
                   onClick={() => go(`/items/${item.id}`)}
                 >
-                  <Photo media={item.media.find((photo) => photo.role !== "MEASUREMENT")} alt={item.title} />
+                  <Photo media={item.media[0]} alt={item.title} />
                 </button>
                 <div className="row-content">
                   <button
@@ -1246,7 +1246,7 @@ function Checkout() {
           <div className="compact-lines">
             {selection.map(item => (
               <div className="item-row" key={item.id}>
-                <Photo media={item.media.find(photo => photo.role !== "MEASUREMENT")} alt={item.title} />
+                <Photo media={item.media[0]} alt={item.title} />
                 <div>
                   <strong>{item.title}</strong>
                   <Defect item={item} />
@@ -1289,7 +1289,7 @@ export function OrderCard({
       <div className="order-card-content">
         <div className="mini-photos">
           {order.lines.slice(0, 3).map((line) => (
-            <Photo key={line.id} media={line.media?.find((photo) => photo.role !== "MEASUREMENT")} alt={line.title} />
+            <Photo key={line.id} media={line.media?.[0]} alt={line.title} />
           ))}
         </div>
         <strong>{money(order.totalMinor)}</strong>
@@ -1617,7 +1617,7 @@ function OrderPage({ id }: { id: string }) {
         <div className="item-list">
           {order.lines.map((line) => (
             <div className="item-row" key={line.id}>
-              <Photo media={line.media?.find((photo) => photo.role !== "MEASUREMENT")} alt={line.title} />
+              <Photo media={line.media?.[0]} alt={line.title} />
               <div>
                 <strong>{line.title}</strong>
                 <Defect item={line} />
