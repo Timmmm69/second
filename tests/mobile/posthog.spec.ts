@@ -30,6 +30,8 @@ test("full card to saved order is private and deduplicated after reload", async 
   await expect.poll(() => mocks.capturedEvents.length).toBe(3);
   const distinct = await page.evaluate((key) => sessionStorage.getItem(key), captureMarker);
   expect(distinct).toMatch(/^[0-9a-f-]{36}$/);
+  expect(mocks.apiRequests.filter((request) => /^(POST \/auth\/telegram|GET \/auth\/me)$/.test(request)))
+    .toEqual(["POST /auth/telegram"]);
   expect(mocks.capturedEvents.map(({body}) => body)).toEqual(
     ["product_viewed", "checkout_started", "order_submitted"].map((event) => ({
       api_key: testAnalyticsToken, event,

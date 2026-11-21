@@ -88,8 +88,7 @@ export async function buildApp({ staticFiles = true } = {}) {
           "Запрос с другого сайта запрещён",
         );
     }
-    if (req.url.startsWith("/api/") || req.url.startsWith("/media/"))
-      await authenticate(req);
+    if (req.url.startsWith("/api/")) await authenticate(req);
   });
   app.addHook("onSend", async (req, reply, payload) => {
     if (req.url.startsWith("/api/")) reply.header("Cache-Control", "no-store");
@@ -226,7 +225,21 @@ ${image ? `<meta property="og:image" content="${escape(image)}">` : ""}
     const root = path.resolve("dist");
     try {
       await access(path.join(root, "index.html"));
-      await app.register(staticPlugin, { root, prefix: "/", wildcard: true });
+      await app.register(staticPlugin, {
+        root,
+        prefix: "/",
+        wildcard: true,
+        setHeaders(res, filePath) {
+          const relative = path.relative(root, filePath).split(path.sep).join("/");
+          if (relative === "index.html") {
+            // Revalidate entry HTML, including the SPA fallback, after deploys.
+            res.header("Cache-Control", "no-cache");
+          } else if (/^assets\/[^/]+-[A-Za-z0-9_-]{8,}\.(?:js|css)$/.test(relative)) {
+            // Only Vite-fingerprinted assets are safe to keep indefinitely.
+            res.header("Cache-Control", "public, max-age=31536000, immutable");
+          }
+        },
+      });
       hasStatic = true;
     } catch {
       /* npm run build creates the UI */

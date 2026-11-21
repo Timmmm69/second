@@ -8,6 +8,7 @@ import { pool, tx } from "./db.js";
 import { config } from "./config.js";
 import { assert, AppError } from "./errors.js";
 import { audit } from "./inventory.js";
+import { authenticate } from "./auth.js";
 sharp.concurrency(1);
 // Files are replaced on rotation; don't retain native caches or stale file inputs.
 sharp.cache(false);
@@ -82,14 +83,16 @@ async function writePhoto(
   }
 }
 const pId = z.object({ id: z.uuid() });
-async function mediaStream(filename: string) {
+async function openMedia(filename: string) {
   try {
-    // Open before choosing image content type so missing files produce a JSON 404.
-    const file = await open(filename, "r");
-    return file.createReadStream();
+    // The descriptor stays pinned to the file even while rotation replaces its path.
+    return await open(filename, "r");
   } catch {
     throw new AppError(404, "MEDIA_MISSING", "Фото временно недоступно");
   }
+}
+async function mediaStream(filename: string) {
+  return (await openMedia(filename)).createReadStream();
 }
 export async function registerMedia(app: FastifyInstance) {
   app.post(
@@ -308,6 +311,8 @@ export async function serveMedia(app: FastifyInstance) {
       a.publication === "PUBLISHED" &&
       ["AVAILABLE", "PICKED", "PACKED"].includes(a.physical);
     if (!publicPhoto) {
+      // Public photos need only the visibility lookup, not a session query.
+      await authenticate(req);
       const actor = req.actor;
       assert(actor, 403, "PRIVATE_MEDIA", "Фотография недоступна");
       if (actor.role === "BUYER") {
@@ -328,10 +333,30 @@ export async function serveMedia(app: FastifyInstance) {
       "Cache-Control",
       publicPhoto ? "public, max-age=15" : "private, no-store",
     );
-    const stream = await mediaStream(
-      path.join(config.mediaDir, id, width + ".webp"),
-    );
-    reply.type("image/webp");
-    return stream;
+    const file = await openMedia(path.join(config.mediaDir, id, width + ".webp"));
+    try {
+      if (publicPhoto) {
+        // fstat the descriptor, not the pathname: validator and bytes refer to
+        // the same inode even if a new version is atomically renamed over it.
+        const stat = await file.stat({ bigint: true });
+        const etag = '"' + createHash("sha256")
+          .update([stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(":"))
+          .digest("base64url") + '"';
+        reply.header("ETag", etag);
+        const condition = req.headers["if-none-match"];
+        if (typeof condition === "string" && condition.split(",").some((value) => {
+          const tag = value.trim();
+          return tag === "*" || tag === etag || tag === "W/" + etag;
+        })) {
+          await file.close();
+          return reply.code(304).send();
+        }
+      }
+      reply.type("image/webp");
+      return file.createReadStream();
+    } catch (error) {
+      await file.close();
+      throw error;
+    }
   });
 }

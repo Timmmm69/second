@@ -11,6 +11,7 @@ import { createRoot } from "react-dom/client";
 import { api, command, readLocal, saveLocal } from "./api";
 import { AppContext } from "./context";
 import { tg } from "./telegram";
+import { createAuthBootstrap } from "./auth-bootstrap";
 import { Button, ErrorBox, Icon, Loading, Sheet } from "./ui";
 import type { Category, Item, Settings, User, Role } from "./types";
 import type { PublicPostHog } from "../shared/posthog.js";
@@ -84,6 +85,10 @@ function App() {
       clearInterval(timer);
     };
   }, []);
+  const authenticate = useRef(createAuthBootstrap<User>(
+    (initData) => command("/auth/telegram", { initData }),
+    () => api("/auth/me"),
+  ));
   const refreshUser = useCallback(async () => {
     const data = await api<{ user: User | null; dev: boolean }>("/auth/me");
     setUser(data.user);
@@ -93,10 +98,10 @@ function App() {
     let active = true;
     (async () => {
       try {
-        if (tg()?.initData)
-          await command("/auth/telegram", { initData: tg()?.initData });
+        const result = await authenticate.current(tg()?.initData);
         if (active) {
-          await refreshUser();
+          setUser(result.user);
+          setDev(result.dev);
           if (!location.hash) {
             const hint = miniAppRouteHint();
             if (hint) go(hint);
@@ -111,7 +116,7 @@ function App() {
     return () => {
       active = false;
     };
-  }, [refreshUser, sdkReady]);
+  }, [go, sdkReady]);
   const refreshSettings = useCallback(async () => {
     setSettings(await api<RuntimeSettings>("/settings"));
   }, []);

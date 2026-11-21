@@ -215,3 +215,35 @@ test("Telegram item preview is public, escaped, and never exposes hidden stock",
     await pool.query("UPDATE media_assets SET variants=$2 WHERE id=$1", [mediaIds[2], { "480": "/first.webp" }]);
   }
 });
+
+test("small catalog: inspect real search and options query plans without adding indexes", async (t) => {
+  const spy = t.mock.method(pool, "query");
+  const catalog = await app.inject("/api/catalog?q=" + marker + "&sort=price_asc");
+  const options = await app.inject("/api/catalog/options");
+  const statements = spy.mock.calls.map(call => ({
+    sql: String(call.arguments[0]),
+    params: call.arguments[1] as unknown[] | undefined,
+  }));
+  spy.mock.restore();
+  assert.equal(catalog.statusCode, 200, catalog.body);
+  assert.equal(options.statusCode, 200, options.body);
+  const search = statements.find(call => call.sql.includes("FROM items i WHERE") && call.sql.includes("ORDER BY"));
+  const facets = statements.find(call => call.sql.includes("array_agg(DISTINCT"));
+  assert.ok(search, "capture actual catalog SQL");
+  assert.ok(facets, "capture actual options SQL");
+  for (const [name, statement] of [["search", search], ["options", facets]] as const) {
+    const { rows } = await pool.query(
+      "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + statement.sql,
+      statement.params,
+    );
+    const plan = rows[0]["QUERY PLAN"][0];
+    assert.ok(Number.isFinite(plan["Execution Time"]));
+    console.log(JSON.stringify({
+      catalogPlan: name,
+      fixtureItems: itemIds.length,
+      node: plan.Plan["Node Type"],
+      planningMs: plan["Planning Time"],
+      executionMs: plan["Execution Time"],
+    }));
+  }
+});

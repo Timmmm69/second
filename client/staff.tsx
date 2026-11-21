@@ -1,10 +1,11 @@
 import { catalogAudiences, isLetterSize, letterSizePattern, productColor, productSize } from "../shared/catalog-attributes.js";
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import { api, readLocal, saveLocal } from "./api";
 import { useApp } from "./context";
 import { OrderCard } from "./buyer";
 import { useMutation } from "./mutations";
 import { tg, openTelegram } from "./telegram";
+import { startVisibleQueuePolling } from "./queue-poll";
 import {
   Button,
   Copy,
@@ -46,18 +47,43 @@ export default function Staff() {
   if (path === "/staff/counter") return <Counter />;
   return <Queue key={path} />;
 }
+/**
+ * Queue-only guarded loader: aborted/out-of-order responses cannot overwrite
+ * the current filter, including when a hidden tab becomes active again.
+ */
+function useQueueLoad<T>(path: string) {
+  const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [loading, setLoading] = useState(true);
+  const [revision, setRevision] = useState(0);
+  const reload = useCallback(() => setRevision((value) => value + 1), []);
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    setLoading(true);
+    setError(null);
+    api<T>(path, { signal: controller.signal })
+      .then((result) => { if (active && !controller.signal.aborted) setData(result); })
+      .catch((cause) => {
+        if (active && !controller.signal.aborted && cause?.name !== "AbortError")
+          setError(cause);
+      })
+      .finally(() => {
+        if (active && !controller.signal.aborted) setLoading(false);
+      });
+    return () => { active = false; controller.abort(); };
+  }, [path, revision]);
+  return { data, error, loading, reload };
+}
 function Queue() {
   const { go, path } = useApp();
   const [filter, setFilter] = useState(path === "/staff/issues" ? "problems" : "checking");
-  const { data, error, loading, reload } = useLoad<{
+  const { data, error, loading, reload } = useQueueLoad<{
     orders: Order[];
     issues: Issue[];
   }>(`/staff/queue?filter=${filter}`);
   const mutation = useMutation();
-  useEffect(() => {
-    const timer = setInterval(reload, 30000);
-    return () => clearInterval(timer);
-  }, [reload]);
+  useEffect(() => startVisibleQueuePolling(reload), [reload]);
   return (
     <div className="page narrow">
       <div className="section-heading">
