@@ -1,4 +1,5 @@
 import {
+  Component,
   StrictMode,
   Suspense,
   lazy,
@@ -6,6 +7,7 @@ import {
   useRef,
   useEffect,
   useState,
+  type ReactNode,
 } from "react";
 import { createRoot } from "react-dom/client";
 import { api, command, readLocal, saveLocal } from "./api";
@@ -18,6 +20,49 @@ import Buyer from "./buyer";
 import "./style.css";
 const Staff = lazy(() => import("./staff"));
 const Owner = lazy(() => import("./owner"));
+
+// A deployed version may remove a lazy chunk while an older Telegram WebView
+// still holds the previous entry bundle. Reload at most once per minute.
+window.addEventListener("vite:preloadError", (event) => {
+  let retry = false;
+  try {
+    const key = "luchok:chunk-reload";
+    const previous = Number(sessionStorage.getItem(key) || 0);
+    if (!Number.isFinite(previous) || Date.now() - previous > 60_000) {
+      sessionStorage.setItem(key, String(Date.now()));
+      retry = true;
+    }
+  } catch {
+    // Storage may be restricted in an embedded WebView. Use the error UI.
+  }
+  if (retry) {
+    event.preventDefault();
+    location.reload();
+  }
+});
+
+class RouteErrorBoundary extends Component<
+  { children: ReactNode; onCatalog: () => void },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="page narrow" role="alert">
+        <h1>Не удалось открыть раздел</h1>
+        <p>Возможно, приложение обновилось. Перезагрузите страницу и попробуйте снова.</p>
+        <div className="button-stack">
+          <Button onClick={() => location.reload()}>Перезагрузить</Button>
+          <Button secondary onClick={this.props.onCatalog}>В каталог</Button>
+        </div>
+      </div>
+    );
+  }
+}
 function miniAppRouteHint() {
   const query = new URLSearchParams(location.search);
   const start =
@@ -518,7 +563,8 @@ function App() {
           <Loading />
         ) : (
           <main id="main-content">
-            <Suspense fallback={<Loading />}>
+            <RouteErrorBoundary key={path} onCatalog={() => go("/catalog")}>
+              <Suspense fallback={<Loading />}>
               {staff ? (
                 user?.role === "STAFF" || user?.role === "OWNER" ? (
                   path.startsWith("/owner") ? (
@@ -547,7 +593,8 @@ function App() {
               ) : (
                 <Buyer />
               )}
-            </Suspense>
+              </Suspense>
+            </RouteErrorBoundary>
           </main>
         )}
         <nav

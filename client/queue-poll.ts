@@ -13,8 +13,10 @@ export function startVisibleQueuePolling(
   } = {
     page: document,
     browser: window,
-    schedule: setInterval,
-    cancel: clearInterval,
+    // Native browser timers require a Window receiver. Do not call unbound
+    // setInterval/clearInterval through an ordinary env object's methods.
+    schedule: (fn, ms) => setInterval(fn, ms),
+    cancel: (handle) => clearInterval(handle),
     now: Date.now,
   },
 ) {
