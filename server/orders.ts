@@ -149,35 +149,16 @@ async function releaseLines(
       l.item_id,
     );
 }
-export async function readOrder(c: PoolClient, id: string, actor: Actor) {
-  const o = (
-    await c.query(
-      "SELECT o.*,r.status AS reservation_status FROM orders o JOIN reservations r ON r.order_id=o.id WHERE o.id=$1",
-      [id],
-    )
-  ).rows[0];
-  assert(o, 404, "ORDER_NOT_FOUND", "Обращение не найдено");
-  assert(
-    actor.id === o.user_id || actor.role !== "BUYER",
-    403,
-    "FORBIDDEN",
-    "Нет доступа к этому обращению",
-  );
-  if (actor.role !== "BUYER")
-    await c.query(
-      "INSERT INTO access_events(actor_id,action,entity_id) VALUES($1,$2,$3)",
-      [actor.id, "order.read", id],
-    );
-  const lines = await orderLines(c, id),
-    sh = (
-      await c.query(
-        "SELECT * FROM shipments WHERE order_id=$1 AND status<>'CANCELLED' ORDER BY created_at DESC LIMIT 1",
-        [id],
-      )
-    ).rows[0];
-  const handover = (
-    await c.query("SELECT id,state FROM handovers WHERE order_id=$1", [id])
-  ).rows[0];
+function presentOrder(
+  o: OrderRow,
+  actor: Actor,
+  lines: any[],
+  sh: any,
+  handover: any,
+  returnCases: any[],
+  notes: any[] | undefined,
+  buyerRow: any,
+) {
   const ruleSnapshot = structuredClone(o.rule_snapshot);
   if (actor.role === "BUYER" && ruleSnapshot.carriers)
     ruleSnapshot.carriers = Object.fromEntries(
@@ -188,34 +169,6 @@ export async function readOrder(c: PoolClient, id: string, actor: Actor) {
         ],
       ),
     );
-  const returnCases = (
-    await c.query(
-      'SELECT id,status,created_at AS "createdAt",received_at AS "receivedAt",closed_at AS "closedAt" FROM return_cases WHERE order_id=$1 ORDER BY created_at DESC',
-      [id],
-    )
-  ).rows.map((r) => ({
-    ...r,
-    decision:
-      r.status === "CLOSED"
-        ? "Решение принято; подробности сообщит магазин"
-        : undefined,
-  }));
-  const notes =
-    actor.role === "BUYER"
-      ? undefined
-      : (
-          await c.query(
-            "SELECT id,note_enc,created_at FROM contact_notes WHERE order_id=$1 ORDER BY created_at",
-            [id],
-          )
-        ).rows.map((r) => ({
-          id: r.id,
-          note: decrypt(r.note_enc),
-          createdAt: r.created_at,
-        }));
-  const buyerRow = actor.role !== "BUYER"
-    ? (await c.query("SELECT telegram_id,display_name,username FROM users WHERE id=$1", [o.user_id])).rows[0]
-    : null;
   return {
     ...(buyerRow ? { buyer: {
       telegramId: String(buyerRow.telegram_id),
@@ -282,6 +235,174 @@ export async function readOrder(c: PoolClient, id: string, actor: Actor) {
       : undefined,
   };
 }
+export async function readOrder(c: PoolClient, id: string, actor: Actor) {
+  const o = (
+    await c.query(
+      "SELECT o.*,r.status AS reservation_status FROM orders o JOIN reservations r ON r.order_id=o.id WHERE o.id=$1",
+      [id],
+    )
+  ).rows[0];
+  assert(o, 404, "ORDER_NOT_FOUND", "Обращение не найдено");
+  assert(
+    actor.id === o.user_id || actor.role !== "BUYER",
+    403,
+    "FORBIDDEN",
+    "Нет доступа к этому обращению",
+  );
+  if (actor.role !== "BUYER")
+    await c.query(
+      "INSERT INTO access_events(actor_id,action,entity_id) VALUES($1,$2,$3)",
+      [actor.id, "order.read", id],
+    );
+  const lines = await orderLines(c, id),
+    sh = (
+      await c.query(
+        "SELECT * FROM shipments WHERE order_id=$1 AND status<>'CANCELLED' ORDER BY created_at DESC LIMIT 1",
+        [id],
+      )
+    ).rows[0];
+  const handover = (
+    await c.query("SELECT id,state FROM handovers WHERE order_id=$1", [id])
+  ).rows[0];
+  const returnCases = (
+    await c.query(
+      'SELECT id,status,created_at AS "createdAt",received_at AS "receivedAt",closed_at AS "closedAt" FROM return_cases WHERE order_id=$1 ORDER BY created_at DESC',
+      [id],
+    )
+  ).rows.map((r) => ({
+    ...r,
+    decision:
+      r.status === "CLOSED"
+        ? "Решение принято; подробности сообщит магазин"
+        : undefined,
+  }));
+  const notes =
+    actor.role === "BUYER"
+      ? undefined
+      : (
+          await c.query(
+            "SELECT id,note_enc,created_at FROM contact_notes WHERE order_id=$1 ORDER BY created_at",
+            [id],
+          )
+        ).rows.map((r) => ({
+          id: r.id,
+          note: decrypt(r.note_enc),
+          createdAt: r.created_at,
+        }));
+  const buyerRow = actor.role !== "BUYER"
+    ? (await c.query("SELECT telegram_id,display_name,username FROM users WHERE id=$1", [o.user_id])).rows[0]
+    : null;
+  return presentOrder(o, actor, lines, sh, handover, returnCases, notes, buyerRow);
+}
+function groupOrderRows<T extends { order_id: string }>(rows: T[]): Map<string, T[]> {
+  const result = new Map<string, T[]>();
+  for (const row of rows) {
+    const list = result.get(row.order_id) ?? [];
+    list.push(row);
+    result.set(row.order_id, list);
+  }
+  return result;
+}
+
+/** Read list details in one transaction, preserving each order's access rules and audit. */
+export async function readOrders(c: PoolClient, ids: string[], actor: Actor) {
+  if (!ids.length) return [];
+  const orders = (
+    await c.query(
+      "SELECT o.*,r.status AS reservation_status FROM orders o JOIN reservations r ON r.order_id=o.id WHERE o.id=ANY($1::uuid[])",
+      [ids],
+    )
+  ).rows as OrderRow[];
+  const byId = new Map(orders.map((order) => [order.id, order]));
+  // Check every requested ID before reading private relationships or recording access.
+  for (const id of ids) {
+    const o = byId.get(id);
+    assert(o, 404, "ORDER_NOT_FOUND", "Обращение не найдено");
+    assert(
+      actor.id === o.user_id || actor.role !== "BUYER",
+      403,
+      "FORBIDDEN",
+      "Нет доступа к этому обращению",
+    );
+  }
+  if (actor.role !== "BUYER")
+    // One durable audit row per order, identical to readOrder's semantics.
+    await c.query(
+      "INSERT INTO access_events(actor_id,action,entity_id) SELECT $1,'order.read',id::text FROM unnest($2::uuid[]) AS id",
+      [actor.id, ids],
+    );
+  const lines = groupOrderRows(
+    (
+      await c.query(
+        "SELECT ol.*,i.storage_location FROM order_lines ol JOIN items i ON i.id=ol.item_id WHERE ol.order_id=ANY($1::uuid[]) ORDER BY ol.order_id,ol.item_id",
+        [ids],
+      )
+    ).rows,
+  );
+  const shipments = new Map(
+    (
+      await c.query(
+        "SELECT DISTINCT ON (order_id) * FROM shipments WHERE order_id=ANY($1::uuid[]) AND status<>'CANCELLED' ORDER BY order_id,created_at DESC",
+        [ids],
+      )
+    ).rows.map((row) => [row.order_id, row]),
+  );
+  const handovers = new Map(
+    (
+      await c.query(
+        "SELECT id,state,order_id FROM handovers WHERE order_id=ANY($1::uuid[])",
+        [ids],
+      )
+    ).rows.map((row) => [row.order_id, row]),
+  );
+  const returns = groupOrderRows(
+    (
+      await c.query(
+        'SELECT order_id,id,status,created_at AS "createdAt",received_at AS "receivedAt",closed_at AS "closedAt" FROM return_cases WHERE order_id=ANY($1::uuid[]) ORDER BY order_id,created_at DESC',
+        [ids],
+      )
+    ).rows,
+  );
+  const notes = actor.role === "BUYER" ? new Map<string, any[]>() : groupOrderRows(
+    (
+      await c.query(
+        "SELECT order_id,id,note_enc,created_at FROM contact_notes WHERE order_id=ANY($1::uuid[]) ORDER BY order_id,created_at",
+        [ids],
+      )
+    ).rows,
+  );
+  const buyers = actor.role === "BUYER" ? new Map<string, any>() : new Map(
+    (
+      await c.query(
+        "SELECT id,telegram_id,display_name,username FROM users WHERE id=ANY($1::uuid[])",
+        [[...new Set(orders.map((o) => o.user_id))]],
+      )
+    ).rows.map((row) => [row.id, row]),
+  );
+  return ids.map((id) => {
+    const o = byId.get(id)!;
+    const returnCases = (returns.get(id) ?? []).map((r) => ({
+      id: r.id,
+      status: r.status,
+      createdAt: r.createdAt,
+      receivedAt: r.receivedAt,
+      closedAt: r.closedAt,
+      decision: r.status === "CLOSED"
+        ? "Решение принято; подробности сообщит магазин"
+        : undefined,
+    }));
+    const contactNotes = actor.role === "BUYER" ? undefined : (notes.get(id) ?? []).map((r) => ({
+      id: r.id,
+      note: decrypt(r.note_enc),
+      createdAt: r.created_at,
+    }));
+    return presentOrder(
+      o, actor, lines.get(id) ?? [], shipments.get(id), handovers.get(id),
+      returnCases, contactNotes, buyers.get(o.user_id) ?? null,
+    );
+  });
+}
+
 function assertOrderingOpen(settings: Parameters<typeof orderingIssue>[0]) {
   const issue = orderingIssue(settings);
   if (issue) throw new AppError(503, issue, "Магазин пока не принимает заявки. Вещи остались в корзине");
@@ -806,12 +927,8 @@ export async function registerOrders(app: FastifyInstance) {
           [actor(r).id],
         )
       ).rows;
-      const orders = [];
-      for (const o of rows) {
-        await expireOrder(c, o);
-        orders.push(await readOrder(c, o.id, actor(r)));
-      }
-      return { orders };
+      for (const o of rows) await expireOrder(c, o);
+      return { orders: await readOrders(c, rows.map((o) => o.id), actor(r)) };
     }),
   );
   app.get("/orders/:id", async (r) =>
@@ -1022,16 +1139,14 @@ export async function registerOrders(app: FastifyInstance) {
               : filter === "problems"
                 ? "exception=true"
                 : "status NOT IN ('FULFILLED','CANCELLED','EXPIRED','CLOSED','RETURNED')";
-      const rows = (
+      // The problems screen renders issues only; avoid locking and hydrating orders.
+      const rows = filter === "problems" ? [] : (
         await c.query(
           `SELECT * FROM orders WHERE ${where} ORDER BY COALESCE(pickup_deadline,dispatch_deadline,verify_by),id LIMIT 200 FOR UPDATE`,
         )
       ).rows;
-      const orders = [];
-      for (const o of rows) {
-        await expireOrder(c, o);
-        orders.push(await readOrder(c, o.id, actor(r)));
-      }
+      for (const o of rows) await expireOrder(c, o);
+      const orders = await readOrders(c, rows.map((o) => o.id), actor(r));
       const issues = (
         await c.query(
           'SELECT id,entity_id AS "entityId",item_id AS "itemId",order_id AS "orderId",kind,message,assigned_to AS "assignedTo",created_at AS "createdAt" FROM operation_issues WHERE state=\'OPEN\' ORDER BY created_at LIMIT 200',
