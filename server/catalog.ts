@@ -304,6 +304,7 @@ export async function registerCatalog(app: FastifyInstance) {
           b.items.map((i) => i.id),
         );
         for (const item of items) {
+          assert(item.publication !== "DRAFT", 409, "ITEM_DRAFT", "Черновик ещё не размещён на витрине");
           assert(
             item.version === b.items.find((i) => i.id === item.id)?.version,
             409,
@@ -534,6 +535,7 @@ export async function registerCatalog(app: FastifyInstance) {
               ],
             );
           } else if (command === "hide") {
+            assert(item.publication !== "DRAFT", 409, "ITEM_DRAFT", "Черновик ещё не размещён на витрине");
             await c.query(
               "UPDATE items SET publication='HIDDEN',version=version+1 WHERE id=$1",
               [id],
