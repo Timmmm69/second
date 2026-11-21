@@ -407,7 +407,13 @@
     }
     if (path === '/staff/items/bulk-hide' && method === 'POST') {
       ensure(body.confirmed, 422, 'CONFIRM', 'Подтвердите изменение');
-      const items = body.items.map(value => { const item = findItem(value.id); checkVersion(item, value); ensure(!claimed(item.id), 409, 'CLAIMED', 'Вещь закреплена обращением'); return item; });
+      const items = body.items.map(value => {
+        const item = findItem(value.id);
+        checkVersion(item, value);
+        ensure(item.publication !== 'DRAFT', 409, 'ITEM_DRAFT', 'Черновик ещё не размещён на витрине');
+        ensure(!claimed(item.id), 409, 'CLAIMED', 'Вещь закреплена обращением');
+        return item;
+      });
       for (const item of items) { item.publication = 'HIDDEN'; item.version++; }
       persist(); return { items: items.map(itemView) };
     }
@@ -462,7 +468,10 @@
         // Match the real API: intake becomes available only after staff checks it.
         if (item.physical === 'INTAKE') item.physical = 'AVAILABLE';
       }
-      if (action === 'hide') item.publication = 'HIDDEN';
+      if (action === 'hide') {
+        ensure(item.publication !== 'DRAFT', 409, 'ITEM_DRAFT', 'Черновик ещё не размещён на витрине');
+        item.publication = 'HIDDEN';
+      }
       if (action === 'inspect') { ensure(item.physical === 'INSPECTION' && body.suitable, 409, 'INSPECTION', 'Сначала подтвердите осмотр'); item.physical = 'AVAILABLE'; }
       if (action === 'write-off') { owner(); item.physical = 'WRITTEN_OFF'; item.publication = 'ARCHIVED'; }
       item.version++; record(`demo.item.${action}`, item.id); persist(); return itemView(item);

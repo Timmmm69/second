@@ -95,6 +95,29 @@ test("blank drafts use true SQL nulls, survive reload and cannot be published or
   assert.equal(invalid.statusCode, 422);
 });
 
+test("hiding cannot change the visibility of incomplete or complete drafts", async () => {
+  const incomplete = await createDraft();
+  const complete = await createDraft({ title: "Черновик", category: "tops", priceMinor: 1000 });
+  for (const draft of [incomplete, complete]) {
+    const response = await send("POST", `/staff/items/${draft.id}/hide`, { version: draft.version });
+    assert.equal(response.statusCode, 409, response.body);
+    assert.equal(response.json().code, "ITEM_DRAFT");
+  }
+
+  const inspected = await send("POST", `/staff/items/${complete.id}/inspect`, {
+    version: complete.version, suitable: true,
+  });
+  assert.equal(inspected.statusCode, 200, inspected.body);
+  const hidden = await send("POST", "/staff/items/bulk-hide", {
+    items: [{ id: complete.id, version: inspected.json().version }],
+    confirmed: true,
+  });
+  assert.equal(hidden.statusCode, 409, hidden.body);
+  assert.equal(hidden.json().code, "ITEM_DRAFT");
+  const result = await pool.query("SELECT publication FROM items WHERE id=ANY($1::uuid[])", [[incomplete.id, complete.id]]);
+  assert.deepEqual(result.rows.map((row) => row.publication), ["DRAFT", "DRAFT"]);
+});
+
 test("draft fields can be independently updated, price 0 differs from missing, and publication validates only required data", async () => {
   const initial = await createDraft({ attributes: { brand: "Nike" }, measurements: {} });
   const first = await send("PATCH", `/staff/items/${initial.id}`, {
