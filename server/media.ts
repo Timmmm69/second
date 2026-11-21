@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { mkdir, open, rm, rename } from "node:fs/promises";
+import { copyFile, link, mkdir, open, rm, rename } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import sharp, { type Metadata } from "sharp";
@@ -13,6 +13,32 @@ sharp.concurrency(1);
 // Files are replaced on rotation; don't retain native caches or stale file inputs.
 sharp.cache(false);
 export const widths = [240, 480, 960, 1600];
+
+// Duplicating a card must never send its images back through Sharp. Image files
+// are immutable after creation: rotation writes a new staged file and renames
+// it over the edited asset only. Hard links therefore preserve independence
+// while using no additional disk space until a photo is edited.
+export async function cloneMediaFiles(sourceId: string, duplicateId: string) {
+  const source = path.join(config.mediaDir, sourceId);
+  const target = path.join(config.mediaDir, duplicateId);
+  await mkdir(target);
+  try {
+    for (const filename of ["original.webp", ...widths.map((width) => width + ".webp")]) {
+      const from = path.join(source, filename);
+      const to = path.join(target, filename);
+      try {
+        await link(from, to);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (!["EXDEV", "EPERM", "ENOSYS", "EOPNOTSUPP", "ENOTSUP", "EMLINK"].includes(code ?? "")) throw error;
+        await copyFile(from, to);
+      }
+    }
+  } catch (error) {
+    await rm(target, { recursive: true, force: true });
+    throw error;
+  }
+}
 let photoBusy = false;
 // No waiting queue: acquire before reading an upload or opening a transaction.
 async function withPhotoProcessing<T>(work: () => Promise<T>) {
