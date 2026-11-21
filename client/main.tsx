@@ -244,6 +244,76 @@ function App() {
     };
   }, [sdkReady]);
   useEffect(() => {
+    if (path !== "/catalog") return;
+    const shell = document.querySelector<HTMLElement>(".app-shell");
+    if (!shell) return;
+
+    let gesture: { id: number; x: number; y: number; axis: "pending" | "pull" | "other" } | null = null;
+    let settleTimer: number | undefined;
+    const finish = () => {
+      gesture = null;
+      if (!shell.classList.contains("is-pulling")) return;
+      shell.classList.remove("is-pulling");
+      shell.classList.add("pull-settling");
+      shell.style.setProperty("--pull-distance", "0px");
+      shell.style.setProperty("--pull-reveal-opacity", "0");
+      window.clearTimeout(settleTimer);
+      settleTimer = window.setTimeout(() => {
+        shell.classList.remove("pull-settling");
+        shell.style.removeProperty("--pull-distance");
+        shell.style.removeProperty("--pull-reveal-opacity");
+      }, 240);
+    };
+    const start = (event: TouchEvent) => {
+      if (event.touches.length !== 1 || window.scrollY > 1 ||
+        document.body.classList.contains("keyboard-open") ||
+        document.querySelector(".sheet-backdrop") ||
+        (event.target instanceof Element && event.target.closest(
+          ".bottom-nav, input, textarea, select, [contenteditable='true']",
+        ))) return;
+      window.clearTimeout(settleTimer);
+      shell.classList.remove("pull-settling");
+      const point = event.touches[0];
+      gesture = { id: point.identifier, x: point.clientX, y: point.clientY, axis: "pending" };
+    };
+    const move = (event: TouchEvent) => {
+      if (!gesture) return;
+      if (event.touches.length !== 1 || event.touches[0].identifier !== gesture.id) {
+        finish();
+        return;
+      }
+      const dx = event.touches[0].clientX - gesture.x;
+      const dy = event.touches[0].clientY - gesture.y;
+      if (gesture.axis === "pending" && Math.max(Math.abs(dx), Math.abs(dy)) > 10)
+        gesture.axis = dy > 0 && dy > Math.abs(dx) * 1.15 ? "pull" : "other";
+      if (gesture.axis !== "pull") return;
+      if (window.scrollY > 1 || !event.cancelable) {
+        finish();
+        return;
+      }
+      event.preventDefault();
+      const distance = Math.min(130, Math.max(0, (dy - 10) * 0.6));
+      shell.classList.add("is-pulling");
+      shell.style.setProperty("--pull-distance", `${distance}px`);
+      // The hint only appears after a deliberate, longer pull.
+      shell.style.setProperty("--pull-reveal-opacity", String(Math.min(1, Math.max(0, (distance - 65) / 25))));
+    };
+    window.addEventListener("touchstart", start, { passive: true });
+    window.addEventListener("touchmove", move, { passive: false });
+    window.addEventListener("touchend", finish, { passive: true });
+    window.addEventListener("touchcancel", finish, { passive: true });
+    return () => {
+      window.clearTimeout(settleTimer);
+      window.removeEventListener("touchstart", start);
+      window.removeEventListener("touchmove", move);
+      window.removeEventListener("touchend", finish);
+      window.removeEventListener("touchcancel", finish);
+      shell.classList.remove("is-pulling", "pull-settling");
+      shell.style.removeProperty("--pull-distance");
+      shell.style.removeProperty("--pull-reveal-opacity");
+    };
+  }, [path]);
+  useEffect(() => {
     const app = tg();
     if (!app) return;
     const root = [
@@ -380,9 +450,9 @@ function App() {
         heightBeforeKeyboard = height;
         const visualBottom = viewport?.scale === 1
           ? viewport.offsetTop + viewport.height : window.innerHeight;
-        const stableBottom = !telegramViewportIsStale() && app?.viewportStableHeight && app.viewportStableHeight > 0
-          ? app.viewportStableHeight : window.innerHeight;
-        const bottom = Math.min(window.innerHeight, visualBottom, stableBottom);
+        // The bridge's stable height can lag behind an already expanded WebView.
+        // Only the actual browser viewport may lift fixed bottom controls.
+        const bottom = Math.min(window.innerHeight, visualBottom);
         document.documentElement.style.setProperty("--app-bottom-offset", `${Math.max(0, window.innerHeight - bottom)}px`);
       }
     };
@@ -519,6 +589,9 @@ function App() {
       }}
     >
       <div className={`app-shell ${staff ? "service-shell" : ""}`}>
+        {!staff && path === "/catalog" && (
+          <p className="pull-secret" aria-hidden="true">Здесь ничего интересного🦄</p>
+        )}
         <header className="app-header">
           <div className="header-start">
             {!rootPath && (

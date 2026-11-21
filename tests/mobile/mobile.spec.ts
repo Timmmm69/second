@@ -427,13 +427,13 @@ test("purchase action follows safe-area updates and targets 40px of spare bottom
 
   const viewport = page.viewportSize()!;
   const telegramHeight = viewport.height - 90;
-  // Some Telegram clients report a smaller visible area without resizing the
-  // browser layout viewport. This must actually exercise --app-bottom-offset.
+  // A bridge-only viewport report must not lift the navigation above the actual
+  // browser viewport: the stable Telegram height may lag after expansion.
   await updateTelegram(page, { height: telegramHeight });
   expect(page.viewportSize()).toEqual(viewport);
-  await expect.poll(() => page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--app-bottom-offset")))).toBeGreaterThanOrEqual(89);
+  await expect.poll(() => page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--app-bottom-offset")))).toBeLessThanOrEqual(1);
   const bridgeOnly = await purchaseGeometry(page);
-  expect(bridgeOnly.navBottom).toBeLessThanOrEqual(telegramHeight + 1);
+  expect(Math.abs(bridgeOnly.navBottom - viewport.height)).toBeLessThanOrEqual(1);
   expect(Math.abs(bridgeOnly.barBottom - bridgeOnly.navTop)).toBeLessThanOrEqual(1);
   expect(bridgeOnly.hit).toBe(true);
   await screenshot(page, info, "item-telegram-viewport-only");
@@ -476,6 +476,65 @@ test("purchase action follows safe-area updates and targets 40px of spare bottom
   expect(bottom.hit).toBe(true);
   await screenshot(page, info, "item-bottom");
   await info.attach("bottom-spacing", { body: JSON.stringify({ initial, changed, bridgeOnly, bridgeBottom, shortened, bottom }, null, 2), contentType: "application/json" });
+});
+
+
+test("catalog pull reveals the hidden hint late and leaves bottom navigation fixed", async ({ page }) => {
+  await page.goto("/#/catalog");
+  await expect(page.locator(".product-card").first()).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const result = await page.locator(".app-header").evaluate((header) => {
+    const nav = document.querySelector<HTMLElement>(".bottom-nav")!;
+    const hint = document.querySelector<HTMLElement>(".pull-secret")!;
+    const initialNavBottom = nav.getBoundingClientRect().bottom;
+    const initialHeaderTop = header.getBoundingClientRect().top;
+    const start = { identifier: 1, clientX: 160, clientY: 45, target: header };
+    const fire = (type: string, distance: number) => {
+      const point = { ...start, clientY: start.clientY + distance };
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperties(event, {
+        touches: { value: type === "touchend" ? [] : [point] },
+        changedTouches: { value: [point] },
+      });
+      header.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    fire("touchstart", 0);
+    const shortPrevented = fire("touchmove", 55);
+    const shortOpacity = Number(getComputedStyle(hint).opacity);
+    const deepPrevented = fire("touchmove", 175);
+    const deepOpacity = Number(getComputedStyle(hint).opacity);
+    const pulledHeader = header.getBoundingClientRect().top;
+    const pulledNavBottom = nav.getBoundingClientRect().bottom;
+    fire("touchend", 175);
+    return { shortPrevented, shortOpacity, deepPrevented, deepOpacity,
+      initialNavBottom, initialHeaderTop, pulledHeader, pulledNavBottom };
+  });
+  expect(result.shortPrevented).toBe(true);
+  expect(result.shortOpacity).toBe(0);
+  expect(result.deepPrevented).toBe(true);
+  expect(result.deepOpacity).toBeGreaterThan(0.9);
+  expect(result.pulledHeader).toBeGreaterThan(result.initialHeaderTop + 70);
+  expect(Math.abs(result.pulledNavBottom - result.initialNavBottom)).toBeLessThanOrEqual(1);
+  await expect(page.locator(".app-shell")).not.toHaveClass(/is-pulling|pull-settling/);
+  await expect(page.locator(".pull-secret")).toHaveCSS("opacity", "0");
+});
+
+test("catalog photo overlay is a small counter on touch screens", async ({ page }) => {
+  await page.goto("/#/catalog");
+  const photo = page.locator(".product-card").first();
+  await expect(photo).toBeVisible();
+  const controls = photo.locator(".catalog-photo-nav");
+  await expect(controls.locator("span")).toHaveText("1 / 3");
+  await expect(controls.locator("button:visible")).toHaveCount(0);
+  const geometry = await controls.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const image = element.parentElement!.getBoundingClientRect();
+    return { width: rect.width, rightGap: image.right - rect.right, bottomGap: image.bottom - rect.bottom };
+  });
+  expect(geometry.width).toBeLessThanOrEqual(55);
+  expect(geometry.rightGap).toBeGreaterThanOrEqual(7);
+  expect(geometry.bottomGap).toBeGreaterThanOrEqual(7);
 });
 
 test("trusted horizontal drags change the photo without scrolling; vertical drags scroll the catalog", async ({ page, browserName, mobile }, info) => {
