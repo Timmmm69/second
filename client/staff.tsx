@@ -665,11 +665,23 @@ function ItemEditor({ id }: { id: string }) {
     reload();
   };
   if (loading && !item) return <Loading />;
-  const categoryMeasurements = categories.find((category) => category.id === form.category)?.measurements;
+  const categoryMeasurements = categories.find((category) => category.id === form.category)?.measurements ?? [];
+  const upperCategory = ["outerwear", "knit", "shirts", "tops"].includes(form.category);
+  const lowerCategory = form.category === "trousers";
+  const effectiveGroup = upperCategory ? "top" : lowerCategory ? "bottom" : measurementGroup;
+  const legacyKeys = ["chest", "waist", "hips"];
+  const recommended = effectiveGroup === "top"
+    ? ["chestCircumference", "waistCircumference", "hipCircumference", "length", "sleeve", "shoulders"]
+    : effectiveGroup === "bottom"
+      ? ["waistCircumference", "hipCircumference", "inseam", "outseam", "rise", "length"]
+      : [];
   const measurementKeys = [...new Set([
-    ...(categoryMeasurements ?? []),
+    ...categoryMeasurements.filter((key) => !legacyKeys.includes(key) || effectiveGroup === "base" || key in form.measurements),
+    ...recommended,
     ...Object.keys(form.measurements),
+    ...Object.keys(measurementInputs),
   ])];
+  const canChooseMeasurementGroup = showSize && !upperCategory && !lowerCategory;
   const missing = Object.values(fieldErrors).filter(Boolean);
   return (
     <div className="page narrow item-editor">
@@ -780,27 +792,37 @@ function ItemEditor({ id }: { id: string }) {
           options={[{ value: "", label: "Не указано" }, ...catalogAudiences.map((value) => ({ value, label: value }))]}
         />
         </fieldset>
-        {measurementKeys.length > 0 && <fieldset>
+        {(measurementKeys.length > 0 || canChooseMeasurementGroup) && <fieldset>
           <legend>Замеры, см</legend>
-          <p className="small-text">Заполните известные замеры. Грудь, талия и бёдра — полуобхват. Пустые поля покупатель не увидит.</p>
+          {canChooseMeasurementGroup && <div className="chips" aria-label="Группа замеров">
+            {([["base", "Существующие"], ["top", "Верх"], ["bottom", "Низ"]] as const).map(([group, label]) => (
+              <button key={group} type="button" className={measurementGroup === group ? "selected" : ""}
+                aria-pressed={measurementGroup === group} onClick={() => setMeasurementGroup(group)}>{label}</button>
+            ))}
+          </div>}
+          <p className="small-text">Все замеры необязательны. Полные обхваты и исторические полуобхваты отмечены разными названиями.</p>
           <div className="form-pair">
             {measurementKeys.map((key) => (
               <Field
                 key={key}
                 label={measurementNames[key] || key}
-                markEmpty
-                type="number"
+                type="text"
                 inputMode="decimal"
-                min="0"
-                max="2000"
-                step="0.1"
-                value={form.measurements[key] === undefined ? "" : form.measurements[key] / 10}
+                maxLength={6}
+                placeholder="см"
+                error={attempted && measurementInputs[key]?.trim() && validMeasurement(measurementInputs[key]) === null
+                  ? "Введите значение от 0 до 2000 см, до одного знака после запятой" : undefined}
+                value={measurementInputs[key] ?? (form.measurements[key] === undefined ? "" : String(form.measurements[key] / 10))}
                 onChange={(event) => {
                   const raw = event.target.value;
+                  setMeasurementInputs((previous) => ({ ...previous, [key]: raw }));
                   setForm((previous) => {
                     const measurements = { ...previous.measurements };
-                    if (raw === "") delete measurements[key];
-                    else measurements[key] = Math.round(Number(raw) * 10);
+                    if (!raw.trim()) delete measurements[key];
+                    else {
+                      const value = validMeasurement(raw);
+                      if (value !== null) measurements[key] = value;
+                    }
                     return { ...previous, measurements };
                   });
                   setDirty(true);
