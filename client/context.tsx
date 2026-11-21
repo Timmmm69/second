@@ -1,10 +1,12 @@
 import { createContext, useContext } from "react";
 import type { Category, Item, Settings, User } from "./types";
+import type { PublicPostHog } from "../shared/posthog.js";
 export interface AppContextValue {
   user: User | null;
   dev: boolean;
   demo: boolean;
   settings: Settings | null;
+  posthog?: PublicPostHog;
   categories: Category[];
   refreshCategories: () => Promise<void>;
   refreshSettings: () => Promise<void>;

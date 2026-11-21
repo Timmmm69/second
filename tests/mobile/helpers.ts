@@ -10,16 +10,30 @@ const source = JSON.parse(readFileSync(new URL("../../preview/catalog.json", imp
 export const sampleId = source.items[0].id;
 export const sampleTitle = source.items[0].title;
 
-export async function installMobileMocks(page: Page, browserName: string) {
+export const testAnalyticsToken = "phc_synthetic_smoke_test";
+const testAnalyticsOrigin = "https://eu.i.posthog.com";
+const analyticsEndpoint = testAnalyticsOrigin + "/i/v0/e/";
+const fixtureOrigin = "http://127.0.0.1:5173";
+export const syntheticOrder = {
+  id: "11111111-1111-4111-8111-111111111111", number: 987, method: "PICKUP",
+  status: "CHECKING", createdAt: "2026-11-20T12:00:00Z", verifyBy: "2026-11-21T12:00:00Z",
+  lines: [], events: [], totalMinor: 0, version: 1,
+};
+type AnalyticsMock = { buyer?: boolean; settings: boolean; failCapture?: boolean };
+type CapturedEvent = { body: unknown; headers: Record<string, string> };
+
+export async function installMobileMocks(page: Page, browserName: string, analytics?: AnalyticsMock) {
   const viewport = page.viewportSize()!;
   const systemBottom = browserName === "webkit" ? 34 : 24;
   const systemTop = browserName === "webkit" ? 44 : 24;
   const apiRequests: string[] = [];
+  const capturedEvents: CapturedEvent[] = [];
+  const syntheticUser = analytics?.buyer ? { id: "synthetic-buyer", role: "BUYER" } : null;
   const unexpectedRequests: string[] = [];
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
-  await page.addInitScript(({ viewport, systemTop, systemBottom, browserName }) => {
+  await page.addInitScript(({ viewport, systemTop, systemBottom, browserName, signedIn }) => {
     const listeners = new Map<string, Set<() => void>>();
     const emit = (name: string) => listeners.get(name)?.forEach((listener) => listener());
     const noOp = () => {};
@@ -27,7 +41,7 @@ export async function installMobileMocks(page: Page, browserName: string) {
     let verticalSwipesEnabled = true;
     const physicalScreen = { ...viewport, type: "portrait-primary", angle: 0 };
     const app = {
-      initData: "",
+      initData: signedIn ? "synthetic_bridge_data" : "",
       platform: browserName === "webkit" ? "ios" : "android",
       version: "9.1",
       viewportHeight: viewport.height,
@@ -87,7 +101,7 @@ export async function installMobileMocks(page: Page, browserName: string) {
         }
       },
     });
-  }, { viewport, systemTop, systemBottom, browserName });
+  }, { viewport, systemTop, systemBottom, browserName, signedIn: Boolean(syntheticUser) });
 
   const items = structuredClone(source.items).map((item, index) => ({
     ...item,
@@ -117,11 +131,28 @@ export async function installMobileMocks(page: Page, browserName: string) {
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    if (url.hostname === "telegram.org") {
+    if (analytics && request.url() === analyticsEndpoint) {
+      const headers = {
+        "access-control-allow-origin": fixtureOrigin,
+        "access-control-allow-methods": "POST, OPTIONS",
+        "access-control-allow-headers": "content-type",
+      };
+      if (request.method() === "OPTIONS") {
+        await route.fulfill({ status: 204, headers });
+        return;
+      }
+      if (request.method() === "POST") {
+        capturedEvents.push({ body: request.postDataJSON(), headers: await request.allHeaders() });
+        await route.fulfill({ status: analytics.failCapture ? 503 : 204, headers });
+        return;
+      }
+    }
+    if (request.url() === "https://telegram.org/js/telegram-web-app.js" ||
+        (url.origin === "https://telegram.org" && url.pathname === "/js/telegram-web-app.js")) {
       await route.fulfill({ contentType: "application/javascript", body: "/* Telegram bridge is mocked by the mobile test. */" });
       return;
     }
-    if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost") {
+    if (url.origin !== fixtureOrigin) {
       unexpectedRequests.push(request.url());
       await route.abort();
       return;
@@ -141,8 +172,20 @@ export async function installMobileMocks(page: Page, browserName: string) {
     const path = url.pathname.slice(4);
     apiRequests.push(`${request.method()} ${path}${url.search}`);
     let result: unknown;
-    if (path === "/auth/me") result = { user: null, dev: false };
-    else if (path === "/settings") result = { ...source.settings, acceptingOrders: true };
+    if (path === "/auth/me") result = { user: syntheticUser, dev: false };
+    else if (analytics && path === "/auth/telegram" && request.method() === "POST")
+      result = { user: syntheticUser, dev: false };
+    else if (path === "/settings") result = {
+      ...source.settings, acceptingOrders: true,
+      ...(analytics?.settings ? { posthog: { token: testAnalyticsToken, region: "eu" } } : {}),
+    };
+    else if (analytics && path === "/me/checkout-draft")
+      result = { method: "PICKUP", phone: "+375000000000", draftToken: "synthetic-draft", draftRevision: 0, saveRecipient: false, recipientVersion: 0 };
+    else if (analytics && path === "/orders" && request.method() === "POST") {
+      selection = [];
+      result = syntheticOrder;
+    } else if (analytics && path === "/orders/" + syntheticOrder.id && request.method() === "GET")
+      result = syntheticOrder;
     else if (path === "/categories") result = categories;
     else if (path === "/catalog/options") result = options;
     else if (path === "/catalog/availability") result = { availableIds: items.map((item) => item.id) };
@@ -158,7 +201,7 @@ export async function installMobileMocks(page: Page, browserName: string) {
     }
     await route.fulfill({ json: result });
   });
-  return { apiRequests, unexpectedRequests, pageErrors, systemBottom, systemTop };
+  return { apiRequests, unexpectedRequests, pageErrors, systemBottom, systemTop, capturedEvents };
 }
 
 export async function updateTelegram(page: Page, change: { height?: number; bottom?: number }) {

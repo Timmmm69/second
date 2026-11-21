@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { access, mkdir } from "node:fs/promises";
 import { config } from "./config.js";
+import { postHogOrigins } from "../shared/posthog.js";
 import { pool } from "./db.js";
 import { AppError, assert } from "./errors.js";
 import { authenticate, registerAuth } from "./auth.js";
@@ -37,7 +38,7 @@ export async function buildApp({ staticFiles = true } = {}) {
         scriptSrc: ["'self'", "https://telegram.org"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", "data:"],
-        connectSrc: ["'self'"],
+        connectSrc: ["'self'", ...(config.posthog ? [postHogOrigins[config.posthog.region]] : [])],
         frameAncestors: [
           "'self'",
           "https://web.telegram.org",
