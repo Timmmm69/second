@@ -12,9 +12,9 @@ import { migrate } from "../server/migrate.js";
 let app: Awaited<ReturnType<typeof buildApp>>, staff: string, buyer: string;
 const inserted = new Set<string>();
 const keys = () => ({ cookie: staff, "idempotency-key": randomUUID() });
-const send = (method: "POST" | "PATCH" | "PUT" | "DELETE", url: string, payload: unknown = {}) =>
-  app.inject({ method, url: "/api" + url, headers: keys(), payload });
-const createDraft = async (payload: unknown = {}) => {
+const send = async (method: "POST" | "PATCH" | "PUT" | "DELETE", url: string, payload: Record<string, unknown> = {}) =>
+  await app.inject({ method, url: "/api" + url, headers: keys(), payload });
+const createDraft = async (payload: Record<string, unknown> = {}) => {
   const response = await send("POST", "/staff/items/draft", payload);
   assert.equal(response.statusCode, 200, response.body);
   const item = response.json();
