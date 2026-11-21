@@ -2136,7 +2136,7 @@ button > svg, .button > svg { flex-shrink: 0; display: block; }
 .catalog-photo-nav button:disabled { opacity:.35; }
 .catalog-photo-nav span { min-width:28px; text-align:center; white-space:nowrap; }
 @media (hover: none), (pointer: coarse) {
-  .catalog-photo-nav { padding:5px 8px; }
+  .catalog-photo-nav { padding:5px 8px; pointer-events:none; }
   .catalog-photo-nav button { display:none; }
   .catalog-photo-nav span { min-width:0; }
 }
