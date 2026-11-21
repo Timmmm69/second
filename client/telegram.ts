@@ -6,6 +6,7 @@ export interface TelegramApp {
   enableClosingConfirmation?: () => void;
   isClosingConfirmationEnabled?: boolean;
   isVerticalSwipesEnabled?: boolean;
+  disableVerticalSwipes?: () => void;
   setHeaderColor?: (color: string) => void;
   setBackgroundColor?: (color: string) => void;
   setBottomBarColor?: (color: string) => void;
