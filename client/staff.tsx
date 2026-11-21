@@ -432,7 +432,7 @@ function editableSize(item: Item) {
   return (system === "INT" || system === "RU") && isLetterSize(label) ? label.toUpperCase() : "";
 }
 function ItemEditor({ id }: { id: string }) {
-  const { categories, go, toast, user, demo } = useApp();
+  const { categories, go, toast, user } = useApp();
   const {
     data: item,
     setData,
