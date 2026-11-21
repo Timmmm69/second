@@ -313,6 +313,10 @@ button:focus:not(:focus-visible) {
 }
 .catalog-page > .chips:has(+ .chips) {
   margin-bottom: 0;
+  padding-bottom: 3.5px;
+}
+.catalog-page > .chips:has(+ .chips) > button:focus-visible {
+  outline-offset: 0;
 }
 .chips > button {
   border: 1px solid var(--line);
