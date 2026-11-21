@@ -1,6 +1,7 @@
 import { catalogAudiences, isLetterSize, letterSizePattern, productColor, productSize } from "../shared/catalog-attributes.js";
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
-import { api, readLocal, saveLocal } from "./api";
+import { api, operationKey, readLocal, saveLocal } from "./api";
+import { clothingBrands, clothingColors, clothingSeasons, russianCountries, canonicalChoice } from "./clothing-options";
 import { useApp } from "./context";
 import { OrderCard } from "./buyer";
 import { useMutation } from "./mutations";
@@ -331,7 +332,7 @@ function Items() {
                   <p className="muted">
                     {item.sku} · {item.storageLocation || "Место не задано"}
                   </p>
-                  <strong>{money(item.priceMinor)}</strong>
+                  <strong>{item.priceMissing ? "Цена не указана" : money(item.priceMinor)}</strong>
                   <p className="small-text">
                     {statusNames[item.physical] || item.physical} ·{" "}
                     {statusNames[item.publication] || item.publication}
@@ -391,6 +392,15 @@ function Items() {
     </div>
   );
 }
+const countrySuggestions = russianCountries();
+const valueOptions = (values: readonly string[], current = "") =>
+  [...values, ...(current && !values.some((value) => value.toLocaleLowerCase("ru") === current.toLocaleLowerCase("ru")) ? [current] : [])]
+    .map((value) => ({ value, label: value }));
+const validMeasurement = (raw: string) => {
+  const value = raw.trim().replace(",", ".");
+  if (!/^\d+(?:\.\d)?$/.test(value) || Number(value) > 2000) return null;
+  return Math.round(Number(value) * 10);
+};
 const initialItem = {
   hasDefect: false,
   defectDescription: "",
@@ -422,7 +432,7 @@ function editableSize(item: Item) {
   return (system === "INT" || system === "RU") && isLetterSize(label) ? label.toUpperCase() : "";
 }
 function ItemEditor({ id }: { id: string }) {
-  const { categories, go, toast, user, demo } = useApp();
+  const { categories, go, toast, user } = useApp();
   const {
     data: item,
     setData,
@@ -434,14 +444,46 @@ function ItemEditor({ id }: { id: string }) {
     [dirty, setDirty] = useState(false),
     [preview, setPreview] = useState(false),
     [uploadStatus, setUploadStatus] = useState(""),
-    [uploadFiles, setUploadFiles] = useState<File[]>([]);
+    [uploadFiles, setUploadFiles] = useState<File[]>([]),
+    [uploading, setUploading] = useState(false),
+    [uploadedCount, setUploadedCount] = useState(0),
+    [dropActive, setDropActive] = useState(false),
+    [mediaBusy, setMediaBusy] = useState(false),
+    [measurementGroup, setMeasurementGroup] = useState<"base" | "top" | "bottom">("base"),
+    [measurementInputs, setMeasurementInputs] = useState<Record<string, string>>({}),
+    [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const mutation = useMutation();
   const fileInput = useRef<HTMLInputElement>(null);
+  // Preserve the original payload and key across dropped responses and retries.
+  const draftCreation = useRef<{
+    key: string;
+    payload: Record<string, unknown>;
+    snapshot: { form: typeof initialItem; price: string; size: string };
+  } | null>(null);
+  const uploadLock = useRef(false);
+  const draggedMedia = useRef<string | null>(null);
+  const backupKey = `staff-editor:${user?.id ?? "unknown"}:${id}`;
+  const [backup, setBackup] = useState<null | { form: typeof initialItem; price: string; size: string; version?: number }>(
+    () => readLocal(backupKey, null),
+  );
   const [checked, setChecked] = useState(false);
   const [price, setPrice] = useState("");
   const [size, setSize] = useState("");
   const [attempted, setAttempted] = useState(false);
+  const [draftSaving, setDraftSaving] = useState(false);
+  // The version of the actual editable fields, not the most recently fetched media.
+  const [editVersion, setEditVersion] = useState<number | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  // Read current inputs after awaited uploads, not a stale event closure.
+  const latestInputs = useRef({ form, price, size, dirty });
+  latestInputs.current = { form, price, size, dirty };
+  const previewUrlsRef = useRef<string[]>([]);
+  const setPhotosForPreview = (files: File[]) => {
+    previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    const urls = files.map((file) => URL.createObjectURL(file));
+    previewUrlsRef.current = urls;
+    setPreviewUrls(urls);
+  };
   const showSize = Boolean(form.category) && !["bags", "accessories"].includes(form.category);
   const childSize = form.category === "children";
   const previousSize = item && (childSize !== (item.category === "children") || !editableSize(item))
@@ -450,7 +492,8 @@ function ItemEditor({ id }: { id: string }) {
   const previousColor = item?.attributes.color;
   const legacyColor = previousColor && !productColor(previousColor) ? String(previousColor) : "";
   useEffect(() => {
-    if (item) {
+    // Refreshing media must never overwrite edits made while uploading.
+    if (item && !dirty) {
       setForm({
         hasDefect: item.hasDefect ?? false,
         defectDescription: item.defectDescription ?? "",
@@ -463,8 +506,10 @@ function ItemEditor({ id }: { id: string }) {
         measurements: item.measurements ?? {},
         storageLocation: item.storageLocation || "",
       });
-      setPrice(String(item.priceMinor / 100));
+      setPrice(item.priceMissing ? "" : String(item.priceMinor / 100));
       setSize(editableSize(item));
+      setEditVersion(item.version);
+      setMeasurementInputs(Object.fromEntries(Object.entries(item.measurements ?? {}).map(([key, value]) => [key, String(value / 10)])));
       setDirty(false);
     }
   }, [item]);
@@ -478,6 +523,10 @@ function ItemEditor({ id }: { id: string }) {
     window.addEventListener("beforeunload", unload);
     return () => window.removeEventListener("beforeunload", unload);
   }, [dirty]);
+  useEffect(() => () => previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url)), []);
+  useEffect(() => {
+    if (dirty) saveLocal(backupKey, { form, price, size, version: editVersion ?? item?.version });
+  }, [dirty, form, price, size, backupKey, editVersion]);
   const set = (key: string, value: string | boolean) => {
     setForm((v) => ({ ...v, [key]: value }));
     setDirty(true);
@@ -497,6 +546,9 @@ function ItemEditor({ id }: { id: string }) {
   }
   const priceInput = price.trim().replace(",", ".");
   const priceMinor = Math.round(Number(priceInput) * 100);
+  const invalidMeasurements = Object.entries(measurementInputs)
+    .filter(([, raw]) => raw.trim() && validMeasurement(raw) === null)
+    .map(([key]) => key);
   const fieldErrors = {
     title: form.title.trim() ? undefined : "Укажите название вещи",
     category: form.category ? undefined : "Выберите категорию",
@@ -504,53 +556,157 @@ function ItemEditor({ id }: { id: string }) {
       !/^\d+(\.\d{1,2})?$/.test(priceInput) || priceMinor > 100000000 ? "Укажите цену от 0 до 1 000 000 BYN с точностью до копеек" : undefined,
     defect: form.hasDefect && !form.defectDescription.trim() ? "Опишите конкретный дефект" : undefined,
   };
-  const save = async () => {
-    const data = {
-      ...form,
-      attributes,
-      sku: form.sku.trim() || undefined,
-      priceMinor,
-      ...(item ? { version: item.version } : {}),
+  const draftPayload = () => ({
+    ...form,
+    title: form.title.trim() || null,
+    category: form.category || null,
+    attributes,
+    sku: form.sku.trim() || undefined,
+    priceMinor: !fieldErrors.price ? priceMinor : null,
+    // A draft can omit any of these values; no synthetic prices/categories.
+  });
+  const createDraft = () => {
+    const attempt = draftCreation.current ?? {
+      key: operationKey(),
+      payload: draftPayload(),
+      snapshot: { form: latestInputs.current.form, price: latestInputs.current.price, size: latestInputs.current.size },
     };
-    const result = await mutation.run<Item>(
-      id === "new" ? "/staff/items" : `/staff/items/${id}`,
-      data,
-      id === "new" ? "POST" : "PATCH",
-    );
+    draftCreation.current = attempt;
+    return api<Item>("/staff/items/draft", {
+      method: "POST",
+      body: attempt.payload,
+      key: attempt.key,
+    });
+  };
+  const save = async () => {
+    setAttempted(true);
+    if (uploading || mediaBusy || draftSaving || invalidMeasurements.length ||
+      (priceInput && fieldErrors.price) ||
+      (item && item.publication !== "DRAFT" && missing.length)) {
+      requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+      return;
+    }
+    const data = { ...draftPayload(), ...(item ? { version: editVersion ?? item.version } : {}) };
+    let result: Item | undefined;
+    if (item) {
+      result = await mutation.run<Item>(`/staff/items/${item.id}`, data, "PATCH");
+    } else {
+      setDraftSaving(true);
+      try {
+        result = await createDraft();
+      } catch (e) {
+        mutation.setError(e);
+      } finally {
+        setDraftSaving(false);
+      }
+    }
     if (result) {
+      // An earlier attempt might have committed while its response was lost.
+      // Never discard edits made since that original, idempotent request.
+      const latest = latestInputs.current;
+      const snapshot = draftCreation.current?.snapshot;
+      const hasNewerInput = id === "new" && snapshot &&
+        JSON.stringify({ form: latest.form, price: latest.price, size: latest.size }) !== JSON.stringify(snapshot);
+      if (hasNewerInput) {
+        saveLocal(`staff-editor:${user?.id ?? "unknown"}:${result.id}`, {
+          form: latest.form, price: latest.price, size: latest.size, version: result.version,
+        });
+      }
       setData(result);
+      setEditVersion(result.version);
       setDirty(false);
-      toast("Карточка сохранена");
+      saveLocal(backupKey, null);
+      setBackup(null);
+      toast(hasNewerInput ? "Черновик создан. Проверьте несохранённые изменения." :
+        item?.publication === "PUBLISHED" ? "Карточка сохранена" : "Черновик сохранён");
       if (id === "new") go(`/staff/items/${result.id}`);
     }
     return result;
   };
   const upload = async (files: File[]) => {
-    if (!item) {
-      mutation.setError(
-        new Error("Сначала сохраните карточку, затем добавьте фотографии."),
-      );
+    if (uploadLock.current || draftSaving || mutation.busy || !files.length) return;
+    if (files.length > 6 || (item?.media.length ?? 0) + files.length > 12) {
+      mutation.setError(new Error("Выберите до 6 файлов за раз; всего в карточке допускается 12 фото."));
       return;
     }
-    setUploadFiles(files);
-    for (let i = 0; i < files.length; i++) {
-      setUploadStatus(`Загружаем ${i + 1} из ${files.length}…`);
-      const body = new FormData();
-      body.append("itemId", item.id);
-      body.append("file", files[i]);
-      try {
-        await api<Media>("/staff/media/uploads", { method: "POST", body });
-        setUploadFiles(files.slice(i + 1));
-      } catch (e) {
-        mutation.setError(e);
-        setUploadStatus("Загрузка прервана. Остальные файлы можно повторить.");
-        reload();
-        return;
-      }
+    if (files.some((file) => file.size > 15 * 1024 * 1024)) {
+      mutation.setError(new Error("Каждый файл должен быть не больше 15 МБ."));
+      return;
     }
-    setUploadFiles([]);
-    setUploadStatus("Фотографии обработаны и сохранены");
-    reload();
+    uploadLock.current = true;
+    setUploading(true);
+    setUploadedCount(0);
+    setUploadFiles(files);
+    setPhotosForPreview(files);
+    let target = item;
+    try {
+      if (!target) {
+        setUploadStatus("Создаём черновик для фотографий…");
+        // The original payload is retained if a committed response was lost.
+        target = await createDraft();
+        setData(target);
+      }
+      for (let i = 0; i < files.length; i++) {
+        setUploadStatus(`Загружаем фото ${i + 1} из ${files.length}…`);
+        const body = new FormData();
+        body.append("itemId", target.id);
+        body.append("file", files[i]);
+        try {
+          await api<Media>("/staff/media/uploads", { method: "POST", body });
+        } catch (e) {
+          setUploadFiles(files.slice(i));
+          setPhotosForPreview(files.slice(i));
+          setUploadStatus(`Загружено ${i} из ${files.length}. Повторите оставшиеся файлы.`);
+          mutation.setError(e);
+          reload();
+          return;
+        }
+        setUploadedCount(i + 1);
+        // Preview object URLs remain stable while the batch is processed.
+      }
+      setUploadFiles([]);
+      setPhotosForPreview([]);
+      setUploadStatus("Фотографии сохранены");
+      reload();
+      if (id === "new" && target) {
+        // Replace the transient /new route with the real server-backed draft.
+        const latest = latestInputs.current;
+        if (latest.dirty) {
+          saveLocal(`staff-editor:${user?.id ?? "unknown"}:${target.id}`,
+            { form: latest.form, price: latest.price, size: latest.size, version: target.version });
+        }
+        saveLocal(backupKey, null);
+        go(`/staff/items/${target.id}`);
+      }
+    } catch (e) {
+      mutation.setError(e);
+      setUploadStatus("Не удалось подготовить загрузку. Повторите выбор фотографий.");
+    } finally {
+      uploadLock.current = false;
+      setUploading(false);
+    }
+  };
+  const reorderMedia = async (sourceId: string, targetIndex: number) => {
+    if (!item || mediaBusy || mutation.busy || uploading) return;
+    const expectedOrder = item.media.map((media) => media.id);
+    const ids = expectedOrder.filter((id) => id !== sourceId);
+    if (ids.length === expectedOrder.length) return;
+    ids.splice(Math.max(0, Math.min(targetIndex, ids.length)), 0, sourceId);
+    if (ids.every((id, index) => id === expectedOrder[index])) return;
+    setMediaBusy(true);
+    try {
+      await api(`/staff/items/${item.id}/media-order`, {
+        method: "PUT", body: { ids, expectedOrder },
+      });
+      setData({ ...item, media: ids.map((id, position) => ({
+        ...item.media.find((photo) => photo.id === id)!, position,
+      })) });
+    } catch (e) {
+      mutation.setError(e);
+      reload();
+    } finally {
+      setMediaBusy(false);
+    }
   };
   const mediaAction = async (
     media: Media,
@@ -561,19 +717,47 @@ function ItemEditor({ id }: { id: string }) {
     reload();
   };
   if (loading && !item) return <Loading />;
-  const categoryMeasurements = categories.find((category) => category.id === form.category)?.measurements;
+  const categoryMeasurements = categories.find((category) => category.id === form.category)?.measurements ?? [];
+  const upperCategory = ["outerwear", "knit", "shirts", "tops"].includes(form.category);
+  const lowerCategory = form.category === "trousers";
+  const effectiveGroup = upperCategory ? "top" : lowerCategory ? "bottom" : measurementGroup;
+  const legacyKeys = ["chest", "waist", "hips"];
+  const recommended = effectiveGroup === "top"
+    ? ["chestCircumference", "waistCircumference", "hipCircumference", "length", "sleeve", "shoulders"]
+    : effectiveGroup === "bottom"
+      ? ["waistCircumference", "hipCircumference", "inseam", "outseam", "rise", "length"]
+      : [];
   const measurementKeys = [...new Set([
-    ...(categoryMeasurements ?? []),
+    ...categoryMeasurements.filter((key) => !legacyKeys.includes(key) || effectiveGroup === "base" || key in form.measurements),
+    ...recommended,
     ...Object.keys(form.measurements),
+    ...Object.keys(measurementInputs),
   ])];
+  const canChooseMeasurementGroup = showSize && !upperCategory && !lowerCategory;
   const missing = Object.values(fieldErrors).filter(Boolean);
   return (
     <div className="page narrow item-editor">
       <h1>{id === "new" ? "Новая вещь" : "Карточка вещи"}</h1>
-      <nav className="editor-shortcuts" aria-label="Разделы карточки"><a href="#editor-basic" onClick={e => { e.preventDefault(); document.getElementById("editor-basic")?.scrollIntoView(); }}>Данные</a><a href="#editor-photos" onClick={e => { e.preventDefault(); document.getElementById("editor-photos")?.scrollIntoView(); }}>Фото</a></nav>
-      <p className="muted">Красным отмечены незаполненные поля. Обязательные поля помечены *.</p>
+      <nav className="editor-shortcuts" aria-label="Разделы карточки"><a href="#editor-photos" onClick={e => { e.preventDefault(); document.getElementById("editor-photos")?.scrollIntoView(); }}>Фото</a><a href="#editor-basic" onClick={e => { e.preventDefault(); document.getElementById("editor-basic")?.scrollIntoView(); }}>Данные</a></nav>
+      <p className="muted">Поля со * обязательны только при публикации. Черновик можно сохранить незаполненным.</p>
       <ErrorBox error={error} retry={reload} />
       {mutation.recovery}
+      {backup && !dirty && <div className="notice">
+        <p>На этом устройстве остались несохранённые поля. Серверная карточка не изменена.</p>
+        <Button secondary onClick={() => {
+          if (item && backup.version !== undefined && backup.version !== item.version) {
+            mutation.setError(new Error("Карточку изменили на другом устройстве. Сначала сверьте данные, чтобы не перезаписать правки."));
+            return;
+          }
+          setForm(backup.form);
+          setPrice(backup.price);
+          setSize(backup.size);
+          setMeasurementInputs(Object.fromEntries(Object.entries(backup.form.measurements ?? {}).map(([key, value]) => [key, String(value / 10)])));
+          setEditVersion(backup.version ?? item?.version ?? null);
+          setDirty(true);
+          setBackup(null);
+        }}>Восстановить ввод</Button>
+      </div>}
       {item && (
         <div className="status-strip">
           <span>{statusNames[item.publication] || item.publication}</span>
@@ -581,17 +765,94 @@ function ItemEditor({ id }: { id: string }) {
           <span>Версия {item.version}</span>
         </div>
       )}
+      <section className="detail-section photo-editor-section" id="editor-photos">
+        <div className="section-heading">
+          <h2>Фотографии <span className="muted photo-count">{item?.media.length ?? 0}/12</span></h2>
+          <Button secondary disabled={uploading || mediaBusy || mutation.busy || (item?.media.length ?? 0) >= 12}
+            onClick={() => fileInput.current?.click()}>
+            <Icon name="plus" size={18} /> Добавить
+          </Button>
+        </div>
+        <div className={`photo-drop-zone ${dropActive ? "is-dragging" : ""}`}
+          role="button" tabIndex={0} aria-label="Выбрать фотографии"
+          onClick={() => { if (!uploading) fileInput.current?.click(); }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); fileInput.current?.click(); }
+          }}
+          onDragOver={(event) => { event.preventDefault(); setDropActive(true); }}
+          onDragLeave={() => setDropActive(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDropActive(false);
+            if (!uploading) void upload(Array.from(event.dataTransfer.files));
+          }}>
+          <Icon name="photo" size={24} />
+          <span><strong>Выбрать или перетащить фото</strong><small>До 6 за один раз, до 12 всего · JPEG, PNG, WebP · 15 МБ/файл</small></span>
+        </div>
+        <input ref={fileInput} hidden type="file"
+          accept="image/jpeg,image/png,image/webp" multiple
+          onChange={(event: ChangeEvent<HTMLInputElement>) => {
+            if (event.target.files) void upload(Array.from(event.target.files));
+            event.target.value = "";
+          }} />
+        {uploadStatus && <p className="small-text" role="status" aria-live="polite">{uploadStatus}</p>}
+        {uploading && <progress className="photo-upload-progress"
+          value={uploadedCount} max={Math.max(1, uploadFiles.length)}
+          aria-label="Прогресс загрузки фотографий" />}
+        {previewUrls.length > 0 && <div className="photo-upload-preview" aria-label="Выбранные фотографии">
+          {previewUrls.map((url, index) => <img key={url} src={url} alt={`Ожидает загрузки ${index + 1}`} />)}
+        </div>}
+        {!uploading && uploadFiles.length > 0 && (
+          <Button secondary onClick={() => void upload(uploadFiles)}>Повторить оставшиеся фото</Button>
+        )}
+        <p className="small-text">Первое фото станет обложкой. Порядок можно изменить стрелками или перетаскиванием на компьютере. Геоданные удаляются при обработке.</p>
+        <div className="media-editor">
+          {item?.media.map((media, index) => (
+            <div key={media.id} className="media-tile"
+              draggable={!uploading && !mediaBusy && !mutation.busy && !window.matchMedia("(pointer: coarse)").matches}
+              onDragStart={(event) => {
+                draggedMedia.current = media.id;
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("text/plain", media.id);
+              }}
+              onDragOver={(event) => { if (draggedMedia.current) event.preventDefault(); }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const sourceId = draggedMedia.current;
+                draggedMedia.current = null;
+                if (sourceId) void reorderMedia(sourceId, index);
+              }}
+              onDragEnd={() => { draggedMedia.current = null; }}>
+              <span className={index === 0 ? "photo-order-badge cover" : "photo-order-badge"}>
+                {index === 0 ? "Основное · 1" : `Фото ${index + 1}`}
+              </span>
+              <Photo media={media} alt={`Фото ${index + 1}`} />
+              <div className="photo-actions">
+                <button type="button" className="icon-button" aria-label={`Фото ${index + 1}: раньше`}
+                  disabled={index === 0 || mediaBusy || uploading || mutation.busy}
+                  onClick={() => void reorderMedia(media.id, index - 1)}><Icon name="back" size={18} /></button>
+                <button type="button" className="icon-button" aria-label={`Фото ${index + 1}: позже`}
+                  disabled={index === (item?.media.length ?? 0) - 1 || mediaBusy || uploading || mutation.busy}
+                  onClick={() => void reorderMedia(media.id, index + 1)}><Icon name="next" size={18} /></button>
+                <button type="button" className="icon-button" aria-label={`Повернуть фото ${index + 1}`}
+                  disabled={mediaBusy || uploading || mutation.busy}
+                  onClick={() => void mediaAction(media, { rotation: 90 })}>↻</button>
+                <button type="button" className="icon-button" aria-label={`Удалить фото ${index + 1}`}
+                  disabled={mediaBusy || uploading || mutation.busy}
+                  onClick={() => {
+                    if (confirm("Удалить фотографию из карточки?")) void mediaAction(media, {}, "DELETE");
+                  }}><Icon name="close" size={18} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
       <form
         ref={formRef}
         className="form-stack editor-form"
         onSubmit={(e) => {
           e.preventDefault();
-          setAttempted(true);
-          if (missing.length) {
-            requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
-            return;
-          }
-          save();
+          void save();
         }}
       >
         <fieldset id="editor-basic"><legend>Основное</legend>
@@ -676,27 +937,37 @@ function ItemEditor({ id }: { id: string }) {
           options={[{ value: "", label: "Не указано" }, ...catalogAudiences.map((value) => ({ value, label: value }))]}
         />
         </fieldset>
-        {measurementKeys.length > 0 && <fieldset>
+        {(measurementKeys.length > 0 || canChooseMeasurementGroup) && <fieldset>
           <legend>Замеры, см</legend>
-          <p className="small-text">Заполните известные замеры. Грудь, талия и бёдра — полуобхват. Пустые поля покупатель не увидит.</p>
+          {canChooseMeasurementGroup && <div className="chips" aria-label="Группа замеров">
+            {([["base", "Существующие"], ["top", "Верх"], ["bottom", "Низ"]] as const).map(([group, label]) => (
+              <button key={group} type="button" className={measurementGroup === group ? "selected" : ""}
+                aria-pressed={measurementGroup === group} onClick={() => setMeasurementGroup(group)}>{label}</button>
+            ))}
+          </div>}
+          <p className="small-text">Все замеры необязательны. Полные обхваты и исторические полуобхваты отмечены разными названиями.</p>
           <div className="form-pair">
             {measurementKeys.map((key) => (
               <Field
                 key={key}
                 label={measurementNames[key] || key}
-                markEmpty
-                type="number"
+                type="text"
                 inputMode="decimal"
-                min="0"
-                max="2000"
-                step="0.1"
-                value={form.measurements[key] === undefined ? "" : form.measurements[key] / 10}
+                maxLength={6}
+                placeholder="см"
+                error={attempted && measurementInputs[key]?.trim() && validMeasurement(measurementInputs[key]) === null
+                  ? "Введите значение от 0 до 2000 см, до одного знака после запятой" : undefined}
+                value={measurementInputs[key] ?? (form.measurements[key] === undefined ? "" : String(form.measurements[key] / 10))}
                 onChange={(event) => {
                   const raw = event.target.value;
+                  setMeasurementInputs((previous) => ({ ...previous, [key]: raw }));
                   setForm((previous) => {
                     const measurements = { ...previous.measurements };
-                    if (raw === "") delete measurements[key];
-                    else measurements[key] = Math.round(Number(raw) * 10);
+                    if (!raw.trim()) delete measurements[key];
+                    else {
+                      const value = validMeasurement(raw);
+                      if (value !== null) measurements[key] = value;
+                    }
                     return { ...previous, measurements };
                   });
                   setDirty(true);
@@ -719,126 +990,54 @@ function ItemEditor({ id }: { id: string }) {
             maxLength={4000}
             value={form.defectDescription}
             onChange={(value) => set("defectDescription", value)}
-            hint="Укажите конкретную особенность. Добавьте фото дефекта ниже. При выключении флага текст удалится после сохранения."
+            hint="Укажите конкретную особенность и при необходимости добавьте её фотографию выше. При выключении флага текст удалится после сохранения."
           />
         )}
         </fieldset>
         <fieldset><legend>Сведения с бирки</legend>
         <p className="small-text">Указывайте только известные сведения. Не заменяйте отсутствующую маркировку предположениями.</p>
+        {([
+          ["brand", "Бренд", clothingBrands],
+          ["color", "Цвет", clothingColors],
+          ["season", "Сезон", clothingSeasons],
+          ["origin", "Страна происхождения", countrySuggestions],
+        ] as const).map(([key, label, suggestions]) => (
+          <Select
+            key={key}
+            label={label}
+            markEmpty={!(key === "color" && legacyColor)}
+            searchPlaceholder={key === "origin" ? "Найти страну" : `Найти или указать ${label.toLocaleLowerCase("ru")}`}
+            allowCustom
+            value={String(form.attributes[key] ?? "")}
+            onValueChange={(value) => attr(key, canonicalChoice(value, suggestions))}
+            options={[{ value: "", label: "Не указано" }, ...valueOptions(suggestions, String(form.attributes[key] ?? ""))]}
+          />
+        ))}
         {[
-          ["brand", "Бренд"],
-          ["color", "Цвет"],
-          ["season", "Сезон"],
           ["material", "Состав"],
           ["care", "Уход"],
           ["manufacturer", "Изготовитель"],
           ["importer", "Импортёр"],
-          ["origin", "Страна происхождения"],
           ["documents", "Маркировка и документы"],
         ].map(([key, label]) => (
           <Field
             key={key}
             label={label}
-            markEmpty={!(key === "color" && legacyColor && String(form.attributes.color) === legacyColor)}
-            value={key === "color" && String(form.attributes.color) === legacyColor ? "" : String(form.attributes[key] ?? "")}
-            hint={key === "color" && legacyColor ? `Сохранён цветовой код ${legacyColor}. Введите известное название цвета. Пустое поле сохранит код.` : undefined}
-            onChange={(e) => attr(key, e.target.value || (key === "color" ? legacyColor : ""))}
+            markEmpty
+            value={String(form.attributes[key] ?? "")}
+            onChange={(event) => attr(key, event.target.value)}
           />
         ))}
         </fieldset>
-        <Button type="submit" disabled={mutation.busy}>
-          {mutation.busy ? "Сохраняем…" : "Сохранить карточку"}
+        <Button type="submit" disabled={mutation.busy || uploading || mediaBusy || draftSaving}>
+          {mutation.busy || draftSaving ? "Сохраняем…" : item?.publication === "PUBLISHED" ? "Сохранить карточку" : "Сохранить черновик"}
         </Button>
         {dirty && (
           <p className="small-text">
-            Есть несохранённые изменения. Сохраните их перед выходом.
+            Есть несохранённые изменения. Их копия останется на этом устройстве до сохранения на сервере.
           </p>
         )}
       </form>
-      <section className="detail-section">
-        <div className="section-heading">
-          <h2 id="editor-photos">Фотографии</h2>
-          <Button
-            secondary
-            className={item && !item.media.length ? "empty-photo-control" : ""}
-            disabled={!item || Boolean(uploadFiles.length)}
-            onClick={() => fileInput.current?.click()}
-          >
-            <Icon name="plus" size={18} />
-            Добавить
-          </Button>
-        </div>
-        <input
-          ref={fileInput}
-          hidden
-          type="file"
-          accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
-          multiple
-          onChange={(e: ChangeEvent<HTMLInputElement>) => {
-            if (e.target.files) upload(Array.from(e.target.files));
-            e.target.value = "";
-          }}
-        />
-        <p className="small-text">
-          {demo ? "До 12 тестовых фото по 4 МБ. Фотографии остаются в вашем браузере." : "До 12 фото по 15 МБ. Общий вид, обратная сторона, бирка и детали. Геолокация удаляется сервером."}
-        </p>
-        {uploadStatus && <p role="status">{uploadStatus}</p>}
-        {uploadFiles.length > 0 && (
-          <Button secondary onClick={() => upload(uploadFiles)}>
-            Повторить оставшиеся файлы
-          </Button>
-        )}
-        <div className="media-editor">
-          {item?.media.map((media, index) => (
-            <div key={media.id}>
-              <Photo media={media} alt={`Фото ${index + 1}`} />
-              <Select
-                label={`Тип фото ${index + 1}`}
-                value={media.role || "FRONT"}
-                onValueChange={(role) => mediaAction(media, { role, position: index })}
-                options={[
-                  ...(media.role === "MEASUREMENT"
-                    ? [{ value: "MEASUREMENT", label: "Архивный тип" }]
-                    : []),
-                  { value: "FRONT", label: "Общий вид" },
-                  { value: "BACK", label: "Сзади" },
-                  { value: "LABEL", label: "Бирка" },
-                  { value: "DETAIL", label: "Деталь" },
-                ]}
-              />
-              <div className="photo-actions">
-                <button
-                  className="icon-button"
-                  aria-label="Переместить раньше"
-                  disabled={index === 0 || mutation.busy}
-                  onClick={() => mediaAction(media, { position: index - 1 })}
-                >
-                  <Icon name="back" size={18} />
-                </button>
-                <button
-                  className="icon-button"
-                  aria-label="Повернуть фото"
-                  disabled={mutation.busy}
-                  onClick={() => mediaAction(media, { rotation: 90 })}
-                >
-                  ↻
-                </button>
-                <button
-                  className="icon-button"
-                  aria-label="Удалить фото"
-                  disabled={mutation.busy}
-                  onClick={() => {
-                    if (confirm("Удалить фотографию из карточки?"))
-                      mediaAction(media, {}, "DELETE");
-                  }}
-                >
-                  <Icon name="close" size={18} />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
       {item && (
         <section className="detail-section">
           <h2>Публикация и наличие</h2>
@@ -846,6 +1045,9 @@ function ItemEditor({ id }: { id: string }) {
             <Button secondary onClick={() => setPreview(true)}>
               Предпросмотр карточки
             </Button>
+            {item.publication !== "PUBLISHED" && missing.length > 0 && (
+              <p className="small-text">Перед публикацией заполните: {missing.join("; ")}.</p>
+            )}
             {item.publication === "PUBLISHED" ? (
               <Button
                 secondary
@@ -876,19 +1078,19 @@ function ItemEditor({ id }: { id: string }) {
                 </label>
                 <Button
                   disabled={!checked || dirty || mutation.busy}
-                  onClick={() =>
-                    mutation
-                      .run<Item>(`/staff/items/${id}/publish`, {
-                        version: item.version,
-                        checked: true,
-                      })
-                      .then((result) => {
-                        if (result) {
-                          setData(result);
-                          toast("Вещь опубликована");
-                        }
-                      })
-                  }
+                  onClick={() => {
+                    setAttempted(true);
+                    if (missing.length) {
+                      requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+                      return;
+                    }
+                    void mutation.run<Item>(`/staff/items/${item.id}/publish`, {
+                      version: item.version,
+                      checked: true,
+                    }).then((result) => {
+                      if (result) { setData(result); toast("Вещь опубликована"); }
+                    });
+                  }}
                 >
                   Опубликовать
                 </Button>
@@ -944,10 +1146,16 @@ function ItemEditor({ id }: { id: string }) {
       )}
       {preview && (
         <Sheet title="Предпросмотр" onClose={() => setPreview(false)}>
-          <Photo media={item?.media.find((photo) => photo.role !== "MEASUREMENT")} alt={form.title} contain />
+          <Photo media={item?.media[0]} alt={form.title} contain />
+          {item && item.media.length > 1 && <div className="photo-preview-strip" aria-label="Порядок фотографий">
+            {item.media.map((media, index) => <div key={media.id}>
+              <Photo media={media} alt={`Фото ${index + 1}`} />
+              <span>{index + 1}</span>
+            </div>)}
+          </div>}
           <h1>{form.title || "Название не заполнено"}</h1>
           {productSize(attributes) && <p>{productSize(attributes)}</p>}
-          <strong>{money(priceMinor)}</strong>
+          <strong>{!priceInput ? "Цена не указана" : money(priceMinor)}</strong>
           {form.description.trim() && <p className="pre-wrap">{form.description}</p>}
           {productColor(attributes.color) && <p>{productColor(attributes.color)}</p>}
           {String(form.attributes.material ?? "").trim() && <p>{form.attributes.material}</p>}

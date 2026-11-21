@@ -186,6 +186,42 @@ export async function registerMedia(app: FastifyInstance) {
       }
     }),
   );
+
+  // Compare-and-swap full order. Serializing through the item row prevents a
+  // delayed response or another employee's reorder silently winning.
+  app.put("/staff/items/:id/media-order", async (req) => {
+    const { id } = pId.parse(req.params);
+    const body = z.object({
+      ids: z.array(z.uuid()).max(12),
+      expectedOrder: z.array(z.uuid()).max(12),
+    }).strict().parse(req.body);
+    assert(new Set(body.ids).size === body.ids.length, 422, "MEDIA_ORDER", "Фото не должны повторяться");
+    return tx(async (c) => {
+      const item = (await c.query("SELECT id FROM items WHERE id=$1 FOR UPDATE", [id])).rows[0];
+      assert(item, 404, "ITEM", "Вещь не найдена");
+      assert(!(await c.query("SELECT 1 FROM inventory_claim WHERE item_id=$1", [id])).rowCount,
+        409, "CLAIMED", "Нельзя менять фото закреплённой вещи");
+      const current = (await c.query(
+        "SELECT id FROM media_assets WHERE item_id=$1 AND state='READY' ORDER BY position,created_at,id",
+        [id],
+      )).rows.map((row) => row.id as string);
+      assert(current.length === body.ids.length &&
+        body.ids.every((mediaId) => current.includes(mediaId)), 409,
+        "MEDIA_ORDER", "Состав фотографий изменился. Обновите карточку");
+      if (current.every((value, index) => value === body.ids[index]))
+        return { ids: current };
+      assert(current.every((value, index) => value === body.expectedOrder[index]),
+        409, "MEDIA_ORDER", "Порядок фотографий изменился. Обновите карточку");
+      await c.query(
+        `UPDATE media_assets AS m SET position=ordered.ordinality-1
+           FROM unnest($2::uuid[]) WITH ORDINALITY AS ordered(id,ordinality)
+           WHERE m.item_id=$1 AND m.state='READY' AND m.id=ordered.id`,
+        [id, body.ids],
+      );
+      await audit(c, req.actor.id, "MEDIA_REORDER", "ITEM", id, { ids: body.ids });
+      return { ids: body.ids };
+    });
+  });
   app.patch("/staff/media/:id", async (req) => {
     const { id } = pId.parse(req.params),
       body = z
@@ -316,6 +352,7 @@ export async function serveMedia(app: FastifyInstance) {
       const actor = req.actor;
       assert(actor, 403, "PRIVATE_MEDIA", "Фотография недоступна");
       if (actor.role === "BUYER") {
+        assert(a.publication !== "DRAFT", 403, "PRIVATE_MEDIA", "Фотография недоступна");
         assert(
           (
             await pool.query(

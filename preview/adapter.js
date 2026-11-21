@@ -64,7 +64,7 @@
     publicSettings.phone = ''; publicSettings.telegramUsername = ''; publicSettings.seller = '';
     publicSettings.documents = { privacy: '', reservation: '', shipping: '', returns: '' };
     publicSettings.documentStatus = 'DRAFT'; publicSettings.phoneIsTest = true;
-    const items = state.items.map(item => ({
+    const items = state.items.filter(item => item.publication !== 'DRAFT').map(item => ({
       id: item.id, sku: item.sku, title: item.title, description: item.description || '', category: item.category,
       priceMinor: item.priceMinor, publication: item.publication,
       // A local order cannot leave a persistent stock lock after reload.
@@ -368,20 +368,48 @@
       return { items: state.items.filter(item => (!q || `${item.title} ${item.sku}`.toLowerCase().includes(q)) && (!filter || item.physical === filter || item.publication === filter)).map(itemView) };
     }
     if (/^\/staff\/items\/[^/]+$/.test(path) && method === 'GET') return itemView(findItem(path.split('/')[3]));
+    if (path === '/staff/items/draft' && method === 'POST') {
+      ensure(body.title == null || (typeof body.title === 'string' && body.title.length <= 180), 422, 'VALIDATION', 'Название слишком длинное');
+      ensure(body.priceMinor == null || (Number.isInteger(body.priceMinor) && body.priceMinor >= 0), 422, 'VALIDATION', 'Укажите корректную цену');
+      ensure(!body.category || state.categories.some(category => category.id === body.category && !category.archived), 422, 'CATEGORY', 'Выберите действующую категорию');
+      const item = {
+        id: uuid(), sku: body.sku || `DEMO-${uuid().slice(0, 8)}`, title: body.title || '',
+        description: String(body.description || ''), category: body.category || '',
+        priceMinor: body.priceMinor ?? 0, priceMissing: body.priceMinor == null,
+        attributes: clone(body.attributes ?? {}), measurements: clone(body.measurements ?? {}),
+        storageLocation: String(body.storageLocation || ''), hasDefect: !!body.hasDefect,
+        defectDescription: body.hasDefect ? String(body.defectDescription || '') : '',
+        publication: 'DRAFT', physical: 'INTAKE', version: 1, media: [],
+      };
+      state.items.unshift(item);
+      record('demo.item.draft', item.id);
+      return itemView(item);
+    }
     if (path === '/staff/items/bulk-hide' && method === 'POST') {
       ensure(body.confirmed, 422, 'CONFIRM', 'Подтвердите изменение');
-      const items = body.items.map(value => { const item = findItem(value.id); checkVersion(item, value); ensure(!claimed(item.id), 409, 'CLAIMED', 'Вещь закреплена обращением'); return item; });
+      const items = body.items.map(value => {
+        const item = findItem(value.id);
+        checkVersion(item, value);
+        ensure(item.publication !== 'DRAFT', 409, 'ITEM_DRAFT', 'Черновик ещё не размещён на витрине');
+        ensure(!claimed(item.id), 409, 'CLAIMED', 'Вещь закреплена обращением');
+        return item;
+      });
       for (const item of items) { item.publication = 'HIDDEN'; item.version++; }
       persist(); return { items: items.map(itemView) };
     }
     if ((path === '/staff/items' && method === 'POST') || (/^\/staff\/items\/[^/]+$/.test(path) && method === 'PATCH')) {
       const existing = method === 'PATCH' ? findItem(path.split('/')[3]) : null;
       if (existing) { checkVersion(existing, body); ensure(!claimed(existing.id), 409, 'CLAIMED', 'Вещь закреплена. Сначала обработайте обращение.'); }
-      ensure(String(body.title || '').trim() && Number.isInteger(body.priceMinor) && body.priceMinor >= 0, 422, 'VALIDATION', 'Проверьте название и цену');
+      const draft = existing?.publication === 'DRAFT';
+      ensure(draft || (String(body.title || '').trim() && Number.isInteger(body.priceMinor) && body.priceMinor >= 0), 422, 'VALIDATION', 'Проверьте название и цену');
       ensure(body.description === undefined || (typeof body.description === 'string' && body.description.trim().length <= 4000), 422, 'VALIDATION', 'Описание слишком длинное');
-      ensure(state.categories.some(category => category.id === body.category && !category.archived), 422, 'CATEGORY', 'Выберите действующую категорию');
-      ensure(!body.hasDefect || String(body.defectDescription || '').trim(), 422, 'VALIDATION', 'Опишите дефект', { fieldErrors: { defectDescription: 'Опишите конкретный дефект' } });
-      const item = { ...(existing || { id: uuid(), sku: `DEMO-${state.items.length + 1}`, media: [], publication: 'DRAFT', physical: 'AVAILABLE' }), ...clone(body), description: String(body.description ?? existing?.description ?? '').trim(), version: (existing?.version || 0) + 1 };
+      ensure(!body.category || state.categories.some(category => category.id === body.category && !category.archived), 422, 'CATEGORY', 'Выберите действующую категорию');
+      ensure(draft || !body.hasDefect || String(body.defectDescription || '').trim(), 422, 'VALIDATION', 'Опишите дефект', { fieldErrors: { defectDescription: 'Опишите конкретный дефект' } });
+      const item = { ...(existing || { id: uuid(), sku: `DEMO-${state.items.length + 1}`, media: [], publication: 'DRAFT', physical: 'INTAKE' }), ...clone(body), description: String(body.description ?? existing?.description ?? '').trim(), version: (existing?.version || 0) + 1 };
+      item.title = body.title === null ? '' : String(item.title || '');
+      item.category = body.category === null ? '' : String(item.category || '');
+      item.priceMissing = body.priceMinor === null ? true : body.priceMinor === undefined ? existing?.priceMissing ?? false : false;
+      item.priceMinor = body.priceMinor ?? existing?.priceMinor ?? 0;
       item.measurements = body.measurements ?? existing?.measurements ?? {};
       item.attributes ??= {};
       const color = item.attributes.color, namedColor = productColor(color), previousColor = existing?.attributes.color;
@@ -396,14 +424,34 @@
       if (existing) Object.assign(existing, item); else state.items.unshift(item);
       record('demo.item.edit', item.id); persist(); return itemView(item);
     }
+    if (/^\/staff\/items\/[^/]+\/media-order$/.test(path) && method === 'PUT') {
+      const item = findItem(path.split('/')[3]);
+      ensure(!claimed(item.id), 409, 'CLAIMED', 'Нельзя менять фото закреплённой вещи');
+      const current = item.media.map(media => media.id), ids = body.ids ?? [], expected = body.expectedOrder ?? [];
+      ensure(Array.isArray(ids) && ids.length === current.length && new Set(ids).size === ids.length &&
+        ids.every(id => current.includes(id)), 409, 'MEDIA_ORDER', 'Состав фотографий изменился');
+      if (current.every((id, index) => ids[index] === id)) return { ids: current };
+      ensure(Array.isArray(expected) && current.every((id, index) => expected[index] === id), 409, 'MEDIA_ORDER', 'Порядок фотографий изменился');
+      item.media = ids.map((id, position) => ({ ...item.media.find(media => media.id === id), position }));
+      record('demo.media.reorder', item.id);
+      persist();
+      return { ids };
+    }
     if (/^\/staff\/items\/[^/]+\/(publish|hide|inspect|write-off)$/.test(path) && method === 'POST') {
       const item = findItem(path.split('/')[3]), action = path.split('/')[4]; checkVersion(item, body); ensure(!claimed(item.id), 409, 'CLAIMED', 'Вещь закреплена обращением');
       if (action === 'publish') {
         ensure(body.checked, 422, 'PUBLISH', 'Подтвердите физическую проверку вещи');
+        ensure(String(item.title || '').trim() && String(item.category || '').trim() && !item.priceMissing,
+          422, 'PUBLISH', 'Заполните название, категорию и цену');
         ensure(!item.hasDefect || item.defectDescription.trim(), 422, 'PUBLISH', 'Укажите описание дефекта');
         item.publication = 'PUBLISHED';
+        // Match the real API: intake becomes available only after staff checks it.
+        if (item.physical === 'INTAKE') item.physical = 'AVAILABLE';
       }
-      if (action === 'hide') item.publication = 'HIDDEN';
+      if (action === 'hide') {
+        ensure(item.publication !== 'DRAFT', 409, 'ITEM_DRAFT', 'Черновик ещё не размещён на витрине');
+        item.publication = 'HIDDEN';
+      }
       if (action === 'inspect') { ensure(item.physical === 'INSPECTION' && body.suitable, 409, 'INSPECTION', 'Сначала подтвердите осмотр'); item.physical = 'AVAILABLE'; }
       if (action === 'write-off') { owner(); item.physical = 'WRITTEN_OFF'; item.publication = 'ARCHIVED'; }
       item.version++; record(`demo.item.${action}`, item.id); persist(); return itemView(item);

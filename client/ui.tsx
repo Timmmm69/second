@@ -231,6 +231,7 @@ export function Select(props: {
   markEmpty?: boolean;
   options: readonly SelectOption[];
   searchPlaceholder?: string;
+  allowCustom?: boolean;
   disabled?: boolean;
 } & (
   | { multiple?: false; value: string; onValueChange: (value: string) => void }
@@ -255,13 +256,13 @@ export function Select(props: {
   const matches = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
   const selected = selectedValues.map((value) => options.find((option) => matches(option.value, value))?.label ?? value);
   const selectedLabel = selected.join(", ");
-  const choices = props.multiple
-    ? [...options, ...props.value.filter((value) => !options.some((option) => matches(option.value, value)))
-      .map((value) => ({ value, label: value }))]
-    : options;
+  // Preserve saved free-text values from older cards as real selectable options.
+  const extras = props.multiple ? props.value : (props.allowCustom && props.value ? [props.value] : []);
+  const choices = [...options, ...extras.filter((value) => !options.some((option) => matches(option.value, value)))
+    .map((value) => ({ value, label: value }))];
   const filter = searchText(query);
   const customValue = query.trim();
-  const custom = props.multiple && props.allowCustom && customValue &&
+  const custom = props.allowCustom && customValue &&
     !choices.some((option) => matches(option.value, customValue))
     ? { value: customValue, label: `Добавить «${customValue}»` }
     : null;
@@ -472,7 +473,7 @@ export function Select(props: {
                 aria-controls={listId}
                 aria-activedescendant={activeId}
                 placeholder={searchPlaceholder}
-                maxLength={props.multiple && props.allowCustom ? 200 : undefined}
+                maxLength={props.allowCustom ? 200 : undefined}
                 value={query}
                 onChange={(event) => {
                   setQuery(event.target.value);

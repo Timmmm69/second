@@ -33,6 +33,13 @@ const itemInput = z
     version: z.number().int().optional(),
   })
   .strict();
+// Only draft writes accept null / empty merchandising fields; published items remain strict.
+const draftInput = itemInput.extend({
+  title: z.string().trim().max(180).nullable().optional(),
+  category: z.string().trim().max(100).nullable().optional(),
+  priceMinor: z.number().int().min(0).max(100000000).nullable().optional(),
+});
+const nullableText = (value: string | null | undefined) => value?.trim() || null;
 function defectDescription(hasDefect: boolean, description: string) {
   if (hasDefect && !description.trim())
     throw new AppError(422, "DEFECT_DESCRIPTION", "Укажите описание дефекта", { defectDescription: "Опишите конкретный дефект" });
@@ -56,7 +63,7 @@ async function mapItems(rows: any[], staff = false) {
   if (!rows.length) return [];
   const assets = (
     await pool.query(
-      "SELECT item_id,id,width,height,variants,role,position FROM media_assets WHERE item_id=ANY($1::uuid[]) AND state='READY' ORDER BY item_id,position,created_at",
+      "SELECT item_id,id,width,height,variants,role,position FROM media_assets WHERE item_id=ANY($1::uuid[]) AND state='READY' ORDER BY item_id,position,created_at,id",
       [rows.map((row) => row.id)],
     )
   ).rows;
@@ -72,10 +79,11 @@ function itemWithMedia(row: any, assets: any[], staff: boolean) {
   return {
     id: row.id,
     sku: row.sku,
-    title: row.title,
+    title: row.title ?? "",
     ...(row.description !== undefined ? { description: row.description } : {}),
-    category: row.category,
-    priceMinor: row.price_minor,
+    category: row.category ?? "",
+    priceMinor: row.price_minor ?? 0,
+    ...(row.price_minor === null ? { priceMissing: true } : {}),
     publication: row.publication,
     physical: staff ? row.physical : undefined,
     version: row.version,
@@ -239,7 +247,7 @@ export async function registerCatalog(app: FastifyInstance) {
   app.get("/items/:id", async (req) => {
     const { id } = uuidParam.parse(req.params);
     const row = (await readItems([id]))[0];
-    assert(row, 404, "NOT_FOUND", "Вещь не найдена");
+    assert(row && row.publication !== "DRAFT", 404, "NOT_FOUND", "Вещь не найдена");
     return row;
   });
   app.get("/me/selection", async (req) => {
@@ -249,7 +257,7 @@ export async function registerCatalog(app: FastifyInstance) {
       ])
     ).rows[0];
     const itemIds = s?.item_ids ?? [];
-    return { itemIds, items: await readItems(itemIds) };
+    return { itemIds, items: (await readItems(itemIds)).filter((item) => item?.publication !== "DRAFT") };
   });
   app.put("/me/selection", async (req) => {
     const { itemIds } = z.object({ itemIds: ids }).parse(req.body),
@@ -258,7 +266,7 @@ export async function registerCatalog(app: FastifyInstance) {
       "INSERT INTO selections(user_id,item_ids) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET item_ids=excluded.item_ids,updated_at=now()",
       [req.actor.id, distinct],
     );
-    return { itemIds: distinct, items: await readItems(distinct) };
+    return { itemIds: distinct, items: (await readItems(distinct)).filter((item) => item?.publication !== "DRAFT") };
   });
   app.get("/me/events", async (req) => {
     const { rows } = await pool.query(
@@ -296,6 +304,7 @@ export async function registerCatalog(app: FastifyInstance) {
           b.items.map((i) => i.id),
         );
         for (const item of items) {
+          assert(item.publication !== "DRAFT", 409, "ITEM_DRAFT", "Черновик ещё не размещён на витрине");
           assert(
             item.version === b.items.find((i) => i.id === item.id)?.version,
             409,
@@ -347,6 +356,26 @@ export async function registerCatalog(app: FastifyInstance) {
     assert(i, 404, "NOT_FOUND", "Вещь не найдена");
     return i;
   });
+
+  // Explicit draft creation: opening the editor never creates a database row.
+  app.post("/staff/items/draft", async (req) => {
+    const b = draftInput.parse(req.body ?? {});
+    return idem(req.actor, req.headers["idempotency-key"], "items.draft.create", b, async (c) => {
+      if (b.category) await assertActiveCategory(c, b.category);
+      const row = (await c.query(
+        "INSERT INTO items(sku,title,description,category,price_minor,attributes,measurements,storage_location,has_defect,defect_description) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *",
+        [
+          b.sku ?? "V-" + crypto.randomUUID().slice(0, 8).toUpperCase(),
+          nullableText(b.title), b.description ?? "", nullableText(b.category),
+          b.priceMinor ?? null, normalizeColor(b.attributes ?? {}), b.measurements ?? {},
+          b.storageLocation ?? "", b.hasDefect ?? false,
+          b.hasDefect ? (b.defectDescription ?? "").trim() : "",
+        ],
+      )).rows[0];
+      await audit(c, req.actor.id, "ITEM_DRAFT_CREATE", "ITEM", row.id, {});
+      return mapItem(row, true);
+    });
+  });
   app.post("/staff/items", async (req) => {
     const b = itemInput.parse(req.body);
     return idem(
@@ -378,15 +407,16 @@ export async function registerCatalog(app: FastifyInstance) {
   });
   app.patch("/staff/items/:id", async (req) => {
     const { id } = uuidParam.parse(req.params),
-      b = itemInput.parse(req.body);
+      b = draftInput.parse(req.body);
     return idem(
       req.actor,
       req.headers["idempotency-key"],
       "items.edit:" + id,
       b,
       async (c) => {
-        await assertActiveCategory(c, b.category);
         const [old] = await lockItems(c, [id]);
+        if (old.publication !== "DRAFT") itemInput.parse(req.body);
+        if (b.category) await assertActiveCategory(c, b.category);
         assert(
           old && old.version === b.version,
           409,
@@ -404,21 +434,22 @@ export async function registerCatalog(app: FastifyInstance) {
           "Сначала согласуйте изменения действующего обращения",
         );
         const hasDefect = b.hasDefect ?? old.has_defect;
+        const nextDescription = hasDefect ? (b.defectDescription ?? old.defect_description).trim() : "";
         const row = (
           await c.query(
             "UPDATE items SET sku=$2,title=$3,description=$4,category=$5,price_minor=$6,attributes=$7,measurements=$8,storage_location=$9,has_defect=$10,defect_description=$11,version=version+1,updated_at=now() WHERE id=$1 RETURNING *",
             [
               id,
               b.sku ?? old.sku,
-              b.title,
+              b.title === undefined ? old.title : nullableText(b.title),
               b.description ?? old.description,
-              b.category,
-              b.priceMinor,
+              b.category === undefined ? old.category : nullableText(b.category),
+              b.priceMinor === undefined ? old.price_minor : b.priceMinor,
               b.attributes === undefined ? old.attributes : normalizeColor(b.attributes, old.attributes.color),
               b.measurements ?? old.measurements,
               b.storageLocation ?? old.storage_location,
               hasDefect,
-              defectDescription(hasDefect, b.defectDescription ?? old.defect_description),
+              old.publication === "DRAFT" ? nextDescription : defectDescription(hasDefect, nextDescription),
             ],
           )
         ).rows[0];
@@ -466,6 +497,9 @@ export async function registerCatalog(app: FastifyInstance) {
           );
           if (command === "publish") {
             const fields: Record<string, string> = {};
+            if (!item.title?.trim()) fields.title = "Укажите название вещи";
+            if (!item.category) fields.category = "Выберите категорию";
+            if (item.price_minor === null) fields.price = "Укажите цену";
             if (item.has_defect && !item.defect_description?.trim())
               fields.defectDescription = "Опишите конкретный дефект";
             if (!b.checked) fields.checked = "Подтвердите физическую проверку";
@@ -477,6 +511,7 @@ export async function registerCatalog(app: FastifyInstance) {
               "PHYSICAL",
               "Сначала выполните допустимую приёмку вещи",
             );
+            await assertActiveCategory(c, item.category);
             await setPhysical(
               c,
               [id],
@@ -500,6 +535,7 @@ export async function registerCatalog(app: FastifyInstance) {
               ],
             );
           } else if (command === "hide") {
+            assert(item.publication !== "DRAFT", 409, "ITEM_DRAFT", "Черновик ещё не размещён на витрине");
             await c.query(
               "UPDATE items SET publication='HIDDEN',version=version+1 WHERE id=$1",
               [id],
