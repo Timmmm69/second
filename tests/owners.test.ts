@@ -5,7 +5,7 @@ import { buildApp } from "../server/app.js";
 import { pool, tx } from "../server/db.js";
 import { migrate } from "../server/migrate.js";
 import { config } from "../server/config.js";
-import { totp, ownerStepUp } from "../server/auth.js";
+import { totp } from "../server/auth.js";
 import { createFirstOwner } from "../scripts/owner.js";
 import { issue } from "../server/inventory.js";
 import { decrypt } from "../server/crypto.js";
@@ -42,23 +42,38 @@ test("second OWNER requires verified Telegram identity; secrets are personal, se
  const elevate=await app.inject({method:"POST",url:"/api/owner/staff/invites",headers:{cookie:fresh.cookie},payload:{telegramId:"998877665",role:"OWNER"}});
  assert.equal(elevate.statusCode,422);
 });
-test("personal step-up denies another owner's code, expired auth and TOTP replay in another session",async()=>{
- const b=await login(secondId);
- const session=(await pool.query("SELECT id FROM sessions WHERE user_id=$1 AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1",[b.user.id])).rows[0].id;
- const request:any={actor:b.user,sessionId:session,authAt:new Date(),headers:{"x-owner-code":totp(secrets[0])}};
- // Enrollment consumed its code; force an unused step in this isolated test credential.
- await pool.query("UPDATE owner_credentials SET last_step=-1 WHERE user_id=$1",[b.user.id]);
- config.production=true;
- try {
-  await assert.rejects(()=>ownerStepUp(request),/личного второго фактора/);
-  request.headers["x-owner-code"]=totp(secrets[1]);await ownerStepUp(request);
-  // A short step-up grant is bound to one session; retry within it succeeds.
-  await ownerStepUp(request);
-  request.authAt=new Date(Date.now()-6*60000);await assert.rejects(()=>ownerStepUp(request),/Переоткройте/);
-  request.authAt=new Date();
-  const other=(await pool.query("INSERT INTO sessions(user_id,token_hash,expires_at) VALUES($1,$2,now()+interval '1 hour') RETURNING id",[b.user.id,randomUUID()])).rows[0].id;
-  request.sessionId=other;await assert.rejects(()=>ownerStepUp(request),/личного второго фактора/);
- }finally{config.production=false;}
+test("OWNER actions require an active owner session and no extra code",async()=>{
+ const owner=await login(secondId);
+ const buyer=await login("991122340");
+ const staff=await login("991122341");
+ await pool.query("UPDATE users SET role='STAFF' WHERE id=$1",[staff.user.id]);
+ const route="/api/owner/staff/invites";
+ const payload={telegramId:"998877666",role:"STAFF"};
+ const call=(cookie?:string)=>app.inject({method:"POST",url:route,headers:cookie?{cookie}:{},payload});
+ assert.equal((await call()).statusCode,401,"no session");
+ assert.equal((await call(buyer.cookie)).statusCode,403,"buyer denied");
+ assert.equal((await call(staff.cookie)).statusCode,403,"staff denied");
+ const allowed=await call(owner.cookie);
+ assert.equal(allowed.statusCode,200,allowed.body);
+ assert.ok(allowed.json().token,"owner can invite a staff member without an additional confirmation");
+ const current=await app.inject({url:"/api/owner/settings",headers:{cookie:owner.cookie}});
+ assert.equal(current.statusCode,200,current.body);
+ const value=current.json();
+ const save=await app.inject({method:"PATCH",url:"/api/owner/settings",headers:{cookie:owner.cookie},payload:{
+  ...value,acceptingOrders:false,carriers:{
+   ...value.carriers,
+   BELPOST:{...value.carriers.BELPOST,enabled:true},
+   EUROPOST:{...value.carriers.EUROPOST,enabled:true},
+  }
+ }});
+ assert.equal(save.statusCode,200,save.body);
+ assert.equal(save.json().carriers.BELPOST.enabled,true);
+ assert.equal(save.json().carriers.EUROPOST.enabled,true);
+ const persisted=(await app.inject({url:"/api/owner/settings",headers:{cookie:owner.cookie}})).json();
+ assert.equal(persisted.carriers.BELPOST.enabled,true);
+ assert.equal(persisted.carriers.EUROPOST.enabled,true);
+ await pool.query("UPDATE sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL",[owner.user.id]);
+ assert.equal((await call(owner.cookie)).statusCode,401,"revoked owner session denied");
 });
 test("important issue reaches every OWNER exactly once, retries do not duplicate",async()=>{
  const entity=randomUUID();

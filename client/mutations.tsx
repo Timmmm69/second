@@ -8,13 +8,11 @@ import {
   saveLocal,
 } from "./api";
 import { Button, ErrorBox } from "./ui";
-import { useApp } from "./context";
 interface Pending {
   key: string;
   path: string;
 }
 export function useMutation() {
-  const { ownerCode } = useApp();
   const [busy, setBusy] = useState(false),
     [error, setError] = useState<unknown>(null),
     [pending, setPending] = useState<Pending | null>(() =>
@@ -43,7 +41,6 @@ export function useMutation() {
         body,
         method,
         op.key,
-        path.startsWith("/owner/") ? ownerCode : undefined,
       );
       pendingRef.current = null;
       setPending(null);

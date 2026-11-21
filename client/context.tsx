@@ -18,8 +18,6 @@ export interface AppContextValue {
   toast: (text: string) => void;
   authenticated: () => boolean;
   offline: boolean;
-  ownerCode: string;
-  setOwnerCode: (code: string) => void;
 }
 export const AppContext = createContext<AppContextValue | null>(null);
 export function useApp() {
