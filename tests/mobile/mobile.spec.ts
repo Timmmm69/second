@@ -46,7 +46,11 @@ test("the first, middle and last filters leave the next control visible and tapp
       catalogGap: document.querySelector(".product-grid")!.getBoundingClientRect().top - heading.getBoundingClientRect().bottom,
     };
   });
-  expect(catalogLayout.previousGap - catalogLayout.actualGap).toBeCloseTo(2, 1);
+  // Former visible inter-row spacing was 16px; now it is 10px (-37.5%).
+  // The neighboring margins are collapsed, so changing both 6px margins to 0
+  // removes 6px in total, not 12px.
+  expect(catalogLayout.actualGap).toBeCloseTo(10, 0);
+  expect(catalogLayout.previousGap - catalogLayout.actualGap).toBeCloseTo(8, 1);
   expect(catalogLayout.border).toBe(1);
   expect(catalogLayout.borderStyle).toBe("solid");
   expect(catalogLayout.catalogGap).toBeGreaterThanOrEqual(8);
