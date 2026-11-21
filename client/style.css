@@ -2113,3 +2113,8 @@ button > svg, .button > svg { flex-shrink: 0; display: block; }
 .catalog-page .empty .button-stack { margin-top:16px; }
 @keyframes luchok-pop { 0% { transform:scale(.82); } 60% { transform:scale(1.09); } 100% { transform:scale(1); } }
 @media (prefers-reduced-motion:reduce) { .product-card .save-item.selected { animation:none; } }
+
+.photo-preview-strip { display: flex; gap: 10px; overflow-x: auto; padding: 10px 0; }
+.photo-preview-strip > div { flex: 0 0 68px; text-align: center; font-size: .75rem; color: var(--mute); }
+.photo-preview-strip .photo-wrap,
+.photo-preview-strip .photo-placeholder { width: 68px; border-radius: 9px; margin-bottom: 4px; }

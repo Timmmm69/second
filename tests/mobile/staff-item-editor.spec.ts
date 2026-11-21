@@ -31,6 +31,7 @@ async function editorFixture(page: Page, browserName: string) {
     await respond(route, saved);
   });
   await page.route("**/api/staff/media/uploads", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 70));
     uploaded++;
     const media: Media = { id: `mobile-photo-${uploaded}`, url: `/media/mobile-photo-${uploaded}.svg`,
       position: uploaded - 1, role: "DETAIL" };
@@ -76,6 +77,7 @@ test("staff can select six photos first on iOS/Android and reorder without disru
   await page.locator('input[type="file"]').setInputFiles(
     Array.from({ length: 6 }, (_, i) => ({ name: `photo-${i + 1}.png`, mimeType: "image/png", buffer: png })),
   );
+  await page.getByLabel("Описание").fill("Введено во время загрузки");
   await expect(page.getByText("6/12")).toBeVisible();
   expect(mock.draftCreates).toBe(1);
   expect(mock.uploaded).toBe(6);
@@ -84,11 +86,12 @@ test("staff can select six photos first on iOS/Android and reorder without disru
   await expect(page.getByRole("button", { name: "Восстановить ввод" })).toBeVisible();
   await page.getByRole("button", { name: "Восстановить ввод" }).click();
   await expect(title).toHaveValue("Не потерять текст");
+  await expect(page.getByLabel("Описание")).toHaveValue("Введено во время загрузки");
   await page.getByRole("button", { name: "Фото 2: раньше" }).click();
   await expect.poll(() => mock.savedOrder[0]).toBe("mobile-photo-2");
   await expect(page.locator(".media-tile").first()).toContainText("Основное · 1");
   expect(mock.mobile.pageErrors).toEqual([]);
-  expect(mock.mobile.unexpectedRequests).toEqual([]);
+  expect(mock.mobile.unexpectedRequests.filter((url) => !url.startsWith("blob:"))).toEqual([]);
 });
 
 test("empty draft can be saved and measured; color accepts free text and keyboard does not switch routes", async ({ page, browserName }) => {
@@ -108,10 +111,10 @@ test("empty draft can be saved and measured; color accepts free text and keyboar
   await expect(page.getByText(/Черновик сохранён/)).toBeVisible();
   const color = page.getByRole("button", { name: /Цвет/ });
   await color.click();
-  const search = page.getByRole("searchbox", { name: /Найти или указать цвет/ });
+  const search = page.getByRole("combobox", { name: /Найти или указать цвет/ });
   await search.fill("Мятный");
   await page.getByRole("option", { name: "Добавить «Мятный»" }).click();
   await expect(color).toContainText("Мятный");
   expect(mock.mobile.pageErrors).toEqual([]);
-  expect(mock.mobile.unexpectedRequests).toEqual([]);
+  expect(mock.mobile.unexpectedRequests.filter((url) => !url.startsWith("blob:"))).toEqual([]);
 });

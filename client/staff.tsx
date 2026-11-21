@@ -332,7 +332,7 @@ function Items() {
                   <p className="muted">
                     {item.sku} · {item.storageLocation || "Место не задано"}
                   </p>
-                  <strong>{money(item.priceMinor)}</strong>
+                  <strong>{item.priceMissing ? "Цена не указана" : money(item.priceMinor)}</strong>
                   <p className="small-text">
                     {statusNames[item.physical] || item.physical} ·{" "}
                     {statusNames[item.publication] || item.publication}
@@ -466,6 +466,16 @@ function ItemEditor({ id }: { id: string }) {
   const [size, setSize] = useState("");
   const [attempted, setAttempted] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
+  // Read current inputs after awaited uploads, not a stale event closure.
+  const latestInputs = useRef({ form, price, size, dirty });
+  latestInputs.current = { form, price, size, dirty };
+  const previewUrlsRef = useRef<string[]>([]);
+  const setPhotosForPreview = (files: File[]) => {
+    previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    const urls = files.map((file) => URL.createObjectURL(file));
+    previewUrlsRef.current = urls;
+    setPreviewUrls(urls);
+  };
   const showSize = Boolean(form.category) && !["bags", "accessories"].includes(form.category);
   const childSize = form.category === "children";
   const previousSize = item && (childSize !== (item.category === "children") || !editableSize(item))
@@ -504,11 +514,7 @@ function ItemEditor({ id }: { id: string }) {
     window.addEventListener("beforeunload", unload);
     return () => window.removeEventListener("beforeunload", unload);
   }, [dirty]);
-  useEffect(() => {
-    const urls = uploadFiles.map((file) => URL.createObjectURL(file));
-    setPreviewUrls(urls);
-    return () => urls.forEach((url) => URL.revokeObjectURL(url));
-  }, [uploadFiles]);
+  useEffect(() => () => previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url)), []);
   useEffect(() => {
     if (dirty) saveLocal(backupKey, { form, price, size, version: item?.version });
   }, [dirty, form, price, size, backupKey]);
@@ -588,6 +594,7 @@ function ItemEditor({ id }: { id: string }) {
     setUploading(true);
     setUploadedCount(0);
     setUploadFiles(files);
+    setPhotosForPreview(files);
     let target = item;
     try {
       if (!target) {
@@ -607,21 +614,25 @@ function ItemEditor({ id }: { id: string }) {
           await api<Media>("/staff/media/uploads", { method: "POST", body });
         } catch (e) {
           setUploadFiles(files.slice(i));
+          setPhotosForPreview(files.slice(i));
           setUploadStatus(`Загружено ${i} из ${files.length}. Повторите оставшиеся файлы.`);
           mutation.setError(e);
           reload();
           return;
         }
         setUploadedCount(i + 1);
-        setUploadFiles(files.slice(i + 1));
+        // Preview object URLs remain stable while the batch is processed.
       }
       setUploadFiles([]);
+      setPhotosForPreview([]);
       setUploadStatus("Фотографии сохранены");
       reload();
       if (id === "new" && target) {
         // Replace the transient /new route with the real server-backed draft.
-        if (dirty) {
-          saveLocal(`staff-editor:${user?.id ?? "unknown"}:${target.id}`, { form, price, size, version: target.version });
+        const latest = latestInputs.current;
+        if (latest.dirty) {
+          saveLocal(`staff-editor:${user?.id ?? "unknown"}:${target.id}`,
+            { form: latest.form, price: latest.price, size: latest.size, version: target.version });
         }
         saveLocal(backupKey, null);
         go(`/staff/items/${target.id}`);
@@ -744,7 +755,7 @@ function ItemEditor({ id }: { id: string }) {
           }} />
         {uploadStatus && <p className="small-text" role="status" aria-live="polite">{uploadStatus}</p>}
         {uploading && <progress className="photo-upload-progress"
-          value={uploadedCount} max={Math.max(1, uploadedCount + uploadFiles.length)}
+          value={uploadedCount} max={Math.max(1, uploadFiles.length)}
           aria-label="Прогресс загрузки фотографий" />}
         {previewUrls.length > 0 && <div className="photo-upload-preview" aria-label="Выбранные фотографии">
           {previewUrls.map((url, index) => <img key={url} src={url} alt={`Ожидает загрузки ${index + 1}`} />)}
@@ -1094,6 +1105,12 @@ function ItemEditor({ id }: { id: string }) {
       {preview && (
         <Sheet title="Предпросмотр" onClose={() => setPreview(false)}>
           <Photo media={item?.media[0]} alt={form.title} contain />
+          {item && item.media.length > 1 && <div className="photo-preview-strip" aria-label="Порядок фотографий">
+            {item.media.map((media, index) => <div key={media.id}>
+              <Photo media={media} alt={`Фото ${index + 1}`} />
+              <span>{index + 1}</span>
+            </div>)}
+          </div>}
           <h1>{form.title || "Название не заполнено"}</h1>
           {productSize(attributes) && <p>{productSize(attributes)}</p>}
           <strong>{!priceInput ? "Цена не указана" : money(priceMinor)}</strong>
