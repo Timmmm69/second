@@ -124,27 +124,6 @@ export function totpStep(secret: string, code: string, now = Date.now()): number
   }
   return null;
 }
-export async function ownerStepUp(req: FastifyRequest) {
-  if (!config.production) return;
-  assert(
-    req.authAt && Date.now() - req.authAt.getTime() < 5 * 60000,
-    401,
-    "REAUTH_REQUIRED",
-    "Переоткройте приложение для подтверждения доступа владельца",
-  );
-  assert(req.actor?.role === "OWNER" && req.sessionId, 403, "FORBIDDEN", "Доступ только владельцу");
-  await tx(async c => {
-    const credential = (await c.query("SELECT * FROM owner_credentials WHERE user_id=$1 FOR UPDATE", [req.actor.id])).rows[0];
-    assert(credential, 403, "TOTP_ENROLLMENT_REQUIRED", "Подключите личный второй фактор через защищённый CLI сервера");
-    const session = (await c.query("SELECT owner_step_up_at FROM sessions WHERE id=$1 AND revoked_at IS NULL", [req.sessionId])).rows[0];
-    assert(session, 401, "AUTH_REQUIRED", "Переоткройте приложение");
-    if (session.owner_step_up_at && Date.now() - session.owner_step_up_at.getTime() < 5 * 60000) return;
-    const step = totpStep(decrypt<string>(credential.secret_enc), String(req.headers["x-owner-code"] ?? ""));
-    assert(step !== null && step > Number(credential.last_step), 403, "TOTP_REQUIRED", "Введите новый текущий код вашего личного второго фактора");
-    await c.query("UPDATE owner_credentials SET last_step=$2 WHERE user_id=$1", [req.actor.id, step]);
-    await c.query("UPDATE sessions SET owner_step_up_at=clock_timestamp() WHERE id=$1", [req.sessionId]);
-  });
-}
 export async function authenticate(req: FastifyRequest) {
   const token = req.cookies.session;
   if (token) {
@@ -184,8 +163,6 @@ export async function authenticate(req: FastifyRequest) {
       "FORBIDDEN",
       "Доступ только владельцу",
     );
-  if (config.production && req.method !== "GET" && path.startsWith("/owner/"))
-    await ownerStepUp(req);
 }
 function setCookie(reply: FastifyReply, token: string) {
   reply.setCookie("session", token, {
