@@ -34,7 +34,7 @@ const itemInput = z
   })
   .strict();
 // Only draft writes accept null / empty merchandising fields; published items remain strict.
-const draftInput = itemInput.safeExtend({
+const draftInput = itemInput.extend({
   title: z.string().trim().max(180).nullable().optional(),
   category: z.string().trim().max(100).nullable().optional(),
   priceMinor: z.number().int().min(0).max(100000000).nullable().optional(),
@@ -247,7 +247,7 @@ export async function registerCatalog(app: FastifyInstance) {
   app.get("/items/:id", async (req) => {
     const { id } = uuidParam.parse(req.params);
     const row = (await readItems([id]))[0];
-    assert(row && row.publication === "PUBLISHED", 404, "NOT_FOUND", "Вещь не найдена");
+    assert(row && row.publication !== "DRAFT", 404, "NOT_FOUND", "Вещь не найдена");
     return row;
   });
   app.get("/me/selection", async (req) => {
