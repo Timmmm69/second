@@ -25,7 +25,7 @@ test("Telegram enables native close confirmation without disabling vertical swip
   await expect(page.locator(".product-card").first()).toBeVisible();
   const appState = await page.evaluate(() => ({
     closingConfirmation: window.Telegram?.WebApp.isClosingConfirmationEnabled,
-    verticalSwipesStillEnabled: typeof (window.Telegram?.WebApp as unknown as { disableVerticalSwipes?: () => void })?.disableVerticalSwipes === "function",
+    verticalSwipesStillEnabled: window.Telegram?.WebApp.isVerticalSwipesEnabled,
   }));
   expect(appState.closingConfirmation).toBe(true);
   expect(appState.verticalSwipesStillEnabled).toBe(true);
