@@ -16,7 +16,6 @@ import type { Category, Item, Settings, User, Role } from "./types";
 import type { PublicPostHog } from "../shared/posthog.js";
 import Buyer from "./buyer";
 import "./style.css";
-
 type RuntimeSettings = Settings & { posthog?: PublicPostHog };
 const Staff = lazy(() => import("./staff"));
 const Owner = lazy(() => import("./owner"));
@@ -39,7 +38,10 @@ function App() {
   useEffect(() => {
     const nav = navRef.current; if (!nav) return;
     const measure = () => { const height = nav.getBoundingClientRect().height; if (height > 0) document.documentElement.style.setProperty("--measured-nav-height", `${height}px`); };
-    const observer = new ResizeObserver(measure); observer.observe(nav); measure();
+    const observer = new ResizeObserver(measure);
+    // Telegram safe-area updates change padding, not the content-box height.
+    observer.observe(nav, { box: "border-box" });
+    measure();
     return () => observer.disconnect();
   }, []);
   const [path, setPath] = useState(
@@ -219,19 +221,153 @@ function App() {
     return () => app.BackButton.offClick(back);
   }, [path, menu, go, sdkReady]);
   useEffect(() => {
-    const focus = () => {
-      const isInput = ["INPUT", "TEXTAREA", "SELECT"].includes(
-        document.activeElement?.tagName || "",
-      );
-      document.body.classList.toggle("keyboard-open", isInput && (Boolean(tg()?.initData) || window.matchMedia("(pointer: coarse)").matches));
+    const app = tg();
+    const viewport = window.visualViewport;
+    const coarsePointer = window.matchMedia("(pointer: coarse)");
+    const keyboardThreshold = 80;
+    let bridgeWidth = window.innerWidth;
+    let staleTelegramViewport: { height?: number; stableHeight?: number } | null = null;
+    const telegramViewportIsStale = () => {
+      if (staleTelegramViewport && (app?.viewportHeight !== staleTelegramViewport.height ||
+        app?.viewportStableHeight !== staleTelegramViewport.stableHeight)) staleTelegramViewport = null;
+      return staleTelegramViewport !== null;
     };
+    const mobile = () => coarsePointer.matches || ["android", "android_x", "ios"].includes(app?.platform ?? "");
+    const editable = () => {
+      const active = document.activeElement;
+      if (active instanceof HTMLTextAreaElement) return !active.disabled && !active.readOnly;
+      if (active instanceof HTMLInputElement)
+        return !active.disabled && !active.readOnly &&
+          ["text", "search", "email", "url", "tel", "password", "number"].includes(active.type);
+      return active instanceof HTMLElement && active.isContentEditable;
+    };
+    const browserHeight = () => Math.min(
+      window.innerHeight,
+      viewport?.scale === 1 && Math.abs(viewport.width - window.innerWidth) < 2
+        ? viewport.height : window.innerHeight,
+    );
+    const visibleHeight = () => Math.min(
+      browserHeight(),
+      !telegramViewportIsStale() && app?.viewportHeight && app.viewportHeight > 0
+        ? app.viewportHeight : window.innerHeight,
+    );
+    const landscape = () => {
+      if (!mobile()) return window.innerWidth > window.innerHeight;
+      if (screen.orientation?.type) return screen.orientation.type.startsWith("landscape");
+      const legacy = (window as Window & { orientation?: number }).orientation;
+      if (typeof legacy === "number") return Math.abs(legacy) === 90;
+      return screen.width > screen.height;
+    };
+    let keyboardOpen = false;
+    let heightBeforeKeyboard = visibleHeight();
+    let physicalLandscape = landscape();
+    let compactLandscape = physicalLandscape && window.innerHeight <= 500;
+    let layoutWidth = window.innerWidth;
+    let rotatedKeyboardHeight: number | null = null;
+    let frame = 0;
+    let closingTimer: number | undefined;
+    const sync = () => {
+      const nextLandscape = landscape();
+      const orientationChanged = nextLandscape !== physicalLandscape;
+      const widthChanged = Math.abs(window.innerWidth - layoutWidth) > 1;
+      if (widthChanged) {
+        // Rotation's layout resize and Telegram event can arrive separately.
+        // Until the bridge catches up, use the new browser geometry directly.
+        staleTelegramViewport = app && bridgeWidth !== window.innerWidth
+          ? { height: app.viewportHeight, stableHeight: app.viewportStableHeight } : null;
+        bridgeWidth = 0;
+        if (keyboardOpen) rotatedKeyboardHeight = browserHeight();
+        else heightBeforeKeyboard = visibleHeight();
+      }
+      const height = visibleHeight();
+      const focused = editable();
+      const shrunk = heightBeforeKeyboard - height > keyboardThreshold;
+      // Android can dismiss its keyboard while the input keeps DOM focus.
+      // Focus alone must not leave the navigation hidden afterwards.
+      if (rotatedKeyboardHeight !== null) {
+        // The old portrait baseline cannot describe a landscape keyboard.
+        // Use the new layout width to pick the screen axes even before the
+        // orientation event arrives. A near-full viewport signals dismissal.
+        const shortSide = Math.min(screen.width, screen.height);
+        const longSide = Math.max(screen.width, screen.height);
+        const screenHeight = window.innerWidth > (shortSide + longSide) / 2 ? shortSide : longSide;
+        const nearFullHeight = Math.abs(screenHeight - height) <= keyboardThreshold;
+        rotatedKeyboardHeight = Math.min(rotatedKeyboardHeight, height);
+        keyboardOpen = mobile() && !nearFullHeight &&
+          height - rotatedKeyboardHeight <= keyboardThreshold && (focused || keyboardOpen);
+        if (!keyboardOpen) heightBeforeKeyboard = height;
+      } else keyboardOpen = mobile() && shrunk && (focused || keyboardOpen);
+      if (!keyboardOpen) rotatedKeyboardHeight = null;
+      if (focused || !keyboardOpen) {
+        window.clearTimeout(closingTimer);
+        closingTimer = undefined;
+      } else if (closingTimer === undefined) {
+        closingTimer = window.setTimeout(() => {
+          closingTimer = undefined;
+          if (!editable()) {
+            // The Mini App itself may have been resized while typing. Do not
+            // wait forever for an old viewport height after the input blurs.
+            keyboardOpen = false;
+            rotatedKeyboardHeight = null;
+            heightBeforeKeyboard = visibleHeight();
+            sync();
+          }
+        }, 700);
+      }
+      document.body.classList.toggle("keyboard-open", keyboardOpen);
+      // A keyboard can make a portrait viewport wider than it is tall. Keep the
+      // physical layout until the keyboard closes or the device really rotates.
+      if (!keyboardOpen || orientationChanged || widthChanged)
+        compactLandscape = nextLandscape && window.innerHeight <= 500;
+      physicalLandscape = nextLandscape;
+      layoutWidth = window.innerWidth;
+      document.body.classList.toggle("compact-landscape", compactLandscape);
+      if (!keyboardOpen && (!focused || height >= heightBeforeKeyboard)) {
+        // Freeze both the baseline and the bottom gap through gradual keyboard
+        // animation, including its first few pixels before the threshold.
+        heightBeforeKeyboard = height;
+        const visualBottom = viewport?.scale === 1
+          ? viewport.offsetTop + viewport.height : window.innerHeight;
+        const stableBottom = !telegramViewportIsStale() && app?.viewportStableHeight && app.viewportStableHeight > 0
+          ? app.viewportStableHeight : window.innerHeight;
+        const bottom = Math.min(window.innerHeight, visualBottom, stableBottom);
+        document.documentElement.style.setProperty("--app-bottom-offset", `${Math.max(0, window.innerHeight - bottom)}px`);
+      }
+    };
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => sync());
+    };
+    const focus = () => sync();
+    const viewportChanged = () => {
+      bridgeWidth = window.innerWidth;
+      staleTelegramViewport = null;
+      schedule();
+    };
+    sync();
     document.addEventListener("focusin", focus);
-    document.addEventListener("focusout", focus);
+    document.addEventListener("focusout", schedule);
+    window.addEventListener("resize", schedule);
+    window.addEventListener("orientationchange", schedule);
+    screen.orientation?.addEventListener("change", schedule);
+    viewport?.addEventListener("resize", schedule);
+    viewport?.addEventListener("scroll", schedule);
+    app?.onEvent("viewportChanged", viewportChanged);
     return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(closingTimer);
       document.removeEventListener("focusin", focus);
-      document.removeEventListener("focusout", focus);
+      document.removeEventListener("focusout", schedule);
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("orientationchange", schedule);
+      screen.orientation?.removeEventListener("change", schedule);
+      viewport?.removeEventListener("resize", schedule);
+      viewport?.removeEventListener("scroll", schedule);
+      app?.offEvent("viewportChanged", viewportChanged);
+      document.body.classList.remove("keyboard-open", "compact-landscape");
+      document.documentElement.style.removeProperty("--app-bottom-offset");
     };
-  }, []);
+  }, [sdkReady]);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(""), 4500);
@@ -315,9 +451,9 @@ function App() {
         dev,
         demo: import.meta.env.VITE_PUBLIC_DEMO === "1",
         settings,
+        categories,
         posthog: !authLoading && !authError && !dev && import.meta.env.VITE_PUBLIC_DEMO !== "1" &&
           (!user || user.role === "BUYER") ? settings?.posthog : undefined,
-        categories,
         refreshCategories,
         refreshSettings,
         selection,

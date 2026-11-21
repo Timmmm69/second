@@ -19,7 +19,8 @@
     "check": "npm run typecheck && npm run lint && npm test && npm run build",
     "store:init": "node --env-file-if-exists=.env --import tsx scripts/store-initial.ts",
     "build:preview": "VITE_PUBLIC_DEMO=1 vite build --outDir dist-preview && node scripts/build-preview.mjs",
-    "verify:preview": "node scripts/verify-preview.mjs"
+    "verify:preview": "node scripts/verify-preview.mjs",
+    "test:mobile": "tsc -p tests/mobile/tsconfig.json --noEmit && playwright test --config tests/mobile/playwright.config.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
@@ -36,6 +37,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^24.10.0",
     "@types/pg": "^8.15.6",
     "@types/react": "^19.2.2",
