@@ -22,6 +22,8 @@ export interface Item {
   description?: string;
   category: string;
   priceMinor: number;
+  /** Set only for draft cards where price_minor is SQL NULL, not a real zero price. */
+  priceMissing?: boolean;
   publication: string;
   physical: string;
   version: number;
@@ -235,6 +237,10 @@ export const measurementNames: Record<string, string> = {
   depth: "Глубина",
   strap: "Длина ремня",
   shoulders: "Плечи",
+  chestCircumference: "Обхват груди",
+  waistCircumference: "Обхват талии",
+  hipCircumference: "Обхват бёдер",
+  outseam: "Боковой (внешний) шов",
 };
 export const money = (n: number) =>
   new Intl.NumberFormat("ru-BY", {
