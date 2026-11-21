@@ -35,13 +35,15 @@ test("defect persists through API, snapshot is immutable, switching off clears d
   assert.equal(r.statusCode, 200, r.body);
   const i = r.json();
   assert.equal(i.defectDescription, "Небольшая затяжка на рукаве");
-  assert.equal((await app.inject("/api/items/" + i.id)).json().hasDefect, true);
+  // Drafts are now private: read their contents through staff-only API.
+  assert.equal((await app.inject("/api/items/" + i.id)).statusCode, 404);
+  assert.equal((await app.inject({ url: "/api/staff/items/" + i.id, headers: { cookie } })).json().hasDefect, true);
   const snapshot = await tx(async c => itemSnapshot(c, (await c.query("SELECT * FROM items WHERE id=$1", [i.id])).rows[0]));
   assert.equal(snapshot.hasDefect, true);
   const edited = await send("PATCH", "/staff/items/" + i.id, { ...data, version: i.version, hasDefect: false, defectDescription: "Старый текст" });
   assert.equal(edited.statusCode, 200, edited.body);
   assert.equal(edited.json().defectDescription, "");
-  assert.equal((await app.inject("/api/items/" + i.id)).json().defectDescription, "");
+  assert.equal((await app.inject({ url: "/api/staff/items/" + i.id, headers: { cookie } })).json().defectDescription, "");
   assert.equal(snapshot.defectDescription, "Небольшая затяжка на рукаве");
   assert.equal((await pool.query("SELECT defect_description FROM items WHERE id=$1", [i.id])).rows[0].defect_description, "");
 });
