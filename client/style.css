@@ -307,11 +307,12 @@ button:focus:not(:focus-visible) {
 .chips::-webkit-scrollbar {
   display: none;
 }
+/* Keep the audience and category rows compact without changing chip tap targets. */
 .catalog-page > .chips + .chips {
-  margin-top: 6px;
+  margin-top: 0;
 }
 .catalog-page > .chips:has(+ .chips) {
-  margin-bottom: 6px;
+  margin-bottom: 0;
 }
 .chips > button {
   border: 1px solid var(--line);
