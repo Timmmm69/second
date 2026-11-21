@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { api, command } from "./api";
 import { useApp } from "./context";
 import { defaultBuyerGuide } from "../shared/buyer-guide";
-import { tg } from "./telegram";
 import { useMutation } from "./mutations";
 import {
   Button,
@@ -88,54 +87,8 @@ export default function Owner() {
     </div>
   );
 }
-function OwnerSecurity({
-  code,
-  onChange,
-}: {
-  code: string;
-  onChange: (v: string) => void;
-}) {
-  const { demo } = useApp();
-  const [error, setError] = useState<unknown>(null),
-    [done, setDone] = useState(false);
-  if (demo) return <p className="small-text">Здесь изменения сохраняются только в вашем браузере. Управление доступом, утверждение документов и внешние сервисы доступны в рабочем приложении.</p>;
-  return (
-    <section className="security-box">
-      <h3>Подтверждение владельца</h3>
-      <p className="small-text">
-        Для защищённых изменений нужна свежая авторизация и код приложения
-        аутентификатора. В локальной среде проверка может быть отключена.
-      </p>
-      <Field
-        label="Одноразовый код владельца"
-        value={code}
-        onChange={(e) => onChange(e.target.value)}
-        inputMode="numeric"
-        autoComplete="one-time-code"
-      />
-      <Button
-        secondary
-        onClick={async () => {
-          try {
-            if (!tg()?.initData)
-              throw new Error(
-                "Для повторного подтверждения откройте Mini App через Telegram.",
-              );
-            await command("/auth/telegram", { initData: tg()?.initData });
-            setDone(true);
-          } catch (e) {
-            setError(e);
-          }
-        }}
-      >
-        {done ? "Авторизация подтверждена" : "Подтвердить авторизацию Telegram"}
-      </Button>
-      <ErrorBox error={error} />
-    </section>
-  );
-}
 function StoreSettings() {
-  const { toast, ownerCode, setOwnerCode, refreshSettings, go, demo } = useApp();
+  const { toast, refreshSettings, go, demo } = useApp();
   const { data, error, loading, reload } = useLoad<Settings>("/owner/settings");
   const [form, setForm] = useState<Settings | null>(null),
     [busy, setBusy] = useState(false),
@@ -171,8 +124,6 @@ function StoreSettings() {
         "/owner/settings",
         form,
         "PATCH",
-        undefined,
-        ownerCode,
       );
       setForm(structuredClone(response));
       await refreshSettings();
@@ -455,7 +406,6 @@ function StoreSettings() {
           должны быть заполнены фактические сведения и проверены условия.
         </p>
       </section>
-      <OwnerSecurity code={ownerCode} onChange={setOwnerCode} />
       <div className="bottom-action">
         <Button type="submit" disabled={busy}>
           {busy ? "Сохраняем…" : "Сохранить настройки"}
@@ -465,7 +415,7 @@ function StoreSettings() {
   );
 }
 function CategorySettings() {
-  const { ownerCode, setOwnerCode, refreshCategories, toast } = useApp();
+  const { refreshCategories, toast } = useApp();
   const { data, error, loading, reload } = useLoad<Category[]>("/owner/categories");
   const blank = { name: "", sortOrder: 100, archived: false };
   const [form, setForm] = useState<Category | typeof blank>(blank);
@@ -508,14 +458,13 @@ function CategorySettings() {
         value={form.sortOrder} onChange={e => setForm(v => ({...v,sortOrder:Number(e.target.value)}))} />
       <label className="check-row"><input type="checkbox" checked={form.archived}
         onChange={e => setForm(v => ({...v,archived:e.target.checked}))} /><span>В архиве</span></label>
-      <OwnerSecurity code={ownerCode} onChange={setOwnerCode} />
       <Button type="submit" disabled={busy || !form.name.trim()}>{busy ? "Сохраняем…" : "Сохранить категорию"}</Button>
       {editing && <Button secondary disabled={busy} onClick={() => {setEditing(null);setForm(blank);setError(null);}}>Отменить редактирование</Button>}
     </form>
   </div>;
 }
 function StaffAccess() {
-  const { toast, user, ownerCode: code, setOwnerCode: setCode } = useApp();
+  const { toast, user } = useApp();
   const { data, error, loading, reload } = useLoad<{ staff: User[] }>(
     "/owner/staff",
   );
@@ -533,8 +482,6 @@ function StaffAccess() {
         "/owner/staff/invites",
         { telegramId: id, role: "STAFF" },
         "POST",
-        undefined,
-        code,
       );
       setInvite(result);
       toast("Приглашение создано для указанного аккаунта");
@@ -576,7 +523,6 @@ function StaffAccess() {
                     try {
                       await api(`/owner/staff/${staff.id}`, {
                         method: "DELETE",
-                        ownerCode: code,
                       });
                       reload();
                       toast("Доступ отозван");
@@ -606,7 +552,6 @@ function StaffAccess() {
           value={id}
           onChange={(e) => setId(e.target.value)}
         />
-        <OwnerSecurity code={code} onChange={setCode} />
         <Button disabled={busy || !/^\d+$/.test(id)} onClick={inviteAction}>
           Создать одноразовое приглашение
         </Button>
