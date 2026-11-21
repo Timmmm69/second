@@ -368,6 +368,26 @@
       return { items: state.items.filter(item => (!q || `${item.title} ${item.sku}`.toLowerCase().includes(q)) && (!filter || item.physical === filter || item.publication === filter)).map(itemView) };
     }
     if (/^\/staff\/items\/[^/]+$/.test(path) && method === 'GET') return itemView(findItem(path.split('/')[3]));
+    if (/^\/staff\/items\/[^/]+\/duplicate$/.test(path) && method === 'POST') {
+      const source = findItem(path.split('/')[3]);
+      const copy = {
+        ...clone(source),
+        id: uuid(),
+        sku: `DEMO-${uuid().slice(0, 12)}`,
+        publication: 'DRAFT',
+        physical: 'INTAKE',
+        version: 1,
+        available: false,
+        media: source.media.map((photo, position) => ({
+          ...clone(photo), id: uuid(), position,
+        })),
+      };
+      delete copy.publishedSnapshot;
+      state.items.unshift(copy);
+      record('demo.item.duplicate', copy.id);
+      // Demo drafts are session-only. Never persist unsold private previews.
+      return itemView(copy);
+    }
     if (path === '/staff/items/draft' && method === 'POST') {
       ensure(body.title == null || (typeof body.title === 'string' && body.title.length <= 180), 422, 'VALIDATION', 'Название слишком длинное');
       ensure(body.priceMinor == null || (Number.isInteger(body.priceMinor) && body.priceMinor >= 0), 422, 'VALIDATION', 'Укажите корректную цену');
