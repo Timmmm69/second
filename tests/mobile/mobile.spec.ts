@@ -526,7 +526,7 @@ test("catalog photo overlay is a small counter on touch screens", async ({ page 
   await expect(photo).toBeVisible();
   const controls = photo.locator(".catalog-photo-nav");
   await expect(controls.locator("span")).toHaveText("1 / 3");
-  await expect(controls.locator("button")).toBeHidden();
+  await expect(controls.locator("button:visible")).toHaveCount(0);
   const geometry = await controls.evaluate((element) => {
     const rect = element.getBoundingClientRect();
     const image = element.parentElement!.getBoundingClientRect();
