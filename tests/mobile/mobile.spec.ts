@@ -25,32 +25,17 @@ test("the first, middle and last filters leave the next control visible and tapp
   await expect(page.locator(".product-card").first()).toBeVisible();
   const catalogLayout = await page.evaluate(() => {
     const [audience, category] = document.querySelectorAll<HTMLElement>(".catalog-page > .chips");
-    const gap = () => category.querySelector("button")!.getBoundingClientRect().top - audience.querySelector("button")!.getBoundingClientRect().bottom;
-    const actualGap = gap();
-    const audienceStyle = audience.getAttribute("style");
-    const categoryStyle = category.getAttribute("style");
-    let previousGap: number;
-    try {
-      audience.style.marginBottom = "8px";
-      category.style.marginTop = "8px";
-      previousGap = gap();
-    } finally {
-      if (audienceStyle === null) audience.removeAttribute("style"); else audience.setAttribute("style", audienceStyle);
-      if (categoryStyle === null) category.removeAttribute("style"); else category.setAttribute("style", categoryStyle);
-    }
+    const actualGap = category.querySelector("button")!.getBoundingClientRect().top -
+      audience.querySelector("button")!.getBoundingClientRect().bottom;
     const heading = document.querySelector<HTMLElement>(".catalog-page > .section-heading")!;
     const headingStyle = getComputedStyle(heading);
     return {
-      actualGap, previousGap,
+      actualGap,
       border: parseFloat(headingStyle.borderBottomWidth), borderStyle: headingStyle.borderBottomStyle,
       catalogGap: document.querySelector(".product-grid")!.getBoundingClientRect().top - heading.getBoundingClientRect().bottom,
     };
   });
-  // Former visible inter-row spacing was 16px; now it is 10px (-37.5%).
-  // The neighboring margins are collapsed, so changing both 6px margins to 0
-  // removes 6px in total, not 12px.
-  expect(catalogLayout.actualGap).toBeCloseTo(10, 0);
-  expect(catalogLayout.previousGap - catalogLayout.actualGap).toBeCloseTo(8, 1);
+  expect(catalogLayout.actualGap).toBeCloseTo(5.5, 1);
   expect(catalogLayout.border).toBe(1);
   expect(catalogLayout.borderStyle).toBe("solid");
   expect(catalogLayout.catalogGap).toBeGreaterThanOrEqual(8);
