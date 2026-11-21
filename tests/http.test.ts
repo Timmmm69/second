@@ -227,7 +227,7 @@ test("a product can be created, edited and published with only title, category a
   assert.deepEqual(publicItem.attributes, {});
   assert.deepEqual(publicItem.media, []);
 });
-test("T25/T35 upload signature decode, EXIF stripped variants, retry dedup and private originals", async () => {
+test("T25/T35 upload signature decode, EXIF stripped variants, retry dedup and private originals", async (t) => {
   const i = (
     await pool.query(
       "SELECT id FROM items WHERE category='bags' ORDER BY created_at DESC LIMIT 1",
@@ -329,6 +329,46 @@ test("T25/T35 upload signature decode, EXIF stripped variants, retry dedup and p
   assert.equal(publicPhoto.headers["cache-control"], "public, max-age=15");
   assert.equal(publicPhoto.headers["content-type"], "image/webp");
   assert.deepEqual(publicPhoto.rawPayload, await readFile(path.join(config.mediaDir, asset.id, "480.webp")));
+  const photoPath = (width: number) => "/media/" + asset.id + "/" + width;
+  const oldEtags = new Map<number, string>();
+  const querySpy = t.mock.method(pool, "query");
+  const revalidated = await app.inject({
+    url: photoPath(480),
+    headers: { cookie: buyer, "if-none-match": "W/" + String(publicPhoto.headers.etag) },
+  });
+  const queries = querySpy.mock.calls.map(call => String(call.arguments[0]));
+  querySpy.mock.restore();
+  assert.equal(queries.length, 1, "public photo must not validate the session");
+  assert.match(queries[0], /FROM media_assets/);
+  assert.equal(revalidated.statusCode, 304, revalidated.body);
+  assert.equal(revalidated.rawPayload.length, 0);
+  assert.equal(revalidated.headers.etag, publicPhoto.headers.etag);
+  assert.equal(revalidated.headers["cache-control"], "public, max-age=15");
+  assert.equal((await app.inject({
+    url: photoPath(480),
+    headers: { cookie: "session=invalid", "if-none-match": '"stale"' },
+  })).statusCode, 200);
+  for (const width of [240, 480, 960, 1600]) {
+    const current = await app.inject(photoPath(width));
+    assert.equal(current.statusCode, 200, current.body);
+    assert.match(String(current.headers.etag), /^"[A-Za-z0-9_-]{43}"$/);
+    oldEtags.set(width, String(current.headers.etag));
+    const hit = await app.inject({
+      url: photoPath(width),
+      headers: { "if-none-match": '"unrelated", W/' + current.headers.etag },
+    });
+    assert.equal(hit.statusCode, 304, hit.body);
+    assert.equal(hit.rawPayload.length, 0);
+  }
+  assert.equal((await rotate()).statusCode, 200, "second rotation after publication");
+  for (const width of [240, 480, 960, 1600]) {
+    const updated = await app.inject({
+      url: photoPath(width),
+      headers: { "if-none-match": oldEtags.get(width)! },
+    });
+    assert.equal(updated.statusCode, 200, "rotation must invalidate all variants");
+    assert.notEqual(updated.headers.etag, oldEtags.get(width));
+  }
   for (const [column, value] of [["publication", "HIDDEN"], ["physical", "SOLD"]]) {
     await pool.query(`UPDATE items SET ${column}=$2 WHERE id=$1`, [i.id, value]);
     assert.equal((await app.inject(`/media/${asset.id}/480`)).statusCode, 403);
@@ -336,7 +376,46 @@ test("T25/T35 upload signature decode, EXIF stripped variants, retry dedup and p
     const privatePhoto = await app.inject({ url: `/media/${asset.id}/480`, headers: { cookie: staff } });
     assert.equal(privatePhoto.statusCode, 200);
     assert.equal(privatePhoto.headers["cache-control"], "private, no-store");
+    assert.equal((await app.inject({
+      url: photoPath(480),
+      headers: { "if-none-match": "*" },
+    })).statusCode, 403, "a private image must never respond 304 to an anonymous caller");
+    const privateConditional = await app.inject({
+      url: photoPath(480),
+      headers: { cookie: staff, "if-none-match": "*" },
+    });
+    assert.equal(privateConditional.statusCode, 200);
+    assert.equal(privateConditional.headers["cache-control"], "private, no-store");
+    assert.equal(privateConditional.headers.etag, undefined);
     await pool.query("UPDATE items SET publication='PUBLISHED',physical='AVAILABLE' WHERE id=$1", [i.id]);
+  }
+  // An order owner retains private photo access without enabling conditional caching.
+  const orderId = key();
+  await pool.query(
+    "INSERT INTO orders(id,user_id,method,total_minor,rule_snapshot,verify_by,cancel_by) VALUES($1,$2,'PICKUP',0,'{}',now(),now())",
+    [orderId, buyerId],
+  );
+  await pool.query(
+    "INSERT INTO order_lines(order_id,item_id,snapshot,price_minor) VALUES($1,$2,'{}',0)",
+    [orderId, i.id],
+  );
+  try {
+    await pool.query("UPDATE items SET publication='HIDDEN' WHERE id=$1", [i.id]);
+    const orderedPhoto = await app.inject({
+      url: photoPath(480),
+      headers: { cookie: buyer, "if-none-match": "*" },
+    });
+    assert.equal(orderedPhoto.statusCode, 200);
+    assert.equal(orderedPhoto.headers["cache-control"], "private, no-store");
+    assert.equal(orderedPhoto.headers.etag, undefined);
+    assert.equal((await app.inject({
+      url: photoPath(480),
+      headers: { "if-none-match": "*" },
+    })).statusCode, 403);
+  } finally {
+    await pool.query("UPDATE items SET publication='PUBLISHED' WHERE id=$1", [i.id]);
+    await pool.query("DELETE FROM order_lines WHERE order_id=$1", [orderId]);
+    await pool.query("DELETE FROM orders WHERE id=$1", [orderId]);
   }
   for (const [filename, url, cookie] of [
     [path.join(asset.id, "480.webp"), `/media/${asset.id}/480`, ""],
