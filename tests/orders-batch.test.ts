@@ -187,18 +187,24 @@ test("buyer/staff lists: baseline and batched responses equivalent for 1, 10, 50
   }
 });
 
-test("batch read denies other buyers before leaking relationships; problems filter skips order loads", async () => {
+test("batch read denies other buyers before leaking relationships", async () => {
   const beforeAudit = Number((await pool.query("SELECT count(*)::int AS n FROM access_events")).rows[0].n);
   await assert.rejects(tx(c => readOrders(c, [ids[0]], other)), (e: any) => e.code === "FORBIDDEN");
-  assert.equal(Number((await pool.query("SELECT count(*)::int AS n FROM access_events")).rows[0].n), beforeAudit);
   const hidden = await app.inject({ url: "/me/orders", headers: { "x-test-actor": "other" } });
   assert.equal(hidden.statusCode, 200);
   assert.deepEqual(hidden.json().orders, []);
-  const issuesOnly = await measure("/staff/queue?filter=problems");
-  assert.deepEqual(issuesOnly.data.orders, []);
-  assert.equal(issuesOnly.data.issues.length, 1);
-  assert.equal(issuesOnly.queries, 3, "BEGIN, issues SELECT, COMMIT; no order reads/expiry/audit");
   assert.equal(Number((await pool.query("SELECT count(*)::int AS n FROM access_events")).rows[0].n), beforeAudit);
+});
+
+test("problems filter returns flagged orders alongside open issues", async () => {
+  await seed(2);
+  const flaggedOrderId = ids[1];
+  await pool.query("UPDATE orders SET exception=true WHERE id=$1", [flaggedOrderId]);
+
+  const { data } = await measure("/staff/queue?filter=problems");
+  const order = await tx(c => readOrder(c, flaggedOrderId, staff));
+  assert.deepEqual(data.orders, JSON.parse(JSON.stringify([order])));
+  assert.deepEqual(data.issues.map((issue: { orderId: string }) => issue.orderId), [ids[0]]);
 });
 
 test("expired orders still use existing expiry transitions and protection", async () => {

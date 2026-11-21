@@ -1139,8 +1139,7 @@ export async function registerOrders(app: FastifyInstance) {
               : filter === "problems"
                 ? "exception=true"
                 : "status NOT IN ('FULFILLED','CANCELLED','EXPIRED','CLOSED','RETURNED')";
-      // The problems screen renders issues only; avoid locking and hydrating orders.
-      const rows = filter === "problems" ? [] : (
+      const rows = (
         await c.query(
           `SELECT * FROM orders WHERE ${where} ORDER BY COALESCE(pickup_deadline,dispatch_deadline,verify_by),id LIMIT 200 FOR UPDATE`,
         )
