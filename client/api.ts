@@ -37,7 +37,6 @@ export async function api<T = unknown>(
     body?: unknown;
     key?: string;
     signal?: AbortSignal;
-    ownerCode?: string;
     keepalive?: boolean;
   } = {},
 ): Promise<T> {
@@ -46,7 +45,6 @@ export async function api<T = unknown>(
     headers["Content-Type"] = "application/json";
   if (options.method && options.method !== "GET")
     headers["Idempotency-Key"] = options.key || operationKey();
-  if (options.ownerCode) headers["X-Owner-Code"] = options.ownerCode;
   let response: Response;
   try {
     response = await fetch(`/api${path}`, {
@@ -80,8 +78,7 @@ export const command = <T = unknown>(
   body: unknown = {},
   method = "POST",
   key?: string,
-  ownerCode?: string,
-) => api<T>(path, { method, body, key, ownerCode });
+) => api<T>(path, { method, body, key });
 const demoMemory = new Map<string, unknown>();
 const ephemeralDemoKey = (key:string) => /checkout-(lease|operation)|staff-operation|counter-operation/.test(key);
 export function readLocal<T>(key: string, fallback: T): T {
