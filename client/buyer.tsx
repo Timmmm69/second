@@ -651,6 +651,13 @@ function ItemPage({ id }: { id: string }) {
   }, [available]);
   const size = productSize(item?.attributes);
   const media = item?.media ?? [];
+  const coverSwipeRef = useHorizontalSwipe<HTMLButtonElement>({
+    enabled: media.length > 1,
+    onSwipe: (delta) => {
+      setIndex((current) => Math.min(media.length - 1, Math.max(0, current + delta)));
+      tapFeedback("selection");
+    },
+  });
   const gallerySwipeRef = useHorizontalSwipe<HTMLDivElement>({
     enabled: zoom === 1 && media.length > 1,
     onSwipe: (delta) => setIndex((current) => (current + delta + media.length) % media.length),
@@ -711,11 +718,14 @@ function ItemPage({ id }: { id: string }) {
         <div>
           <button
             className="gallery-cover"
+            ref={coverSwipeRef}
+            style={media.length > 1 ? { touchAction: "pan-y pinch-zoom" } : undefined}
             onClick={() => setGallery(true)}
             disabled={!media.length}
             aria-label="Открыть фотогалерею"
           >
             <Photo
+              key={media[index]?.id}
               media={media[index]}
               alt={item.title}
               contain

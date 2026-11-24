@@ -569,6 +569,34 @@ test("trusted horizontal drags change the photo without scrolling; vertical drag
   await client.detach();
 });
 
+test("item cover swipes change photos without opening the gallery", async ({ page }) => {
+  await page.goto(`/#/items/${sampleId}`);
+  const cover = page.getByRole("button", { name: "Открыть фотогалерею", exact: true });
+  const counter = cover.locator(".photo-counter");
+  await expect(counter).toHaveText("1 / 3");
+  await syntheticDrag(cover, 90, 3);
+  await expect(counter).toHaveText("1 / 3");
+  const horizontal = await syntheticDrag(cover, -90, 3);
+  expect(horizontal.firstPrevented).toBe(true);
+  expect(horizontal.lastPrevented).toBe(true);
+  await expect(counter).toHaveText("2 / 3");
+  await expect(page.getByRole("button", { name: "Фото 2", exact: true })).toHaveClass("selected");
+  expect(await cover.evaluate((element) => element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 })))).toBe(false);
+  await expect(page.locator(".gallery-view")).toHaveCount(0);
+  const vertical = await syntheticDrag(cover, 3, -100);
+  expect(vertical.firstPrevented).toBe(false);
+  expect(vertical.lastPrevented).toBe(false);
+  await expect(counter).toHaveText("2 / 3");
+  await syntheticDrag(cover, -90, 3);
+  await expect(counter).toHaveText("3 / 3");
+  await syntheticDrag(cover, -90, 3);
+  await expect(counter).toHaveText("3 / 3");
+  await syntheticDrag(cover, 90, 3);
+  await expect(counter).toHaveText("2 / 3");
+  await cover.tap();
+  await expect(page.locator(".sheet-header h2")).toHaveText("Фото 2 из 3");
+});
+
 test("gesture arbitration rejects vertical, cancelled and multi-touch gallery drags and respects zoom", async ({ page }, info) => {
   await page.goto("/#/catalog");
   const photo = page.locator(".product-image-button").first();
