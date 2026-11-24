@@ -8,6 +8,21 @@ import { installMobileMocks, layoutFrames, sampleId, syntheticDrag } from "./hel
 const colours = ["#d43e34", "#24864a", "#355ac8", "#bc7a19", "#904eaf"];
 const rgb = (index: number) => colours[index].slice(1).match(/../g)!.map((value) => parseInt(value, 16));
 const widths = [240, 480, 960, 1600];
+const rasters = new Map<string, Promise<Buffer>>();
+
+function photoRaster(photo: number, width: number) {
+  const key = `${photo}/${width}`;
+  let raster = rasters.get(key);
+  if (!raster) {
+    // Match the production image format without lossy encoding or SVG scaling
+    // rounding. At most 5 colours x 4 sizes are encoded once per test worker.
+    raster = sharp({ create: {
+      width, height: Math.round(width * 4 / 3), channels: 3, background: colours[photo],
+    } }).webp({ lossless: true, effort: 0 }).toBuffer();
+    rasters.set(key, raster);
+  }
+  return raster;
+}
 
 async function installPhotoMocks(page: Page, browserName: string) {
   const mobile = await installMobileMocks(page, browserName);
@@ -15,7 +30,7 @@ async function installPhotoMocks(page: Page, browserName: string) {
     item.media = colours.map((_, photo): Media => {
       const id = `photo-loading-${itemIndex}-${photo}`;
       return {
-        id, width: 1600, height: 2134, role: photo === 0 ? "COVER" : "DETAIL", position: photo,
+        id, width: 1600, height: 2133, role: photo === 0 ? "COVER" : "DETAIL", position: photo,
         url: `/media/${id}/480`,
         variants: Object.fromEntries(widths.map((width) => [String(width), `/media/${id}/${width}`])),
       };
@@ -39,9 +54,9 @@ async function installPhotoMocks(page: Page, browserName: string) {
       }
     }
     await route.fulfill({
-      contentType: "image/svg+xml",
+      contentType: "image/webp",
       headers: { "cache-control": "public, max-age=15" },
-      body: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${Number(width) * 4 / 3}" viewBox="0 0 3 4"><path fill="${colours[request.photo]}" d="M0 0h3v4H0z"/></svg>`,
+      body: await photoRaster(request.photo, request.width),
     });
     request.finished = true;
   });
@@ -87,7 +102,9 @@ async function decodedColour(image: Locator) {
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = 1;
     const context = canvas.getContext("2d")!;
-    context.drawImage(image, 0, 0, 1, 1);
+    // Sample one native centre pixel; resizing a whole image to 1x1 can introduce
+    // browser-dependent filtering/rounding unrelated to which photo is shown.
+    context.drawImage(image, Math.floor(image.naturalWidth / 2), Math.floor(image.naturalHeight / 2), 1, 1, 0, 0, 1, 1);
     return Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3);
   });
 }
