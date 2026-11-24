@@ -10,6 +10,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type TextareaHTMLAttributes,
 } from "react";
+import { preload } from "react-dom";
 import { ApiError, api } from "./api";
 import { measurementNames, type Media } from "./types";
 import { tg } from "./telegram";
@@ -639,20 +640,40 @@ export function Loading({ cards = false }: { cards?: boolean }) {
     </div>
   );
 }
-export function Photo({
-  media,
-  alt,
-  priority = false,
-  className = "",
-  contain = false,
-}: {
+type PhotoProps = {
   media?: Media;
   alt: string;
   priority?: boolean;
   className?: string;
   contain?: boolean;
-}) {
-  const [failed, setFailed] = useState(false);
+  sizes?: string;
+  onLoad?: () => void;
+};
+
+function photoSource(media: Media, contain = false, sizes?: string) {
+  return {
+    src: media.url,
+    srcSet: media.variants
+      ? Object.entries(media.variants).map(([width, url]) => `${url} ${width}w`).join(", ")
+      : undefined,
+    sizes: sizes ?? (contain ? "(max-width: 600px) 100vw, 560px" : "(max-width: 600px) 48vw, 280px"),
+  };
+}
+
+/** Use the same responsive candidate as Photo; React deduplicates preload hints. */
+export function preloadPhoto(media: Media | undefined, contain = false) {
+  if (!media?.url) return;
+  const source = photoSource(media, contain);
+  preload(source.src, {
+    as: "image",
+    imageSrcSet: source.srcSet,
+    imageSizes: source.sizes,
+    fetchPriority: "low",
+  });
+}
+
+export function Photo(props: PhotoProps) {
+  const { media, className = "", contain = false, sizes } = props;
   if (!media?.url)
     return (
       <div
@@ -662,35 +683,49 @@ export function Photo({
         <Icon name="photo" size={32} />
       </div>
     );
+  const source = photoSource(media, contain, sizes);
+  // A new source gets its own image and load/error state, including zoom changes.
+  // Late events from the previous image cannot change the selected photo.
+  return <PhotoImage key={JSON.stringify([media.id, source])} {...props} media={media} source={source} />;
+}
+
+function PhotoImage({
+  media, alt, priority = false, className = "", contain = false, onLoad, source,
+}: PhotoProps & { media: Media; source: ReturnType<typeof photoSource> }) {
+  const [status, setStatus] = useState<"loading" | "ready" | "failed">("loading");
   return (
-    <div className={`photo-wrap ${contain ? "contain" : ""} ${className}`}>
-      {failed ? (
-        <button className="photo-retry" onClick={() => setFailed(false)}>
+    <div className={`photo-wrap ${contain ? "contain" : ""} ${className}`} aria-busy={status === "loading"}>
+      {status === "failed" ? (
+        <button type="button" className="photo-retry" onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setStatus("loading");
+        }}>
           <Icon name="refresh" />
           Повторить фото
         </button>
       ) : (
-        <img
-          src={media.url}
-          srcSet={
-            media.variants
-              ? Object.entries(media.variants)
-                  .map(([w, u]) => `${u} ${w}w`)
-                  .join(", ")
-              : undefined
-          }
-          sizes={
-            contain
-              ? "(max-width: 600px) 100vw, 560px"
-              : "(max-width: 600px) 48vw, 280px"
-          }
-          alt={alt}
-          loading={priority ? "eager" : "lazy"}
-          decoding="async"
-          width={media.width || 480}
-          height={media.height || 640}
-          onError={() => setFailed(true)}
-        />
+        <>
+          <img
+            {...source}
+            alt={alt}
+            loading={priority ? "eager" : "lazy"}
+            fetchPriority={priority ? "high" : "auto"}
+            decoding="async"
+            width={media.width || 480}
+            height={media.height || 640}
+            onLoad={() => {
+              setStatus("ready");
+              onLoad?.();
+            }}
+            onError={() => setStatus("failed")}
+          />
+          {status === "loading" && (
+            <span className="photo-loading" role="status" aria-label="Загружаем фото">
+              <span className="spinner" aria-hidden="true" />
+            </span>
+          )}
+        </>
       )}
     </div>
   );

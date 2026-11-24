@@ -418,6 +418,17 @@ button:focus:not(:focus-visible) {
   object-fit: cover;
   aspect-ratio: 3/4;
 }
+.photo-wrap {
+  position: relative;
+}
+.photo-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: inherit;
+  pointer-events: none;
+}
 .photo-wrap.contain {
   background: #f7f7f7;
 }

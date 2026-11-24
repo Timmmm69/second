@@ -22,6 +22,7 @@ import {
   ItemMeasurements,
   Loading,
   Photo,
+  preloadPhoto,
   Sheet,
   Summary,
   Textarea,
@@ -544,8 +545,10 @@ function CatalogProductCard({ item, categoryName, priority, onOpen, selected, on
 }) {
   const photos = item.media ?? [];
   const [photoIndex, setPhotoIndex] = useState(0);
+  const [photoSelected, setPhotoSelected] = useState(false);
   const photo = photos[photoIndex];
   const changePhoto = (delta: number) => {
+    setPhotoSelected(true);
     setPhotoIndex((index) => Math.min(photos.length - 1, Math.max(0, index + delta)));
     tapFeedback("selection");
   };
@@ -557,7 +560,7 @@ function CatalogProductCard({ item, categoryName, priority, onOpen, selected, on
     <div className="catalog-photo">
       <button className="product-image-button" aria-label={`Открыть ${item.title}`}
         ref={swipeRef} onClick={onOpen}>
-        <Photo key={photo?.id} media={photo} alt={item.title} priority={priority && photoIndex === 0} />
+        <Photo media={photo} alt={item.title} priority={priority || photoSelected} />
       </button>
       {photos.length > 1 && <div className="catalog-photo-nav" aria-label="Фотографии">
         <button type="button" aria-label="Предыдущее фото" disabled={photoIndex === 0}
@@ -725,11 +728,15 @@ function ItemPage({ id }: { id: string }) {
             aria-label="Открыть фотогалерею"
           >
             <Photo
-              key={media[index]?.id}
               media={media[index]}
               alt={item.title}
               contain
               priority
+              onLoad={() => {
+                // Only the open item's neighbours, after the selected photo loads.
+                preloadPhoto(media[index - 1], true);
+                preloadPhoto(media[index + 1], true);
+              }}
             />
             <span className="photo-counter">
               {media.length ? index + 1 : 0} / {media.length}
@@ -744,7 +751,7 @@ function ItemPage({ id }: { id: string }) {
                   onClick={() => setIndex(i)}
                   aria-label={`Фото ${i + 1}`}
                 >
-                  <Photo media={m} alt={`${item.title}, фото ${i + 1}`} />
+                  <Photo media={m} alt={`${item.title}, фото ${i + 1}`} sizes="56px" />
                 </button>
               ))}
             </div>

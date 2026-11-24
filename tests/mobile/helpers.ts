@@ -158,7 +158,7 @@ export async function installMobileMocks(page: Page, browserName: string) {
     }
     await route.fulfill({ json: result });
   });
-  return { apiRequests, unexpectedRequests, pageErrors, systemBottom, systemTop };
+  return { apiRequests, unexpectedRequests, pageErrors, systemBottom, systemTop, items };
 }
 
 export async function updateTelegram(page: Page, change: { height?: number; bottom?: number }) {
