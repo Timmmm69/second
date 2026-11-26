@@ -89,6 +89,37 @@ test("card opens from catalog immediately and quick navigation reuses fetched da
   expect(mobile.apiRequests.filter((request) => request === "GET /settings")).toHaveLength(1);
 });
 
+test("catalog starts before the buyer bundle and secondary routes load separately", async ({ page, mobile }) => {
+  let release!: () => void;
+  const mainPending = new Promise<void>((resolve) => { release = resolve; });
+  const loaded: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (/^\/client\/buyer-(?:about|support|invite|events|order)\.tsx$/.test(path)) loaded.push(path);
+  });
+  await page.route(/\/client\/main\.tsx(?:\?|$)/, async (route) => {
+    await mainPending;
+    await route.continue();
+  });
+  const catalogRequests = () => mobile.apiRequests.filter((request) => /^GET \/catalog\?/.test(request));
+  try {
+    await page.goto("/#/catalog", { waitUntil: "commit" });
+    await expect.poll(catalogRequests).toEqual(["GET /catalog?limit=16&sort=new"]);
+    await expect(page.locator(".product-card")).toHaveCount(0);
+  } finally {
+    release();
+  }
+  await expect(page.locator(".product-card").first()).toBeVisible();
+  expect(catalogRequests()).toHaveLength(1);
+  expect(loaded).toEqual([]);
+  await page.goto("/#/about");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await expect.poll(() => loaded).toEqual(["/client/buyer-about.tsx"]);
+  await page.reload();
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  expect(catalogRequests()).toHaveLength(1);
+});
+
 test("Telegram confirms closing and prevents content swipes from minimizing", async ({ page, mobile }) => {
   await page.goto("/#/catalog");
   await expect(page.locator(".product-card").first()).toBeVisible();

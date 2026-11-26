@@ -38,6 +38,7 @@ export async function api<T = unknown>(
     key?: string;
     signal?: AbortSignal;
     keepalive?: boolean;
+    pendingResponse?: Promise<Response>;
   } = {},
 ): Promise<T> {
   const headers: Record<string, string> = {};
@@ -47,7 +48,7 @@ export async function api<T = unknown>(
     headers["Idempotency-Key"] = options.key || operationKey();
   let response: Response;
   try {
-    response = await fetch(`/api${path}`, {
+    response = await (options.pendingResponse ?? fetch(`/api${path}`, {
       method: options.method || "GET",
       credentials: "same-origin",
       headers,
@@ -59,7 +60,7 @@ export async function api<T = unknown>(
             : JSON.stringify(options.body),
       signal: options.signal,
       keepalive: options.keepalive,
-    });
+    }));
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError")
       throw error;

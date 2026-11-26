@@ -27,5 +27,5 @@ for (const item of data.items) for (const media of item.media) {
   }
 }
 let html = await readFile(dir+'/index.html','utf8');
-html = html.replace(/<script id="telegram-sdk"[^>]*><\/script>/g,'').replace('<head>','<head><meta name="robots" content="noindex,nofollow"><script src="/preview-api.js"></script>');
+html = html.replace(/<script id="(?:telegram-sdk|catalog-start)"[^>]*><\/script>/g,'').replace('<head>','<head><meta name="robots" content="noindex,nofollow"><script src="/preview-api.js"></script>');
 await writeFile(dir+'/index.html',html);
