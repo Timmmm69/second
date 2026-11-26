@@ -58,12 +58,24 @@ const draftDefault: Draft = {
 };
 const activeLine = (line: Line) =>
   ["RESERVED", "RELEASE_PENDING"].includes(line.outcome);
-let catalogCache: {
+const catalogPageSize = "16";
+const catalogFreshFor = 30_000;
+const detailFreshFor = 15_000;
+const catalogPhotoWidth = 480;
+const emptyCatalog: Item[] = [];
+type CatalogPage = {
   filterKey: string;
   items: Item[];
   cursor: string;
   next: string | null;
-} | null = null;
+  receivedAt: number;
+};
+let catalogCache: CatalogPage | null = null;
+const itemDetails = new Map<string, { item: Item; receivedAt: number }>();
+function invalidateCatalog() {
+  catalogCache = null;
+  itemDetails.clear();
+}
 export default function Buyer() {
   const { path } = useApp();
   if (path.startsWith("/items/")) return <ItemPage key={path} id={path.split("/")[2]} />;
@@ -120,24 +132,33 @@ function Catalog() {
     [q, setQ] = useState(filters.q || ""),
     [filterOpen, setFilterOpen] = useState(false),
     [draft, setDraft] = useState(filters),
-    [cursor, setCursor] = useState(() =>
-      catalogCache?.filterKey === JSON.stringify(filters)
-        ? catalogCache.cursor
-        : "",
+    [page, setPage] = useState(() =>
+      catalogCache?.filterKey === JSON.stringify(filters) ? catalogCache : null,
     ),
-    [items, setItems] = useState<Item[]>(() =>
-      catalogCache?.filterKey === JSON.stringify(filters)
-        ? catalogCache.items
-        : [],
-    ),
-    [more, setMore] = useState<string | null>(() =>
-      catalogCache?.filterKey === JSON.stringify(filters)
-        ? catalogCache.next
-        : null,
-    ),
+    [cursor, setCursor] = useState(() => page?.cursor ?? ""),
     [refresh, setRefresh] = useState(0),
     [error, setError] = useState<unknown>(null),
     [loading, setLoading] = useState(true);
+  const filterKey = JSON.stringify(filters);
+  const currentPage = page?.filterKey === filterKey ? page : null;
+  const items = currentPage?.items ?? emptyCatalog;
+  const more = currentPage?.next;
+  const currentPageRef = useRef(currentPage);
+  currentPageRef.current = currentPage;
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [nearbyPhotos, setNearbyPhotos] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    if (!gridRef.current) return;
+    const observer = new IntersectionObserver((entries) => {
+      const nearby = entries.filter((entry) => entry.isIntersecting).map((entry) => {
+        observer.unobserve(entry.target);
+        return (entry.target as HTMLElement).dataset.itemId!;
+      });
+      if (nearby.length) setNearbyPhotos((previous) => new Set([...previous, ...nearby]));
+    }, { rootMargin: "100px 0px" });
+    gridRef.current.querySelectorAll("[data-item-id]").forEach((element) => observer.observe(element));
+    return () => observer.disconnect();
+  }, [items]);
   const catalogOptions = useLoad<CatalogOptions>(filterOpen ? "/catalog/options" : null);
   const searchButtonRef = useRef<HTMLButtonElement>(null);
   const applySearch = useCallback((value: string) => {
@@ -160,13 +181,8 @@ function Catalog() {
   const scrollRestored = useRef(false);
   const lastCatalogRefresh = useRef(Date.now());
   useEffect(() => {
-    catalogCache = {
-      filterKey: JSON.stringify(filters),
-      items,
-      cursor,
-      next: more,
-    };
-  }, [filters, items, cursor, more]);
+    if (page) catalogCache = page;
+  }, [page]);
   useEffect(() => {
     if (!items.length || scrollRestored.current) return;
     const frame = requestAnimationFrame(() => {
@@ -197,7 +213,7 @@ function Catalog() {
       if (frame !== null) cancelAnimationFrame(frame);
     };
   }, []);
-  const query = new URLSearchParams();
+  const query = new URLSearchParams({ limit: catalogPageSize });
   for (const [key, value] of Object.entries(filters)) {
     if (Array.isArray(value)) {
       for (const choice of value) query.append(key, choice);
@@ -209,24 +225,33 @@ function Catalog() {
   }
   if (cursor) query.set("cursor", cursor);
   const queryString = query.toString();
+  const handledRefresh = useRef(0);
   useEffect(() => {
+    setError(null);
+    const cached = currentPageRef.current;
+    const forced = refresh !== handledRefresh.current;
+    if (!forced && cached?.cursor === cursor && Date.now() - cached.receivedAt < catalogFreshFor) {
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
     setLoading(true);
-    setError(null);
     const timer = window.setTimeout(() => api<{ items: Item[]; nextCursor: string | null }>(
       `/catalog?${queryString}`,
       { signal: controller.signal },
     )
       .then((data) => {
-        setItems((old) =>
-          cursor
-            ? [
-                ...old.filter((i) => !data.items.some((n) => n.id === i.id)),
-                ...data.items,
-              ]
+        if (controller.signal.aborted) return;
+        handledRefresh.current = refresh;
+        setPage((previous) => ({
+          filterKey,
+          cursor,
+          next: data.nextCursor,
+          receivedAt: Date.now(),
+          items: cursor && previous?.filterKey === filterKey
+            ? [...previous.items.filter((item) => !data.items.some((next) => next.id === item.id)), ...data.items]
             : data.items,
-        );
-        setMore(data.nextCursor);
+        }));
       })
       .catch((e) => {
         if (e.name !== "AbortError") setError(e);
@@ -235,7 +260,7 @@ function Catalog() {
         if (!controller.signal.aborted) setLoading(false);
       }), 0);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [queryString, refresh, cursor]);
+  }, [queryString, refresh, cursor, filterKey]);
   useEffect(() => {
     const update = () => {
       if (document.visibilityState !== "visible" || Date.now() - lastCatalogRefresh.current < 120_000) return;
@@ -254,7 +279,10 @@ function Catalog() {
         body: { itemIds: ids },
       }).then(({ availableIds }) => {
         const checked = new Set(ids), available = new Set(availableIds);
-        setItems((previous) => previous.filter((item) => !checked.has(item.id) || available.has(item.id)));
+        setPage((previous) => previous && ({
+          ...previous,
+          items: previous.items.filter((item) => !checked.has(item.id) || available.has(item.id)),
+        }));
       }).catch(() => {});
     };
     const timer = setInterval(update, 120_000);
@@ -412,9 +440,10 @@ function Catalog() {
           Попробуйте ослабить условие поиска.
         </Empty>
       ) : (
-        <div className="product-grid">
+        <div className="product-grid" ref={gridRef}>
           {items.map((item, i) => (
-            <CatalogProductCard key={item.id} item={item} categoryName={categories.find((c) => c.id === item.category)?.name} priority={i < 4}
+            <CatalogProductCard key={item.id} item={item} categoryName={categories.find((c) => c.id === item.category)?.name}
+              priority={i < 2} loadPhoto={i < 2 || nearbyPhotos.has(item.id)}
               selectionDisabled={authLoading}
               onOpen={() => go(`/items/${item.id}`)}
               selected={selectionIds.includes(item.id)}
@@ -541,8 +570,8 @@ function Catalog() {
 }
 
 /** Catalogue image swipes reuse media from the current catalogue response. */
-function CatalogProductCard({ item, categoryName, priority, onOpen, selected, selectionDisabled, onToggle }: {
-  item: Item; categoryName?: string; priority: boolean; onOpen: () => void; selected: boolean; selectionDisabled: boolean; onToggle: () => void;
+function CatalogProductCard({ item, categoryName, priority, loadPhoto, onOpen, selected, selectionDisabled, onToggle }: {
+  item: Item; categoryName?: string; priority: boolean; loadPhoto: boolean; onOpen: () => void; selected: boolean; selectionDisabled: boolean; onToggle: () => void;
 }) {
   const photos = item.media ?? [];
   const [photoIndex, setPhotoIndex] = useState(0);
@@ -561,7 +590,9 @@ function CatalogProductCard({ item, categoryName, priority, onOpen, selected, se
     <div className="catalog-photo">
       <button className="product-image-button" aria-label={`Открыть ${item.title}`}
         ref={swipeRef} onClick={onOpen}>
-        <Photo media={photo} alt={item.title} priority={priority || photoSelected} />
+        {loadPhoto || photoSelected
+          ? <Photo media={photo} alt={item.title} priority={priority || photoSelected} maxWidth={catalogPhotoWidth} />
+          : <div className="photo-placeholder" aria-hidden="true" />}
       </button>
       {photos.length > 1 && <div className="catalog-photo-nav" aria-label="Фотографии">
         <button type="button" aria-label="Предыдущее фото" disabled={photoIndex === 0}
@@ -585,8 +616,20 @@ function CatalogProductCard({ item, categoryName, priority, onOpen, selected, se
 }
 
 function ItemPage({ id }: { id: string }) {
-  const { go, selectionIds, setSelection, settings, toast } = useApp();
-  const { data: item, error, loading, reload } = useLoad<Item>(`/items/${id}`);
+  const { go, authLoading, selectionIds, setSelection, settings, toast } = useApp();
+  const [catalogItem] = useState(() => catalogCache?.items.find((item) => item.id === id));
+  const [cachedDetail] = useState(() => {
+    const cached = itemDetails.get(id);
+    return cached && Date.now() - cached.receivedAt < detailFreshFor ? cached.item : undefined;
+  });
+  const { data, error, loading, reload } = useLoad<Item>(cachedDetail ? null : `/items/${id}`);
+  const confirmed = data ?? cachedDetail;
+  const item = confirmed ?? (error ? undefined : catalogItem);
+  useEffect(() => {
+    if (!data) return;
+    itemDetails.set(id, { item: data, receivedAt: Date.now() });
+    if (itemDetails.size > 40) itemDetails.delete(itemDetails.keys().next().value!);
+  }, [data, id]);
   const [gallery, setGallery] = useState(false),
     [index, setIndex] = useState(0),
     [zoom, setZoom] = useState(1),
@@ -595,7 +638,7 @@ function ItemPage({ id }: { id: string }) {
   const updating = useRef(false);
   const [busy, setBusy] = useState(false);
   const [showPurchaseBar, setShowPurchaseBar] = useState(false);
-  const available = item?.available === true;
+  const available = !authLoading && confirmed?.available === true;
   useEffect(() => {
     const button = mainPurchase.current?.querySelector("button");
     if (!available || !button) return;
@@ -734,6 +777,7 @@ function ItemPage({ id }: { id: string }) {
               alt={item.title}
               contain
               priority
+              previewMaxWidth={media[index]?.id === catalogItem?.media[0]?.id ? catalogPhotoWidth : undefined}
               onLoad={() => {
                 // Only the open item's neighbours, after the selected photo loads.
                 preloadPhoto(media[index - 1], true);
@@ -790,7 +834,7 @@ function ItemPage({ id }: { id: string }) {
               <Icon name="message" size={18} /> Спросить о вещи
             </Button>
           </div>
-          {!item.available && (
+          {confirmed && !confirmed.available && (
             <div className="notice">
               <strong>Сейчас недоступно</strong>
               <p>
@@ -1079,6 +1123,7 @@ function Checkout() {
   };
   const complete = (order: Order) => {
     if (!order?.id) throw new Error("Не удалось получить подтверждение сохранения заявки");
+    invalidateCatalog();
     recordPending(null);
     saveLocal(leaseStorage, null);
     session.finish();
@@ -1430,6 +1475,7 @@ function OrderPage({ id }: { id: string }) {
     setActionError(null);
     try {
       const updated = await command<Order>(path, body, method);
+      invalidateCatalog();
       setData(updated);
       setCancel(false);
       setEdit(false);

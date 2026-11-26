@@ -117,6 +117,7 @@ export async function readItems(itemIds: string[], staff = false) {
 const uuidParam = z.object({ id: z.uuid() });
 const optionValues = z.union([z.string(), z.array(z.string())]).optional();
 const catalogQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(40).default(40),
   category: optionValues,
   audience: optionValues,
   brand: optionValues,
@@ -239,16 +240,17 @@ export async function registerCatalog(app: FastifyInstance) {
         : q.sort === "price_desc"
           ? "i.price_minor DESC,i.id"
           : "i.created_at DESC,i.id";
+    const limit = q.limit;
     const { rows } = await pool.query(
       `SELECT i.id,i.sku,i.title,i.category,i.price_minor,i.publication,i.physical,i.version,i.has_defect,i.defect_description,i.attributes,i.measurements
-         FROM items i WHERE ${where.join(" AND ")} ORDER BY ${sort} LIMIT 41 OFFSET ${offset}`,
-      params,
+         FROM items i WHERE ${where.join(" AND ")} ORDER BY ${sort} LIMIT $${params.length + 1} OFFSET ${offset}`,
+      [...params, limit + 1],
     );
     return {
-      items: await mapItems(rows.slice(0, 40)),
+      items: await mapItems(rows.slice(0, limit)),
       nextCursor:
-        rows.length > 40
-          ? Buffer.from(String(offset + 40)).toString("base64url")
+        rows.length > limit
+          ? Buffer.from(String(offset + limit)).toString("base64url")
           : null,
       serverNow: new Date().toISOString(),
     };

@@ -14,6 +14,7 @@ import { api, command, readLocal, saveLocal } from "./api";
 import { AppContext } from "./context";
 import { tg } from "./telegram";
 import { createAuthBootstrap } from "./auth-bootstrap";
+import { createReferenceCache } from "./reference-data";
 import { Button, ErrorBox, Icon, Loading, Sheet } from "./ui";
 import type { Category, Item, Settings, User, Role } from "./types";
 import Buyer from "./buyer";
@@ -97,7 +98,7 @@ function App() {
     [authLoading, setAuthLoading] = useState(true),
     [authError, setAuthError] = useState<unknown>(null),
     [settings, setSettings] = useState<Settings | null>(null),
-    [categories, setCategories] = useState<Category[]>([]),
+    [categoryData, setCategoryData] = useState<{ key: string; categories: Category[] } | null>(null),
     [selectionIds, setSelectionIds] = useState<string[]>(() =>
       readLocal("selection", []),
     ),
@@ -132,6 +133,7 @@ function App() {
     (initData) => command("/auth/telegram", { initData }),
     () => api("/auth/me"),
   ));
+  const initData = sdkReady ? tg()?.initData || undefined : undefined;
   const refreshUser = useCallback(async () => {
     const data = await api<{ user: User | null; dev: boolean }>("/auth/me");
     setUser(data.user);
@@ -139,9 +141,10 @@ function App() {
   }, []);
   useEffect(() => {
     let active = true;
+    setAuthLoading(true);
     (async () => {
       try {
-        const result = await authenticate.current(tg()?.initData);
+        const result = await authenticate.current(initData);
         if (active) {
           setUser(result.user);
           setDev(result.dev);
@@ -159,22 +162,46 @@ function App() {
     return () => {
       active = false;
     };
-  }, [go, sdkReady]);
+  }, [go, initData]);
+  const staff = path.startsWith("/staff") || path.startsWith("/owner");
+  const staffCategories = staff && (user?.role === "OWNER" || user?.role === "STAFF");
+  const categoryPath = staffCategories ? "/staff/categories" : "/categories";
+  const categoryKey = staffCategories ? `staff:${user.id}` : staff && authLoading ? null : categoryPath;
+  const categories = categoryData && categoryData.key === categoryKey ? categoryData.categories : [];
+  const activeCategoryKey = useRef(categoryKey);
+  activeCategoryKey.current = categoryKey;
+  const [settingsCache] = useState(() => createReferenceCache(api<Settings>));
+  const [categoriesCache] = useState(() => createReferenceCache(api<Category[]>));
+  const loadSettings = useCallback(async () => {
+    const request = settingsCache.load("/settings");
+    const data = await request;
+    if (settingsCache.isCurrent("/settings", request)) setSettings(data);
+  }, [settingsCache]);
   const refreshSettings = useCallback(async () => {
-    setSettings(await api<Settings>("/settings"));
-  }, []);
+    settingsCache.invalidate("/settings");
+    await loadSettings();
+  }, [settingsCache, loadSettings]);
+  const loadCategories = useCallback(async () => {
+    if (!categoryKey) return;
+    const request = categoriesCache.load(categoryPath, categoryKey);
+    const data = await request;
+    if (activeCategoryKey.current === categoryKey && categoriesCache.isCurrent(categoryKey, request)) {
+      setCategoryData((current) => current?.key === categoryKey && current.categories === data
+        ? current
+        : { key: categoryKey, categories: data });
+    }
+  }, [categoriesCache, categoryKey, categoryPath]);
   const refreshCategories = useCallback(async () => {
-    const service = path.startsWith("/staff") || path.startsWith("/owner");
-    const route = service && (user?.role === "OWNER" || user?.role === "STAFF")
-      ? "/staff/categories" : "/categories";
-    setCategories(await api<Category[]>(route));
-  }, [path, user?.role]);
+    categoriesCache.invalidate("/categories");
+    if (categoryKey) categoriesCache.invalidate(categoryKey);
+    await loadCategories();
+  }, [categoriesCache, categoryKey, loadCategories]);
   useEffect(() => {
-    refreshCategories().catch(() => {});
+    loadCategories().catch(() => {});
     const refresh = () => {
       if (!document.hidden) {
-        refreshCategories().catch(() => {});
-        refreshSettings().catch(() => {});
+        loadCategories().catch(() => {});
+        loadSettings().catch(() => {});
       }
     };
     window.addEventListener("focus", refresh);
@@ -183,9 +210,9 @@ function App() {
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [refreshCategories, refreshSettings]);
+  }, [loadCategories, loadSettings]);
   useEffect(() => {
-    refreshSettings().catch(setAuthError);
+    loadSettings().catch(setAuthError);
     const fn = () => {
       setPath(location.hash.slice(1) || "/catalog");
       window.scrollTo({ top: 0 });
@@ -199,7 +226,7 @@ function App() {
       window.removeEventListener("online", net);
       window.removeEventListener("offline", net);
     };
-  }, [refreshSettings]);
+  }, [loadSettings]);
   useEffect(() => {
     const app = tg();
     if (!app) return;
@@ -546,7 +573,6 @@ function App() {
     );
     return false;
   };
-  const staff = path.startsWith("/staff") || path.startsWith("/owner");
   const rootPath = [
     "/catalog",
     "/selection",
@@ -636,7 +662,7 @@ function App() {
             Нет соединения. Оформление и выдача временно недоступны.
           </div>
         )}
-        {authLoading && path !== "/catalog" ? (
+        {authLoading && path !== "/catalog" && !path.startsWith("/items/") ? (
           <Loading />
         ) : (
           <main id="main-content">

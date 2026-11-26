@@ -97,6 +97,10 @@ test("catalog pagination/filters and staff visibility use one item and one media
   const next = await list(`/api/catalog?q=${marker}&sort=price_asc&cursor=${page.nextCursor}`);
   assert.deepEqual(next.items.map((i: any) => i.id), [itemIds[40]]);
   assert.equal(next.nextCursor, null);
+  const compact = await list(`/api/catalog?q=${marker}&sort=price_asc&limit=16`);
+  assert.deepEqual(compact.items.map((i: any) => i.id), itemIds.slice(0, 16));
+  const compactNext = await list(`/api/catalog?q=${marker}&sort=price_asc&limit=16&cursor=${compact.nextCursor}`);
+  assert.deepEqual(compactNext.items.map((i: any) => i.id), itemIds.slice(16, 32));
   const filtered = await list(`/api/catalog?q=${marker}&category=accessories&minPrice=200&maxPrice=300&sort=price_desc`);
   assert.deepEqual(filtered.items.map((i: any) => i.id), [itemIds[2], itemIds[1]]);
   const staff = await list(`/api/staff/items?q=${marker}`, true);

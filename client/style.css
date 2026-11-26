@@ -421,6 +421,12 @@ button:focus:not(:focus-visible) {
 .photo-wrap {
   position: relative;
 }
+.photo-wrap img.photo-preview {
+  position: absolute;
+  inset: 0;
+  background: inherit;
+  pointer-events: none;
+}
 .photo-loading {
   position: absolute;
   inset: 0;
