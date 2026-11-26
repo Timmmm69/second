@@ -1,4 +1,4 @@
-import { productColor } from "../shared/catalog-attributes.js";
+import { parseSizeInput, productColor, productSize } from "../shared/catalog-attributes.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { rm } from "node:fs/promises";
@@ -131,6 +131,12 @@ const availableCatalog = [
   "NOT EXISTS(SELECT 1 FROM inventory_claim c WHERE c.item_id=i.id AND (c.owner_type<>'CHECKOUT' OR c.expires_at>clock_timestamp()))",
   "NOT EXISTS(SELECT 1 FROM operation_issues oi WHERE oi.item_id=i.id AND oi.state='OPEN' AND oi.kind IN ('NOT_FOUND','QUALITY','QUALITY_CHECK','INSPECTION','RETURN_INSPECTION'))",
 ];
+const catalogSize = `CASE
+  WHEN i.attributes->>'sizeSystem' = 'CM' AND btrim(i.attributes->>'sizeLabel') <> ''
+    THEN 'на ' || btrim(i.attributes->>'sizeLabel') || ' см'
+  WHEN i.attributes->>'sizeSystem' IN ('INT','RU')
+    THEN regexp_replace(btrim(i.attributes->>'sizeLabel'), '[[:space:]]*/[[:space:]]*', '/', 'g')
+  END`;
 
 export async function registerCatalog(app: FastifyInstance) {
   app.get("/catalog/options", async () => {
@@ -139,8 +145,7 @@ export async function registerCatalog(app: FastifyInstance) {
               array_agg(DISTINCT i.attributes->>'color') AS color,
               array_agg(DISTINCT i.attributes->>'material') AS material,
               array_agg(DISTINCT i.attributes->>'season') AS season,
-              array_agg(DISTINCT CASE WHEN i.attributes->>'sizeSystem' IN ('INT','RU')
-                THEN i.attributes->>'sizeLabel' END) AS "sizeLabel"
+              array_agg(DISTINCT ${catalogSize}) AS "sizeLabel"
          FROM items i WHERE ${availableCatalog.join(" AND ")}`,
     );
     return Object.fromEntries(Object.entries(options).map(([key, raw]) => {
@@ -188,11 +193,13 @@ export async function registerCatalog(app: FastifyInstance) {
     for (const key of ["brand", "material", "season", "color", "sizeLabel"] as const) {
       const raw = q[key];
       const values = (Array.isArray(raw) ? raw : [raw ?? ""])
-        .map((value) => value.trim().toLowerCase()).filter(Boolean);
+        .map((value) => {
+          const size = key === "sizeLabel" ? parseSizeInput(value) : null;
+          return (size ? productSize(size) : value.trim()).toLowerCase();
+        }).filter(Boolean);
       if (!values.length) continue;
-      const field = key === "color" ? namedColor : `btrim(i.attributes->>'${key}')`;
-      const sizeSystem = key === "sizeLabel" ? "i.attributes->>'sizeSystem' IN ('INT','RU') AND " : "";
-      add(`${sizeSystem}lower(${field})=ANY(?::text[])`, values);
+      const field = key === "color" ? namedColor : key === "sizeLabel" ? catalogSize : `btrim(i.attributes->>'${key}')`;
+      add(`lower(${field})=ANY(?::text[])`, values);
     }
     for (const [key, op] of [
       ["minPrice", ">="],

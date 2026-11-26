@@ -2,12 +2,13 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 import { installMobileMocks, updateTelegram, sampleId } from "./helpers.js";
 import type { Item, Media } from "../../client/types.js";
 
-async function editorFixture(page: Page, browserName: string) {
+async function editorFixture(page: Page, browserName: string, firstUpload?: Promise<void>) {
   const mobile = await installMobileMocks(page, browserName);
   const categories = [
     { id: "tops", name: "Футболки и топы", measurements: ["chest", "length"], sortOrder: 10, version: 1, archived: false },
     { id: "trousers", name: "Брюки и джинсы", measurements: ["waist", "inseam"], sortOrder: 20, version: 1, archived: false },
     { id: "dresses", name: "Платья и юбки", measurements: ["chest", "waist", "length"], sortOrder: 30, version: 1, archived: false },
+    { id: "accessories", name: "Спортивная одежда", measurements: ["length", "width"], sortOrder: 40, version: 1, archived: false },
   ];
   let saved: Item | null = null;
   let uploaded = 0;
@@ -31,7 +32,7 @@ async function editorFixture(page: Page, browserName: string) {
     await respond(route, saved);
   });
   await page.route("**/api/staff/media/uploads", async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 70));
+    if (uploaded === 0) await firstUpload;
     uploaded++;
     const media: Media = { id: `mobile-photo-${uploaded}`, url: `/media/mobile-photo-${uploaded}.svg`,
       position: uploaded - 1, role: "DETAIL" };
@@ -62,34 +63,55 @@ async function editorFixture(page: Page, browserName: string) {
     mobile,
     get draftCreates() { return draftCreates; },
     get uploaded() { return uploaded; },
+    get attributes() { return saved?.attributes; },
     get savedOrder() { return savedOrder; },
   };
 }
 
 test("staff can select six photos first on iOS/Android and reorder without disrupting text input", async ({ page, browserName }) => {
-  const mock = await editorFixture(page, browserName);
+  let releaseUpload!: () => void;
+  const activeUpload = new Promise<void>((resolve) => { releaseUpload = resolve; });
+  const mock = await editorFixture(page, browserName, activeUpload);
   await page.goto("/#/staff/items/new");
   const uploader = page.getByRole("button", { name: "Выбрать фотографии", exact: true });
   await expect(uploader).toBeVisible();
   const title = page.getByLabel("Название *");
-  await title.fill("Не потерять текст");
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO8B4goAAAAASUVORK5CYII=", "base64");
   await page.locator('input[type="file"]').setInputFiles(
     Array.from({ length: 6 }, (_, i) => ({ name: `photo-${i + 1}.png`, mimeType: "image/png", buffer: png })),
   );
-  await page.getByLabel("Описание").fill("Введено во время загрузки");
+  try {
+    await expect(page.getByText("Загружаем фото 1 из 6…")).toBeVisible();
+    await title.fill("Не потерять текст");
+    await page.getByLabel("Описание").fill("Введено во время загрузки");
+    await page.getByLabel("Цена, BYN *").fill("12,50");
+    await page.getByRole("button", { name: /Категория/ }).click();
+    await page.getByRole("option", { name: "Спортивная одежда" }).click();
+    await page.getByLabel("Размер", { exact: true }).fill("s / m");
+  } finally {
+    releaseUpload();
+  }
   await expect(page.getByText("6/12")).toBeVisible();
   expect(mock.draftCreates).toBe(1);
   expect(mock.uploaded).toBe(6);
   await expect(page.getByRole("heading", { name: "Карточка вещи" })).toBeVisible();
-  // Unsaved local fields remain recoverable after the server creates a photo-only draft.
-  await expect(page.getByRole("button", { name: "Восстановить ввод" })).toBeVisible();
-  await page.getByRole("button", { name: "Восстановить ввод" }).click();
+  await expect(page.getByRole("button", { name: "Восстановить ввод" })).toHaveCount(0);
   await expect(title).toHaveValue("Не потерять текст");
   await expect(page.getByLabel("Описание")).toHaveValue("Введено во время загрузки");
+  await expect(page.getByLabel("Цена, BYN *")).toHaveValue("12,50");
+  const size = page.getByLabel("Размер", { exact: true });
+  await expect(size).toHaveValue("s / m");
   await page.getByRole("button", { name: "Фото 2: раньше" }).click();
   await expect.poll(() => mock.savedOrder[0]).toBe("mobile-photo-2");
   await expect(page.locator(".media-tile").first()).toContainText("Основное · 1");
+  await page.getByRole("button", { name: "Сохранить черновик" }).click();
+  await expect.poll(() => mock.attributes).toMatchObject({ sizeSystem: "INT", sizeLabel: "S/M" });
+  await expect(size).toHaveValue("S/M");
+  await size.fill("110,5 см");
+  await page.getByRole("button", { name: "Сохранить черновик" }).click();
+  await expect.poll(() => mock.attributes).toMatchObject({ sizeSystem: "CM", sizeLabel: "110,5" });
+  await page.reload();
+  await expect(size).toHaveValue("110,5 см");
   expect(mock.mobile.pageErrors).toEqual([]);
   expect(mock.mobile.unexpectedRequests.filter((url) => !url.startsWith("blob:"))).toEqual([]);
 });

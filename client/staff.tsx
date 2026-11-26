@@ -1,4 +1,4 @@
-import { catalogAudiences, isLetterSize, letterSizePattern, productColor, productSize } from "../shared/catalog-attributes.js";
+import { catalogAudiences, parseSizeInput, productColor, productSize } from "../shared/catalog-attributes.js";
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import { api, operationKey, readLocal, saveLocal } from "./api";
 import { clothingBrands, clothingColors, clothingSeasons, russianCountries, canonicalChoice } from "./clothing-options";
@@ -425,23 +425,39 @@ const initialItem = {
   measurements: {} as Record<string, number>,
   storageLocation: "",
 };
+type EditorInputs = {
+  form: typeof initialItem;
+  price: string;
+  size: string;
+  measurementInputs?: Record<string, string>;
+};
+type EditorBackup = EditorInputs & { version?: number };
+let pendingEditorInput: { key: string; backup: EditorBackup } | undefined;
+
 function editableSize(item: Item) {
   const label = String(item.attributes.sizeLabel ?? "").trim();
   const system = item.attributes.sizeSystem;
-  if (item.category === "children") return system === "RU" ? label : "";
-  return (system === "INT" || system === "RU") && isLetterSize(label) ? label.toUpperCase() : "";
+  if (system === "CM") return label ? `${label} см` : "";
+  const parsed = parseSizeInput(label);
+  if (system === "RU" && parsed?.sizeSystem === "RU") return label;
+  if ((system === "INT" || system === "RU") && parsed?.sizeSystem === "INT") return parsed.sizeLabel;
+  return "";
 }
 function ItemEditor({ id }: { id: string }) {
   const { categories, go, toast, user } = useApp();
+  const backupKey = `staff-editor:${user?.id ?? "unknown"}:${id}`;
+  const [incoming] = useState(() => pendingEditorInput?.key === backupKey ? pendingEditorInput : undefined);
+  const [createdDraftId, setCreatedDraftId] = useState<string | null>(null);
+  const targetId = id === "new" ? createdDraftId : id;
   const {
     data: item,
     setData,
     error,
     loading,
     reload,
-  } = useLoad<Item>(id === "new" ? null : `/staff/items/${id}`);
-  const [form, setForm] = useState(initialItem),
-    [dirty, setDirty] = useState(false),
+  } = useLoad<Item>(targetId ? `/staff/items/${targetId}` : null);
+  const [form, setForm] = useState(incoming?.backup.form ?? initialItem),
+    [dirty, setDirty] = useState(Boolean(incoming)),
     [preview, setPreview] = useState(false),
     [uploadStatus, setUploadStatus] = useState(""),
     [uploadFiles, setUploadFiles] = useState<File[]>([]),
@@ -450,7 +466,7 @@ function ItemEditor({ id }: { id: string }) {
     [dropActive, setDropActive] = useState(false),
     [mediaBusy, setMediaBusy] = useState(false),
     [measurementGroup, setMeasurementGroup] = useState<"base" | "top" | "bottom">("base"),
-    [measurementInputs, setMeasurementInputs] = useState<Record<string, string>>({}),
+    [measurementInputs, setMeasurementInputs] = useState<Record<string, string>>(incoming?.backup.measurementInputs ?? {}),
     [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const mutation = useMutation();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -458,25 +474,28 @@ function ItemEditor({ id }: { id: string }) {
   const draftCreation = useRef<{
     key: string;
     payload: Record<string, unknown>;
-    snapshot: { form: typeof initialItem; price: string; size: string };
+    snapshot: EditorInputs;
   } | null>(null);
   const uploadLock = useRef(false);
   const draggedMedia = useRef<string | null>(null);
-  const backupKey = `staff-editor:${user?.id ?? "unknown"}:${id}`;
-  const [backup, setBackup] = useState<null | { form: typeof initialItem; price: string; size: string; version?: number }>(
-    () => readLocal(backupKey, null),
+  const [backup, setBackup] = useState<EditorBackup | null>(
+    () => incoming ? null : readLocal(backupKey, null),
   );
   const [checked, setChecked] = useState(false);
-  const [price, setPrice] = useState("");
-  const [size, setSize] = useState("");
+  const [price, setPrice] = useState(incoming?.backup.price ?? "");
+  const [size, setSize] = useState(incoming?.backup.size ?? "");
   const [attempted, setAttempted] = useState(false);
   const [draftSaving, setDraftSaving] = useState(false);
   // The version of the actual editable fields, not the most recently fetched media.
-  const [editVersion, setEditVersion] = useState<number | null>(null);
+  const [editVersion, setEditVersion] = useState<number | null>(incoming?.backup.version ?? null);
   const formRef = useRef<HTMLFormElement>(null);
   // Read current inputs after awaited uploads, not a stale event closure.
-  const latestInputs = useRef({ form, price, size, dirty });
-  latestInputs.current = { form, price, size, dirty };
+  const inputs = { form, price, size, measurementInputs };
+  const latestInputs = useRef({ inputs, dirty });
+  latestInputs.current = { inputs, dirty };
+  useEffect(() => {
+    if (incoming && pendingEditorInput === incoming) pendingEditorInput = undefined;
+  }, [incoming]);
   const previewUrlsRef = useRef<string[]>([]);
   const setPhotosForPreview = (files: File[]) => {
     previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
@@ -484,11 +503,9 @@ function ItemEditor({ id }: { id: string }) {
     previewUrlsRef.current = urls;
     setPreviewUrls(urls);
   };
-  const showSize = Boolean(form.category) && !["bags", "accessories"].includes(form.category);
-  const childSize = form.category === "children";
-  const previousSize = item && (childSize !== (item.category === "children") || !editableSize(item))
-    ? productSize(item.attributes)
-    : "";
+  const category = categories.find((entry) => entry.id === form.category);
+  const showSize = Boolean(form.category) && !["сумки", "аксессуары"].includes(category?.name.trim().toLowerCase() ?? "");
+  const previousSize = item && !editableSize(item) ? productSize(item.attributes) : "";
   const previousColor = item?.attributes.color;
   const legacyColor = previousColor && !productColor(previousColor) ? String(previousColor) : "";
   useEffect(() => {
@@ -525,8 +542,8 @@ function ItemEditor({ id }: { id: string }) {
   }, [dirty]);
   useEffect(() => () => previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url)), []);
   useEffect(() => {
-    if (dirty) saveLocal(backupKey, { form, price, size, version: editVersion ?? item?.version });
-  }, [dirty, form, price, size, backupKey, editVersion]);
+    if (dirty) saveLocal(backupKey, { form, price, size, measurementInputs, version: editVersion ?? item?.version });
+  }, [dirty, form, price, size, measurementInputs, backupKey, editVersion, item?.version]);
   const set = (key: string, value: string | boolean) => {
     setForm((v) => ({ ...v, [key]: value }));
     setDirty(true);
@@ -540,10 +557,9 @@ function ItemEditor({ id }: { id: string }) {
     delete attributes.sizeSystem;
     delete attributes.sizeLabel;
   }
-  if (showSize && size.trim()) {
-    attributes.sizeSystem = childSize ? "RU" : "INT";
-    attributes.sizeLabel = size.trim();
-  }
+  const parsedSize = showSize ? parseSizeInput(size) : null;
+  if (parsedSize) Object.assign(attributes, parsedSize);
+  const invalidSize = showSize && Boolean(size.trim()) && !parsedSize;
   const priceInput = price.trim().replace(",", ".");
   const priceMinor = Math.round(Number(priceInput) * 100);
   const invalidMeasurements = Object.entries(measurementInputs)
@@ -552,6 +568,7 @@ function ItemEditor({ id }: { id: string }) {
   const fieldErrors = {
     title: form.title.trim() ? undefined : "Укажите название вещи",
     category: form.category ? undefined : "Выберите категорию",
+    size: invalidSize ? "Введите размер с бирки, например S/M, 46 или 110 см" : undefined,
     price: !priceInput ? "Укажите цену" :
       !/^\d+(\.\d{1,2})?$/.test(priceInput) || priceMinor > 100000000 ? "Укажите цену от 0 до 1 000 000 BYN с точностью до копеек" : undefined,
     defect: form.hasDefect && !form.defectDescription.trim() ? "Опишите конкретный дефект" : undefined,
@@ -569,7 +586,7 @@ function ItemEditor({ id }: { id: string }) {
     const attempt = draftCreation.current ?? {
       key: operationKey(),
       payload: draftPayload(),
-      snapshot: { form: latestInputs.current.form, price: latestInputs.current.price, size: latestInputs.current.size },
+      snapshot: latestInputs.current.inputs,
     };
     draftCreation.current = attempt;
     return api<Item>("/staff/items/draft", {
@@ -578,15 +595,27 @@ function ItemEditor({ id }: { id: string }) {
       key: attempt.key,
     });
   };
+  const openCreatedDraft = (result: Item, snapshot: EditorInputs | undefined, version = result.version, preserveInput = false) => {
+    const key = `staff-editor:${user?.id ?? "unknown"}:${result.id}`;
+    const latest = latestInputs.current;
+    if (latest.dirty && (preserveInput || JSON.stringify(latest.inputs) !== JSON.stringify(snapshot))) {
+      const backup = { ...latest.inputs, version };
+      saveLocal(key, backup);
+      if (location.hash === "#/staff/items/new") pendingEditorInput = { key, backup };
+    }
+    saveLocal(backupKey, null);
+    if (location.hash === "#/staff/items/new") go(`/staff/items/${result.id}`);
+  };
   const save = async () => {
     setAttempted(true);
-    if (uploading || mediaBusy || draftSaving || invalidMeasurements.length ||
+    if (uploading || mediaBusy || draftSaving || invalidMeasurements.length || invalidSize ||
       (priceInput && fieldErrors.price) ||
       (item && item.publication !== "DRAFT" && missing.length)) {
       requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
       return;
     }
     const data = { ...draftPayload(), ...(item ? { version: editVersion ?? item.version } : {}) };
+    const submitted = latestInputs.current.inputs;
     let result: Item | undefined;
     if (item) {
       result = await mutation.run<Item>(`/staff/items/${item.id}`, data, "PATCH");
@@ -601,25 +630,16 @@ function ItemEditor({ id }: { id: string }) {
       }
     }
     if (result) {
-      // An earlier attempt might have committed while its response was lost.
-      // Never discard edits made since that original, idempotent request.
-      const latest = latestInputs.current;
-      const snapshot = draftCreation.current?.snapshot;
-      const hasNewerInput = id === "new" && snapshot &&
-        JSON.stringify({ form: latest.form, price: latest.price, size: latest.size }) !== JSON.stringify(snapshot);
-      if (hasNewerInput) {
-        saveLocal(`staff-editor:${user?.id ?? "unknown"}:${result.id}`, {
-          form: latest.form, price: latest.price, size: latest.size, version: result.version,
-        });
-      }
+      const savedInputs = item ? submitted : draftCreation.current?.snapshot;
+      const hasNewerInput = JSON.stringify(latestInputs.current.inputs) !== JSON.stringify(savedInputs);
       setData(result);
       setEditVersion(result.version);
-      setDirty(false);
+      setDirty(hasNewerInput);
       saveLocal(backupKey, null);
       setBackup(null);
       toast(hasNewerInput ? "Черновик создан. Проверьте несохранённые изменения." :
         item?.publication === "PUBLISHED" ? "Карточка сохранена" : "Черновик сохранён");
-      if (id === "new") go(`/staff/items/${result.id}`);
+      if (id === "new") openCreatedDraft(result, savedInputs);
     }
     return result;
   };
@@ -644,7 +664,9 @@ function ItemEditor({ id }: { id: string }) {
         setUploadStatus("Создаём черновик для фотографий…");
         // The original payload is retained if a committed response was lost.
         target = await createDraft();
+        setCreatedDraftId(target.id);
         setData(target);
+        setEditVersion(target.version);
       }
       for (let i = 0; i < files.length; i++) {
         setUploadStatus(`Загружаем фото ${i + 1} из ${files.length}…`);
@@ -667,17 +689,11 @@ function ItemEditor({ id }: { id: string }) {
       setUploadFiles([]);
       setPhotosForPreview([]);
       setUploadStatus("Фотографии сохранены");
-      reload();
-      if (id === "new" && target) {
-        // Replace the transient /new route with the real server-backed draft.
-        const latest = latestInputs.current;
-        if (latest.dirty) {
-          saveLocal(`staff-editor:${user?.id ?? "unknown"}:${target.id}`,
-            { form: latest.form, price: latest.price, size: latest.size, version: target.version });
-        }
-        saveLocal(backupKey, null);
-        go(`/staff/items/${target.id}`);
+      if (id === "new") {
+        const hasInputOmittedFromDraft = invalidSize || invalidMeasurements.length > 0 || Boolean(priceInput && fieldErrors.price);
+        openCreatedDraft(target, draftCreation.current?.snapshot, editVersion ?? target.version, hasInputOmittedFromDraft);
       }
+      else reload();
     } catch (e) {
       mutation.setError(e);
       setUploadStatus("Не удалось подготовить загрузку. Повторите выбор фотографий.");
@@ -717,7 +733,7 @@ function ItemEditor({ id }: { id: string }) {
     reload();
   };
   if (loading && !item) return <Loading />;
-  const categoryMeasurements = categories.find((category) => category.id === form.category)?.measurements ?? [];
+  const categoryMeasurements = category?.measurements ?? [];
   const upperCategory = ["outerwear", "knit", "shirts", "tops"].includes(form.category);
   const lowerCategory = form.category === "trousers";
   const effectiveGroup = upperCategory ? "top" : lowerCategory ? "bottom" : measurementGroup;
@@ -767,7 +783,9 @@ function ItemEditor({ id }: { id: string }) {
           setForm(backup.form);
           setPrice(backup.price);
           setSize(backup.size);
-          setMeasurementInputs(Object.fromEntries(Object.entries(backup.form.measurements ?? {}).map(([key, value]) => [key, String(value / 10)])));
+          setMeasurementInputs(backup.measurementInputs ?? Object.fromEntries(
+            Object.entries(backup.form.measurements ?? {}).map(([key, value]) => [key, String(value / 10)]),
+          ));
           setEditVersion(backup.version ?? item?.version ?? null);
           setDirty(true);
           setBackup(null);
@@ -900,12 +918,7 @@ function ItemEditor({ id }: { id: string }) {
           markEmpty
           error={attempted ? fieldErrors.category : undefined}
           value={form.category}
-          onValueChange={(value) => {
-            if ((value === "children") !== childSize) {
-              setSize(item && (value === "children") === (item.category === "children") ? editableSize(item) : "");
-            }
-            set("category", value);
-          }}
+          onValueChange={(value) => set("category", value)}
           searchPlaceholder="Найти категорию"
           options={categories
             .filter((c) => !c.archived || c.id === form.category)
@@ -936,12 +949,13 @@ function ItemEditor({ id }: { id: string }) {
             label="Размер"
             markEmpty={!previousSize}
             value={size}
-            placeholder={childSize ? "Например, 110 или 116" : "Например, S, M, L или XL"}
-            pattern={childSize ? undefined : letterSizePattern}
+            placeholder="Например, S/M или 110 см"
+            maxLength={32}
+            error={attempted ? fieldErrors.size : undefined}
             hint={previousSize
               ? `Текущий размер: ${previousSize}. Оставьте поле пустым, чтобы сохранить его, или укажите размер по бирке.`
               : undefined}
-            onChange={(e) => { setSize(childSize ? e.target.value : e.target.value.toUpperCase()); setDirty(true); }}
+            onChange={(e) => { setSize(e.target.value); setDirty(true); }}
           />
         )}
         <Select

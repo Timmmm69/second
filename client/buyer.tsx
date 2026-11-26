@@ -115,7 +115,7 @@ function readCatalogFilters(): CatalogFilters {
 }
 
 function Catalog() {
-  const { categories, go, selectionIds, setSelection, toast, settings } = useApp();
+  const { authLoading, categories, go, selectionIds, setSelection, toast, settings } = useApp();
   const [filters, setFilters] = useState(readCatalogFilters),
     [q, setQ] = useState(filters.q || ""),
     [filterOpen, setFilterOpen] = useState(false),
@@ -233,7 +233,7 @@ function Catalog() {
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
-      }), cursor ? 0 : 180);
+      }), 0);
     return () => { clearTimeout(timer); controller.abort(); };
   }, [queryString, refresh, cursor]);
   useEffect(() => {
@@ -415,6 +415,7 @@ function Catalog() {
         <div className="product-grid">
           {items.map((item, i) => (
             <CatalogProductCard key={item.id} item={item} categoryName={categories.find((c) => c.id === item.category)?.name} priority={i < 4}
+              selectionDisabled={authLoading}
               onOpen={() => go(`/items/${item.id}`)}
               selected={selectionIds.includes(item.id)}
               onToggle={() => {
@@ -540,8 +541,8 @@ function Catalog() {
 }
 
 /** Catalogue image swipes reuse media from the current catalogue response. */
-function CatalogProductCard({ item, categoryName, priority, onOpen, selected, onToggle }: {
-  item: Item; categoryName?: string; priority: boolean; onOpen: () => void; selected: boolean; onToggle: () => void;
+function CatalogProductCard({ item, categoryName, priority, onOpen, selected, selectionDisabled, onToggle }: {
+  item: Item; categoryName?: string; priority: boolean; onOpen: () => void; selected: boolean; selectionDisabled: boolean; onToggle: () => void;
 }) {
   const photos = item.media ?? [];
   const [photoIndex, setPhotoIndex] = useState(0);
@@ -577,6 +578,7 @@ function CatalogProductCard({ item, categoryName, priority, onOpen, selected, on
       <strong className="price">{money(item.priceMinor)}</strong>
     </button>
     <button className={`save-item ${selected ? "selected" : ""}`}
+      disabled={selectionDisabled}
       aria-label={selected ? `Убрать ${item.title} из корзины` : `Добавить ${item.title} в корзину`}
       onClick={onToggle}><Icon name={selected ? "check" : "bag"} size={18} /></button>
   </article>;

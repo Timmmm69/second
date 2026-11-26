@@ -180,13 +180,13 @@ button:focus:not(:focus-visible) {
   min-width: 0;
 }
 .brand {
-  font-size: 1.6rem;
-  line-height: 1.2;
-  font-weight: 700;
-  color: var(--accent);
   padding: 6px 0;
   text-align: left;
-  overflow-wrap: anywhere;
+}
+.brand img {
+  display: block;
+  width: 154px;
+  height: auto;
 }
 .mode-caption {
   color: var(--mute);
