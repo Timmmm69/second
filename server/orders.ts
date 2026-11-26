@@ -2006,7 +2006,7 @@ export async function registerOrders(app: FastifyInstance) {
         ["ACCEPTED", "IN_TRANSIT", "AT_OFFICE", "RETURN_REQUESTED", "RETURN_IN_TRANSIT", "LOST_OR_DAMAGED"].includes(s.status) &&
         ["IN_FULFILLMENT", "RETURNING"].includes(o.status);
       assert(
-        allowed[s.status]?.includes(body.status) || directReceipt,
+        body.confirmedReceipt ? directReceipt : allowed[s.status]?.includes(body.status),
         409,
         "SHIPMENT_SEQUENCE",
         "Событие не соответствует текущему этапу. Проверьте данные перевозчика",

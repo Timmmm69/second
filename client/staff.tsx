@@ -1842,7 +1842,9 @@ function StaffOrder({ id }: { id: string }) {
           onClose={() => { if (!mutation.busy) setShipmentSheet(null); }}>
           <div className="form-stack">
             <p>{shipmentSheet === "receive"
-              ? "Подтвердите фактическое получение всех перечисленных вещей. Можно сразу вернуть осмотренные вещи в продажу."
+              ? user?.role === "OWNER"
+                ? "Подтвердите фактическое получение всех перечисленных вещей. Можно сразу вернуть осмотренные вещи в продажу."
+                : "Подтвердите фактическое получение всех перечисленных вещей. Владелец завершит осмотр в разделе «Возвраты»."
               : shipmentSheet === "undo"
                 ? "Вернём посылку к оформленному состоянию. Трек и бронь останутся, история исправления сохранится."
                 : "Отменим заказ и освободим товары. История обращения и посылки сохранится."}</p>
@@ -2343,6 +2345,18 @@ function Returns() {
                     }}
                   >
                     Осмотрены — вернуть в продажу
+                  </Button>
+                  <Button ghost disabled={mutation.busy}
+                    onClick={async () => {
+                      const note = prompt("Осмотр завершён. Почему пока не возвращаем вещи в зал?");
+                      if (!note?.trim()) return;
+                      const result = await mutation.run(
+                        `/owner/returns/${ret.id}/resolve`,
+                        { version: ret.version, suitable: true, note },
+                      );
+                      if (result) { reload(); toast("Осмотр завершён. Вещи пока недоступны"); }
+                    }}>
+                    Пригодны, но оставить на проверке
                   </Button>
                   <Button
                     secondary

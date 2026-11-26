@@ -1433,3 +1433,33 @@ test("staff can receive a parcel directly but stock stays locked for inspection 
   assert.equal(result.status, 200, JSON.stringify(result.body));
   assert.equal((await pool.query("SELECT physical FROM items WHERE id=$1", [itemIds[0]])).rows[0].physical, "AVAILABLE");
 });
+
+test("quick return never restocks another claim or an item with a separate quality issue", async () => {
+  const { current, itemIds } = await acceptedParcel();
+  const path = `/staff/shipments/${current.shipment.id}/events`;
+  await pool.query("INSERT INTO operation_issues(entity_id,item_id,kind,message) VALUES($1,$1,'QUALITY_CHECK','Независимая проверка качества')", [itemIds[0]]);
+  const body = { version: current.version, status: "RETURN_RECEIVED", source: "Фактически получено", confirmedReceipt: true, restoreToSale: true };
+  const blocked = await api(owner, "POST", path, body);
+  assert.equal(blocked.status, 409, JSON.stringify(blocked.body));
+  assert.equal(blocked.body.code, "RESTOCK_BLOCKED");
+  assert.equal((await pool.query("SELECT physical FROM items WHERE id=$1", [itemIds[0]])).rows[0].physical, "WITH_CARRIER");
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM inventory_claim WHERE item_id=$1", [itemIds[0]])).rows[0].n, 1);
+  const received = await api(owner, "POST", path, { ...body, restoreToSale: false });
+  assert.equal(received.status, 200, JSON.stringify(received.body));
+  assert.equal((await pool.query("SELECT physical FROM items WHERE id=$1", [itemIds[0]])).rows[0].physical, "INSPECTION");
+  assert.equal((await pool.query("SELECT state FROM operation_issues WHERE item_id=$1 AND kind='QUALITY_CHECK'", [itemIds[0]])).rows[0].state, "OPEN");
+});
+test("partial shipment receipt only restocks the undelivered items", async () => {
+  const { current } = await acceptedParcel("EUROPOST", 2);
+  const settings = (await pool.query("SELECT value FROM store_settings")).rows[0].value;
+  settings.carriers.EUROPOST.partialDelivery = true;
+  await pool.query("UPDATE store_settings SET value=$1", [settings]);
+  const path = `/staff/shipments/${current.shipment.id}/events`;
+  const [sold, returning] = current.lines;
+  const partial = await api(staff, "POST", path, { version: current.version, status: "DELIVERED", source: "Частичная выдача", deliveredLineIds: [sold.id] });
+  assert.equal(partial.status, 200, JSON.stringify(partial.body));
+  const result = await api(owner, "POST", path, { version: partial.body.version, status: "RETURN_RECEIVED", source: "Возвращённая вещь получена", confirmedReceipt: true, restoreToSale: true });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal((await pool.query("SELECT physical FROM items WHERE id=$1", [sold.itemId])).rows[0].physical, "SOLD");
+  assert.equal((await pool.query("SELECT physical FROM items WHERE id=$1", [returning.itemId])).rows[0].physical, "AVAILABLE");
+});
