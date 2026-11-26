@@ -348,14 +348,40 @@
       order.shipment = { id: uuid(), tracking: body.tracking.trim(), source: body.source.trim(), status: 'REGISTERED', updatedAt: now() };
       order.status = 'DISPATCH_READY'; order.version++; event(order, `Обращение №${order.number}: трек оформлен, посылка ещё не сдана`); return orderView(order);
     }
-    if (/^\/staff\/shipments\/[^/]+\/(acceptance|events|cancel)$/.test(path) && method === 'POST') {
+    if (/^\/staff\/shipments\/[^/]+\/(acceptance|events|cancel|correct|return-request)$/.test(path) && method === 'POST') {
       const order = orders.find(order => order.shipment?.id === path.split('/')[3]), action = path.split('/')[4];
       ensure(order, 404, 'SHIPMENT', 'Посылка не найдена'); checkVersion(order, body);
       ensure(String(body.source || '').trim(), 422, 'SOURCE', 'Укажите подтверждённый источник');
-      if (action === 'acceptance') { ensure(order.shipment.status === 'REGISTERED', 409, 'SHIPMENT_STATE', 'Посылка уже принята'); order.shipment.status = 'ACCEPTED'; order.status = 'IN_FULFILLMENT'; }
+      if (action === 'acceptance') { ensure(order.shipment.status === 'REGISTERED', 409, 'SHIPMENT_STATE', 'Посылка уже принята'); order.shipment.status = 'ACCEPTED'; order.status = 'IN_FULFILLMENT'; order.reservationStatus = 'FULFILLED'; }
+      if (action === 'correct') {
+        owner();
+        ensure(body.inStore === true && (order.shipment.status === 'ACCEPTED' || (order.shipment.status === 'REGISTERED' && body.mode === 'cancel')), 409, 'SHIPMENT_STATE', 'Исправление недоступно');
+        if (body.mode === 'undo') { order.shipment.status = 'REGISTERED'; order.status = 'DISPATCH_READY'; order.reservationStatus = 'ACTIVE'; }
+        else {
+          ensure(body.mode === 'cancel' && body.carrierCancelled === true, 422, 'CONFIRMATION', 'Подтвердите отмену оформления');
+          order.status = 'CANCELLED'; order.reservationStatus = 'CANCELLED'; order.totalMinor = 0;
+          for (const line of order.lines.filter(l => l.outcome === 'RESERVED')) {
+            line.outcome = 'CANCELLED'; findItem(line.itemId).physical = body.restoreToSale ? 'AVAILABLE' : 'INSPECTION';
+          }
+          delete order.shipment; order.version++; event(order, 'Обращение отменено'); record('demo.shipment.correct', order.id); return orderView(order);
+        }
+      }
+      if (action === 'return-request') {
+        ensure(['ACCEPTED','IN_TRANSIT','AT_OFFICE','LOST_OR_DAMAGED'].includes(order.shipment.status), 409, 'SHIPMENT_STATE', 'Возврат недоступен');
+        order.shipment.status = 'RETURN_REQUESTED'; order.status = 'RETURNING';
+      }
       if (action === 'events') {
         ensure(order.shipment.status !== 'REGISTERED', 409, 'SHIPMENT_STATE', 'Сначала подтвердите фактическую сдачу');
         ensure(['IN_TRANSIT', 'AT_OFFICE', 'DELIVERED', 'RETURN_IN_TRANSIT', 'RETURN_RECEIVED', 'LOST_OR_DAMAGED'].includes(body.status), 422, 'SHIPMENT_STATE', 'Неизвестный статус');
+        if (body.restoreToSale) { owner(); ensure(body.confirmedReceipt === true && body.status === 'RETURN_RECEIVED', 422, 'CONFIRMATION', 'Подтвердите получение'); }
+        if (body.status === 'RETURN_RECEIVED') {
+          ensure(['RETURN_IN_TRANSIT','LOST_OR_DAMAGED'].includes(order.shipment.status) || (body.confirmedReceipt === true && ['ACCEPTED','IN_TRANSIT','AT_OFFICE','RETURN_REQUESTED'].includes(order.shipment.status)), 409, 'SHIPMENT_STATE', 'Возврат недоступен');
+          order.status = 'RETURNED';
+          const lines = order.lines.filter(l => ['RESERVED','RETURNING'].includes(l.outcome));
+          for (const line of lines) { line.outcome = 'RETURNED'; findItem(line.itemId).physical = body.restoreToSale ? 'AVAILABLE' : 'INSPECTION'; }
+          (order.returnCases ||= []).push({ id: uuid(), orderId: order.id, status: body.restoreToSale ? 'CLOSED' : 'RECEIVED', version: body.restoreToSale ? 2 : 1, reason: 'Возврат перевозчиком', createdAt: now(), receivedAt: now(), lines: clone(lines) });
+        }
+        if (body.status === 'RETURN_IN_TRANSIT') { order.status = 'RETURNING'; }
         order.shipment.status = body.status;
         if (body.status === 'DELIVERED') { order.status = 'FULFILLED'; order.reservationStatus = 'FULFILLED'; for (const line of order.lines) { line.outcome = 'SOLD'; findItem(line.itemId).physical = 'SOLD'; } }
       }
@@ -497,7 +523,19 @@
       }
       item.media.forEach((media, index) => { media.position = index; }); persist(); return method === 'DELETE' ? { ok: true } : media;
     }
-    if (path === '/staff/returns' && method === 'GET') return { returns: [] };
+    if (path === '/staff/returns' && method === 'GET') return { returns: orders.flatMap(o => o.returnCases || []).map(clone) };
+    if (/^\/owner\/returns\/[^/]+\/resolve$/.test(path) && method === 'POST') {
+      owner();
+      const ret = orders.flatMap(o => o.returnCases || []).find(r => r.id === path.split('/')[3]);
+      ensure(ret && ret.status === 'RECEIVED', 409, 'RETURN_STAGE', 'Возврат недоступен');
+      checkVersion(ret, body);
+      for (const line of ret.lines) {
+        const item = findItem(line.itemId);
+        if (body.restoreToSale && body.suitable) item.physical = 'AVAILABLE';
+        else if (!body.suitable) { item.physical = 'WRITTEN_OFF'; item.publication = 'HIDDEN'; }
+      }
+      ret.status = 'CLOSED'; ret.version++; ret.closedAt = now(); return clone(ret);
+    }
     if (path === '/staff/search' && method === 'GET') return { orders: orders.filter(order => !query.get('q') || order.number.includes(query.get('q'))).map(orderView), items: state.items.filter(item => !query.get('q') || `${item.sku} ${item.title}`.toLowerCase().includes(query.get('q').toLowerCase())).map(itemView) };
     fail(403, 'DEMO_BOUNDARY', 'Эта операция пока не моделируется в демонстрации. Реальные API, бот, оплата и почтовый кабинет не подключены.');
   };
