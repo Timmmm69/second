@@ -222,6 +222,9 @@ test("a failed zoom source does not poison the normal source of the same photo",
 
 test("catalog photo choices load eagerly in both directions without preloading the whole catalog", async ({ page, photos }) => {
   await page.goto("/#/catalog");
+  await expectPhoto(page.locator(".product-image-button").first(), 0);
+  const lastCard = page.locator(".product-card").last();
+  await expect(lastCard.locator("img")).toHaveCount(0);
   const card = page.locator(".product-card").nth(5);
   const target = card.locator(".product-image-button");
   await target.scrollIntoViewIfNeeded();
@@ -235,6 +238,8 @@ test("catalog photo choices load eagerly in both directions without preloading t
   await expect(target.locator("img")).toHaveAttribute("loading", "eager");
   await expectPhoto(target, 0);
   expect(photos.requests.every((request) => request.photo === 0 || request.item === 5), "Only the explicitly selected catalog card may request another image").toBe(true);
+  await lastCard.scrollIntoViewIfNeeded();
+  await expectPhoto(lastCard.locator(".product-image-button"), 0);
   expect(photos.apiRequests.some((request) => /^GET \/items\//.test(request))).toBe(false);
 });
 

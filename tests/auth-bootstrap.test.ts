@@ -40,7 +40,9 @@ test("late Telegram SDK calls auth exactly once after browser fallback", async (
     async () => { post++; return { user: { role: "OWNER" }, dev: false }; },
     async () => { get++; return { user: null, dev: false }; },
   );
-  assert.equal((await bootstrap(undefined)).user, null);
+  const browser = bootstrap(undefined);
+  assert.equal(bootstrap(undefined), browser, "simultaneous session reads share the pending request");
+  assert.equal((await browser).user, null);
   assert.equal((await bootstrap("late-initData")).user?.role, "OWNER");
   assert.equal((await bootstrap("late-initData")).user?.role, "OWNER");
   assert.equal(get, 1);

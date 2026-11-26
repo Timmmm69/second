@@ -647,15 +647,18 @@ type PhotoProps = {
   className?: string;
   contain?: boolean;
   sizes?: string;
+  maxWidth?: number;
+  previewMaxWidth?: number;
   onLoad?: () => void;
 };
 
-function photoSource(media: Media, contain = false, sizes?: string) {
+function photoSource(media: Media, contain = false, sizes?: string, maxWidth?: number) {
+  const variants = Object.entries(media.variants ?? {});
+  const allowed = maxWidth ? variants.filter(([width]) => Number(width) <= maxWidth) : variants;
+  const candidates = allowed.length ? allowed : variants;
   return {
-    src: media.url,
-    srcSet: media.variants
-      ? Object.entries(media.variants).map(([width, url]) => `${url} ${width}w`).join(", ")
-      : undefined,
+    src: maxWidth && allowed.length ? allowed.at(-1)![1] : media.url,
+    srcSet: candidates.length ? candidates.map(([width, url]) => `${url} ${width}w`).join(", ") : undefined,
     sizes: sizes ?? (contain ? "(max-width: 600px) 100vw, 560px" : "(max-width: 600px) 48vw, 280px"),
   };
 }
@@ -683,14 +686,14 @@ export function Photo(props: PhotoProps) {
         <Icon name="photo" size={32} />
       </div>
     );
-  const source = photoSource(media, contain, sizes);
+  const source = photoSource(media, contain, sizes, props.maxWidth);
   // A new source gets its own image and load/error state, including zoom changes.
   // Late events from the previous image cannot change the selected photo.
   return <PhotoImage key={JSON.stringify([media.id, source])} {...props} media={media} source={source} />;
 }
 
 function PhotoImage({
-  media, alt, priority = false, className = "", contain = false, onLoad, source,
+  media, alt, priority = false, className = "", contain = false, onLoad, source, previewMaxWidth,
 }: PhotoProps & { media: Media; source: ReturnType<typeof photoSource> }) {
   const [status, setStatus] = useState<"loading" | "ready" | "failed">("loading");
   return (
@@ -720,7 +723,15 @@ function PhotoImage({
             }}
             onError={() => setStatus("failed")}
           />
-          {status === "loading" && (
+          {status === "loading" && previewMaxWidth && media.variants ? (
+            <img
+              {...photoSource(media, false, undefined, previewMaxWidth)}
+              className="photo-preview"
+              alt=""
+              aria-hidden="true"
+              decoding="async"
+            />
+          ) : status === "loading" && (
             <span className="photo-loading" role="status" aria-label="Загружаем фото">
               <span className="spinner" aria-hidden="true" />
             </span>
@@ -902,14 +913,19 @@ export function useLoad<T>(path: string | null, refreshKey: unknown = 0) {
     const controller = new AbortController();
     setLoading(true);
     setError(null);
-    api<T>(path, { signal: controller.signal })
-      .then(setData)
-      .catch((e) => {
-        if (e.name !== "AbortError") setError(e);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
+    queueMicrotask(() => {
+      if (controller.signal.aborted) return;
+      api<T>(path, { signal: controller.signal })
+        .then((data) => {
+          if (!controller.signal.aborted) setData(data);
+        })
+        .catch((e) => {
+          if (!controller.signal.aborted && e.name !== "AbortError") setError(e);
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoading(false);
+        });
+    });
     return () => controller.abort();
   }, [path, refreshKey, version]);
   const refresh = useCallback(() => reload((v) => v + 1), []);

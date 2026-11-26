@@ -8,8 +8,12 @@ export function createAuthBootstrap<T>(
   readSession: () => Promise<{ user: T | null; dev: boolean }>,
 ) {
   let last: { initData: string; result: Promise<{ user: T | null; dev: boolean }> } | null = null;
+  let pendingSession: Promise<{ user: T | null; dev: boolean }> | null = null;
   return (initData: string | undefined) => {
-    if (!initData) return readSession();
+    if (!initData) {
+      pendingSession ??= readSession().finally(() => { pendingSession = null; });
+      return pendingSession;
+    }
     if (!last || last.initData !== initData)
       last = { initData, result: telegramLogin(initData) };
     return last.result;

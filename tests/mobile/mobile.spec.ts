@@ -58,6 +58,37 @@ test("catalog renders in stages while Telegram authentication is pending", async
   }
 });
 
+test("card opens from catalog immediately and quick navigation reuses fetched data", async ({ page, mobile }) => {
+  let release!: () => void;
+  let detailRequests = 0;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(`**/api/items/${sampleId}`, async (route) => {
+    detailRequests++;
+    await pending;
+    await route.fallback();
+  });
+  await page.goto("/#/catalog");
+  const open = page.getByRole("button", { name: `Открыть ${sampleTitle}` });
+  const purchase = page.getByRole("button", { name: "В корзину", exact: true });
+  try {
+    await open.click();
+    await expect(page.getByRole("heading", { name: sampleTitle, level: 1 })).toBeVisible();
+    await expect(purchase).toBeDisabled();
+    await expect.poll(() => detailRequests).toBe(1);
+  } finally {
+    release();
+  }
+  await expect(page.getByRole("heading", { name: "Описание" })).toBeVisible();
+  await expect(purchase).toBeEnabled();
+  await page.getByRole("button", { name: "Назад", exact: true }).click();
+  await open.click();
+  await expect(purchase).toBeEnabled();
+  expect(detailRequests).toBe(1);
+  expect(mobile.apiRequests.filter((request) => /^GET \/catalog\?/.test(request))).toHaveLength(1);
+  expect(mobile.apiRequests.filter((request) => request === "GET /categories")).toHaveLength(1);
+  expect(mobile.apiRequests.filter((request) => request === "GET /settings")).toHaveLength(1);
+});
+
 test("Telegram confirms closing and prevents content swipes from minimizing", async ({ page, mobile }) => {
   await page.goto("/#/catalog");
   await expect(page.locator(".product-card").first()).toBeVisible();
