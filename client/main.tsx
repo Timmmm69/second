@@ -17,6 +17,7 @@ import { createAuthBootstrap } from "./auth-bootstrap";
 import { Button, ErrorBox, Icon, Loading, Sheet } from "./ui";
 import type { Category, Item, Settings, User, Role } from "./types";
 import Buyer from "./buyer";
+import luchokBrand from "./luchok-brand.webp";
 import "./style.css";
 const Staff = lazy(() => import("./staff"));
 const Owner = lazy(() => import("./owner"));
@@ -570,6 +571,7 @@ function App() {
     <AppContext.Provider
       value={{
         user,
+        authLoading,
         dev,
         demo: import.meta.env.VITE_PUBLIC_DEMO === "1",
         settings,
@@ -610,7 +612,7 @@ function App() {
               onClick={() => go(staff ? "/staff/queue" : "/catalog")}
               aria-label={`${settings?.name || "Лучок"} — главная`}
             >
-              {settings?.name || "Лучок"}
+              <img src={luchokBrand} alt="" width={516} height={80} />
               {staff && <span className="mode-caption">Команда магазина</span>}
             </button>
           </div>
@@ -634,7 +636,7 @@ function App() {
             Нет соединения. Оформление и выдача временно недоступны.
           </div>
         )}
-        {authLoading ? (
+        {authLoading && path !== "/catalog" ? (
           <Loading />
         ) : (
           <main id="main-content">

@@ -130,6 +130,25 @@ test("catalog pagination/filters and staff visibility use one item and one media
   assert.ok(!options.json().brand.includes(marker + "-hidden"));
 });
 
+test("centimeter and combined sizes appear in catalog options and match filters", async () => {
+  await pool.query("UPDATE items SET attributes=$2 WHERE id=$1", [
+    itemIds[2], { sizeSystem: "CM", sizeLabel: "110,5" },
+  ]);
+  await pool.query("UPDATE items SET attributes=$2 WHERE id=$1", [
+    itemIds[3], { sizeSystem: "INT", sizeLabel: "S/M" },
+  ]);
+  const options = await app.inject("/api/catalog/options");
+  assert.equal(options.statusCode, 200, options.body);
+  assert.ok(options.json().sizeLabel.includes("на 110,5 см"));
+  assert.ok(options.json().sizeLabel.includes("S/M"));
+  for (const [label, id] of [["на 110,5 см", itemIds[2]], ["s / m", itemIds[3]]]) {
+    const query = new URLSearchParams({ q: marker, sizeLabel: label });
+    const response = await app.inject(`/api/catalog?${query}`);
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json().items.map((item: { id: string }) => item.id), [id]);
+  }
+});
+
 test("multiple categories and audience filtering respect unisex expansion", async () => {
   const samples = [
     [itemIds[0], "accessories", "Женское"],

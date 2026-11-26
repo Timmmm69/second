@@ -2,6 +2,7 @@ import { createContext, useContext } from "react";
 import type { Category, Item, Settings, User } from "./types";
 export interface AppContextValue {
   user: User | null;
+  authLoading: boolean;
   dev: boolean;
   demo: boolean;
   settings: Settings | null;

@@ -20,6 +20,44 @@ async function oneOpen(page: Page, label: string) {
   await layoutFrames(page);
 }
 
+test("catalog renders in stages while Telegram authentication is pending", async ({ page, mobile }) => {
+  let releaseCatalog!: () => void;
+  let releaseAuth!: () => void;
+  const catalogPending = new Promise<void>((resolve) => { releaseCatalog = resolve; });
+  const authPending = new Promise<void>((resolve) => { releaseAuth = resolve; });
+  const items = mobile.items.slice(0, 2);
+  items[0].attributes = { ...items[0].attributes, sizeSystem: "CM", sizeLabel: "110,5" };
+  items[1].attributes = { ...items[1].attributes, sizeSystem: "INT", sizeLabel: "S/M" };
+  await page.route(/\/api\/catalog(?:\?.*)?$/, async (route) => {
+    await catalogPending;
+    await route.fulfill({ json: { items, nextCursor: null } });
+  });
+  await page.route("**/api/auth/me", async (route) => {
+    await authPending;
+    await route.fulfill({ json: { user: null, dev: false } });
+  });
+  try {
+    await page.goto("/#/catalog");
+    const brand = page.getByRole("button", { name: /— главная/ }).locator("img");
+    await expect.poll(() => brand.evaluate((image: HTMLImageElement) => image.naturalWidth / image.clientWidth)).toBeGreaterThanOrEqual(3);
+    await expect(page.getByRole("heading", { name: "Доступные вещи" })).toBeVisible();
+    await expect(page.locator(".skeleton-grid")).toBeVisible();
+    releaseCatalog();
+    const cards = page.locator(".product-card");
+    await expect(cards.first()).toContainText("на 110,5 см");
+    await expect(cards.nth(1)).toContainText("S/M");
+    const add = cards.first().getByRole("button", { name: /Добавить .* в корзину/ });
+    await expect(add).toBeDisabled();
+    releaseAuth();
+    await expect(add).toBeEnabled();
+    await cards.first().getByRole("button", { name: `Открыть ${items[0].title}` }).click();
+    await expect(page.getByText("на 110,5 см", { exact: true }).first()).toBeVisible();
+  } finally {
+    releaseCatalog();
+    releaseAuth();
+  }
+});
+
 test("Telegram confirms closing and prevents content swipes from minimizing", async ({ page, mobile }) => {
   await page.goto("/#/catalog");
   await expect(page.locator(".product-card").first()).toBeVisible();
