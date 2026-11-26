@@ -132,6 +132,7 @@ async function releaseLines(
   lines: any[],
   reason: string,
   outcome = "CANCELLED",
+  createInspectionIssues = true,
 ) {
   const itemIds = lines.map((l) => l.item_id);
   if (!itemIds.length) return;
@@ -139,7 +140,7 @@ async function releaseLines(
   await releaseClaims(c, itemIds, reason);
   await setPhysical(c, itemIds, "INSPECTION", null, reason);
   await outcomes(c, lines, outcome);
-  for (const l of lines)
+  if (createInspectionIssues) for (const l of lines)
     await issue(
       c,
       l.item_id,
@@ -787,8 +788,9 @@ async function cancelDirect(
   o: OrderRow,
   lines: any[],
   actorId: string,
+  createInspectionIssues = true,
 ) {
-  await releaseLines(c, o, lines, "Отмена обращения");
+  await releaseLines(c, o, lines, "Отмена обращения", "CANCELLED", createInspectionIssues);
   const rest = (await orderLines(c, o.id)).filter(
     (l) => l.outcome === "RESERVED",
   );
@@ -824,6 +826,41 @@ async function shipmentOrder(c: PoolClient, id: string, actor: Actor) {
     await c.query("SELECT * FROM shipments WHERE id=$1 FOR UPDATE", [id])
   ).rows[0];
   return { o, s };
+}
+// Shortcuts must not release stock that belongs to a different order.
+async function assertShipmentStock(c: PoolClient, o: OrderRow, lines: any[], physical: string[]) {
+  assert(lines.length > 0, 409, "SHIPMENT_STOCK", "В посылке нет вещей для этой операции");
+  const itemIds = lines.map(l => l.item_id);
+  const items = await lockItems(c, itemIds);
+  const claims = await c.query(
+    "SELECT item_id FROM inventory_claim WHERE item_id=ANY($1::uuid[]) AND owner_type='RESERVATION' AND owner_id=$2",
+    [itemIds, o.id],
+  );
+  assert(claims.rowCount === itemIds.length && items.every(i => physical.includes(i.physical)),
+    409, "SHIPMENT_STOCK", "Состояние вещей изменилось. Обновите обращение и проверьте наличие");
+}
+async function restoreInspectedStock(c: PoolClient, o: OrderRow, lines: any[], actorId: string) {
+  const itemIds = lines.map(l => l.item_id);
+  const items = await lockItems(c, itemIds);
+  const blocked = await c.query(
+    `SELECT 1 FROM inventory_claim WHERE item_id=ANY($1::uuid[])
+     UNION ALL
+     SELECT 1 FROM return_lines rl JOIN return_cases rc ON rc.id=rl.return_id
+       JOIN order_lines ol ON ol.id=rl.order_line_id
+       WHERE ol.item_id=ANY($1::uuid[]) AND rc.status NOT IN ('CLOSED','REJECTED')
+     UNION ALL
+     SELECT 1 FROM operation_issues WHERE item_id=ANY($1::uuid[]) AND state='OPEN'
+       AND kind IN ('NOT_FOUND','QUALITY','QUALITY_CHECK','INSPECTION','RETURN_INSPECTION')
+       AND (order_id IS DISTINCT FROM $2 OR kind NOT IN ('INSPECTION','RETURN_INSPECTION'))
+     LIMIT 1`, [itemIds, o.id],
+  );
+  assert(!blocked.rowCount && items.every(i => i.physical === "INSPECTION"),
+    409, "RESTOCK_BLOCKED", "У вещей есть другая блокировка. Сохраните возврат без возврата в продажу и разберите проблемы");
+  await setPhysical(c, itemIds, "AVAILABLE", actorId, "Физически осмотрены и возвращены в зал");
+  await c.query(
+    "UPDATE operation_issues SET state='RESOLVED',resolved_at=now(),resolution='Физически проверены и возвращены в зал' WHERE order_id=$1 AND item_id=ANY($2::uuid[]) AND kind IN ('INSPECTION','RETURN_INSPECTION') AND state='OPEN'",
+    [o.id, itemIds],
+  );
 }
 function codeMatches(value: string, hash: string) {
   const actual = Buffer.from(
@@ -1784,6 +1821,65 @@ export async function registerOrders(app: FastifyInstance) {
       return readOrder(c, o.id, actor(r));
     });
   });
+  // An erroneous acceptance is not a real carrier return. Preserve the
+  // original shipment and append a correction; never delete history.
+  app.post("/staff/shipments/:id/correct", async (r) => {
+    assert(actor(r).role === "OWNER", 403, "OWNER", "Исправление отправки выполняет владелец");
+    const body = z.object({
+      version,
+      mode: z.enum(["undo", "cancel"]),
+      inStore: z.literal(true),
+      carrierCancelled: z.literal(true).optional(),
+      restoreToSale: z.boolean().optional(),
+      source: z.string().trim().min(3).max(500),
+    }).strict().parse(r.body);
+    assert(body.mode === "cancel" ? body.carrierCancelled === true : !body.carrierCancelled && !body.restoreToSale,
+      422, "CONFIRMATION", "Подтвердите отмену оформления у перевозчика");
+    return command(r, "shipment.correct:" + id(r), body, async c => {
+      const { o, s } = await shipmentOrder(c, id(r), actor(r));
+      expected(o, body.version);
+      const accepted = s.status === "ACCEPTED" && o.status === "IN_FULFILLMENT";
+      const registered = s.status === "REGISTERED" && o.status === "DISPATCH_READY";
+      assert(accepted || (registered && body.mode === "cancel"), 409, "STAGE",
+        "После подтверждённого движения посылки используйте возврат");
+      const lines = (await orderLines(c, o.id)).filter(l => l.outcome === "RESERVED");
+      await assertShipmentStock(c, o, lines, [accepted ? "WITH_CARRIER" : "PACKED"]);
+      const next = body.mode === "undo" ? "REGISTERED" : "CANCELLED";
+      await c.query(
+        "UPDATE shipments SET status=$2,accepted_at=NULL,source=$3,version=version+1,updated_at=now() WHERE id=$1",
+        [s.id, next, body.source],
+      );
+      await c.query(
+        "INSERT INTO shipment_events(shipment_id,status,source,raw) VALUES($1,$2,$3,$4)",
+        [s.id, next, body.source, { correction: true, previousStatus: s.status, mode: body.mode }],
+      );
+      if (accepted) await c.query(
+        "UPDATE outbox_events SET state='SKIPPED',last_error='ACCEPTANCE_CORRECTED' WHERE entity_id=$1 AND event_type='SHIPMENT_ACCEPTED' AND state='PENDING'",
+        [o.id],
+      );
+      await c.query(
+        "UPDATE operation_issues SET state='RESOLVED',resolved_at=now(),resolution='Отправка исправлена владельцем' WHERE order_id=$1 AND entity_id=$2 AND kind='TRACKING_STALE' AND state='OPEN'",
+        [o.id, s.id],
+      );
+      if (body.mode === "undo") {
+        await setPhysical(c, lines.map(l => l.item_id), "PACKED", actor(r).id, body.source);
+        await bump(c, o, "DISPATCH_READY");
+        await setReservation(c, o, "ACTIVE");
+        await event(c, o, "SHIPMENT_CORRECTED", "Уточнение: посылка оформлена, но ещё не передана почте");
+      } else {
+        await cancelDirect(c, o, lines, actor(r).id, !body.restoreToSale);
+        await c.query(
+          "UPDATE operation_issues SET state='RESOLVED',resolved_at=now(),resolution='Обращение отменено владельцем' WHERE order_id=$1 AND kind IN ('CHANGE_REQUEST','DISPATCH_OVERDUE') AND state='OPEN'",
+          [o.id],
+        );
+        if (body.restoreToSale) await restoreInspectedStock(c, o, lines, actor(r).id);
+      }
+      await audit(c, actor(r).id, "shipment.correct", "shipment", s.id, {
+        mode: body.mode, previousStatus: s.status, source: body.source, restoreToSale: !!body.restoreToSale,
+      });
+      return readOrder(c, o.id, actor(r));
+    });
+  });
   app.post("/staff/shipments/:id/cancel", async (r) => {
     const body = z
       .object({ version, source: z.string().trim().min(3).max(500) })
@@ -1875,8 +1971,15 @@ export async function registerOrders(app: FastifyInstance) {
         ]),
         source: z.string().trim().min(3).max(500),
         deliveredLineIds: z.array(z.string().uuid()).optional(),
+        confirmedReceipt: z.literal(true).optional(),
+        restoreToSale: z.boolean().optional(),
       })
       .parse(r.body);
+    assert(!body.confirmedReceipt || body.status === "RETURN_RECEIVED", 422, "CONFIRMATION", "Подтверждение относится только к полученному возврату");
+    if (body.restoreToSale) {
+      assert(actor(r).role === "OWNER", 403, "OWNER", "Возврат сразу в продажу подтверждает владелец");
+      assert(body.confirmedReceipt && body.status === "RETURN_RECEIVED", 422, "CONFIRMATION", "Подтвердите физическое получение и осмотр");
+    }
     return command(r, "shipment.event:" + id(r), body, async (c) => {
       const { o, s } = await shipmentOrder(c, id(r), actor(r));
       expected(o, body.version);
@@ -1899,8 +2002,11 @@ export async function registerOrders(app: FastifyInstance) {
         RETURN_IN_TRANSIT: ["RETURN_RECEIVED", "LOST_OR_DAMAGED"],
         LOST_OR_DAMAGED: ["RETURN_IN_TRANSIT", "RETURN_RECEIVED"],
       };
+      const directReceipt = body.confirmedReceipt && body.status === "RETURN_RECEIVED" &&
+        ["ACCEPTED", "IN_TRANSIT", "AT_OFFICE", "RETURN_REQUESTED", "RETURN_IN_TRANSIT", "LOST_OR_DAMAGED"].includes(s.status) &&
+        ["IN_FULFILLMENT", "RETURNING"].includes(o.status);
       assert(
-        allowed[s.status]?.includes(body.status),
+        body.confirmedReceipt ? directReceipt : allowed[s.status]?.includes(body.status),
         409,
         "SHIPMENT_SEQUENCE",
         "Событие не соответствует текущему этапу. Проверьте данные перевозчика",
@@ -1999,12 +2105,15 @@ export async function registerOrders(app: FastifyInstance) {
           "Посылка возвращается в магазин",
         );
       } else if (body.status === "RETURN_RECEIVED") {
+        if (body.confirmedReceipt)
+          await assertShipmentStock(c, o, lines, ["WITH_CARRIER", "RETURN_IN_TRANSIT"]);
         await releaseLines(
           c,
           o,
           lines,
           "Фактически приняты возвращённые вещи",
           "RETURNED",
+          !body.restoreToSale,
         );
         const rid = randomUUID();
         await c.query(
@@ -2016,12 +2125,29 @@ export async function registerOrders(app: FastifyInstance) {
             "INSERT INTO return_lines(return_id,order_line_id) VALUES($1,$2)",
             [rid, l.id],
           );
+        if (body.confirmedReceipt) {
+          await c.query("UPDATE orders SET cancel_requested=NULL WHERE id=$1", [o.id]);
+          await c.query(
+            "UPDATE shipment_lines SET outcome='RETURNED' WHERE shipment_id=$1 AND order_line_id=ANY($2::uuid[])",
+            [s.id, lines.map(l => l.id)],
+          );
+          await c.query(
+            "UPDATE operation_issues SET state='RESOLVED',resolved_at=now(),resolution='Возврат физически получен' WHERE order_id=$1 AND (kind='CHANGE_REQUEST' OR (entity_id=$2 AND kind IN ('TRACKING_STALE','CARRIER_PROBLEM'))) AND state='OPEN'",
+            [o.id, s.id],
+          );
+        }
+        if (body.restoreToSale) {
+          await c.query("UPDATE return_cases SET status='CLOSED',decision=$2,version=version+1,closed_at=now() WHERE id=$1", [rid, body.source]);
+          await c.query("UPDATE return_lines SET inspection='SUITABLE' WHERE return_id=$1", [rid]);
+          await restoreInspectedStock(c, o, lines, actor(r).id);
+          await audit(c, actor(r).id, "return.resolve", "return", rid, { suitable: true, restoreToSale: true });
+        }
         await bump(c, o, "RETURNED");
         await event(
           c,
           o,
           "RETURN_RECEIVED",
-          "Возврат получен магазином. Вещи проходят осмотр",
+          body.restoreToSale ? "Возврат получен магазином и осмотрен" : "Возврат получен магазином. Вещи проходят осмотр",
         );
       } else if (body.status === "LOST_OR_DAMAGED") {
         await c.query("UPDATE orders SET exception=true WHERE id=$1", [o.id]);
@@ -2060,7 +2186,7 @@ export async function registerOrders(app: FastifyInstance) {
           s.id,
           body.status,
           body.source,
-          JSON.stringify({ deliveredLineIds: body.deliveredLineIds }),
+          JSON.stringify({ deliveredLineIds: body.deliveredLineIds, confirmedReceipt: body.confirmedReceipt, restoreToSale: body.restoreToSale }),
         ],
       );
       await audit(c, actor(r).id, "shipment.event", "shipment", s.id, {
@@ -2245,8 +2371,13 @@ export async function registerOrders(app: FastifyInstance) {
         version,
         suitable: z.boolean(),
         note: z.string().trim().min(3).max(2000),
+        restoreToSale: z.boolean().optional(),
       })
       .parse(r.body);
+    if (body.restoreToSale) {
+      assert(actor(r).role === "OWNER", 403, "OWNER", "Возврат в продажу подтверждает владелец");
+      assert(body.suitable, 422, "INSPECTION", "Подтвердите пригодность каждой вещи");
+    }
     return command(r, "returns.resolve:" + id(r), body, async (c) => {
       const base = (
         await c.query("SELECT order_id FROM return_cases WHERE id=$1", [id(r)])
@@ -2299,6 +2430,8 @@ export async function registerOrders(app: FastifyInstance) {
           "UPDATE items SET publication='HIDDEN' WHERE id=ANY($1::uuid[])",
           [lines.map((l) => l.item_id)],
         );
+      } else if (body.restoreToSale) {
+        await restoreInspectedStock(c, o, lines, actor(r).id);
       } else
         for (const l of lines)
           await issue(
@@ -2317,7 +2450,7 @@ export async function registerOrders(app: FastifyInstance) {
         "Решение по возврату принято. Подробности сообщит магазин",
       );
       await audit(c, actor(r).id, "return.resolve", "return", ret.id, {
-        suitable: body.suitable,
+        suitable: body.suitable, restoreToSale: !!body.restoreToSale,
       });
       return {
         id: ret.id,

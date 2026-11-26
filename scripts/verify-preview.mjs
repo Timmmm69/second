@@ -126,6 +126,15 @@ assert.equal((await one.request(`/staff/shipments/${shipping.shipment.id}/events
 shipping = await one.ok(`/staff/shipments/${shipping.shipment.id}/acceptance`, 'POST', { version: shipping.version, source: 'Тестовая квитанция приёмки' });
 assert.equal(shipping.status, 'IN_FULFILLMENT');
 assert.equal(shipping.shipment.status, 'ACCEPTED');
+const correctedPath = `/staff/shipments/${shipping.shipment.id}/correct`;
+assert.equal((await one.request(correctedPath, 'POST', { version: shipping.version, mode: 'undo', inStore: true, source: 'Исправление тестовой отметки' })).status, 403);
+await one.ok('/demo/role', 'POST', { role: 'OWNER' });
+shipping = await one.ok(correctedPath, 'POST', { version: shipping.version, mode: 'undo', inStore: true, source: 'Исправление тестовой отметки' });
+assert.equal(shipping.status, 'DISPATCH_READY');
+assert.equal(shipping.shipment.tracking, 'DEMO-TRACK-1002');
+assert.equal((await get('/items/' + item.id)).available, false);
+await one.ok('/demo/role', 'POST', { role: 'STAFF' });
+shipping = await one.ok(`/staff/shipments/${shipping.shipment.id}/acceptance`, 'POST', { version: shipping.version, source: 'Тестовая квитанция приёмки' });
 shipping = await one.ok(`/staff/shipments/${shipping.shipment.id}/events`, 'POST', { version: shipping.version, source: 'Тестовое отслеживание', status: 'DELIVERED' });
 assert.equal(shipping.status, 'FULFILLED');
 console.log('PASS: delivery validates recipient and allows Europost without an office; tracking registration and physical acceptance are separate events');

@@ -1191,7 +1191,7 @@ function ItemEditor({ id }: { id: string }) {
   );
 }
 function StaffOrder({ id }: { id: string }) {
-  const { go, toast, demo } = useApp();
+  const { go, toast, demo, user } = useApp();
   const {
     data: order,
     setData,
@@ -1215,6 +1215,19 @@ function StaffOrder({ id }: { id: string }) {
     [returnLines, setReturnLines] = useState<string[]>([]),
     [showReturn, setShowReturn] = useState(false),
     [shipmentState, setShipmentState] = useState("IN_TRANSIT");
+  const [shipmentSheet, setShipmentSheet] = useState<"undo" | "cancel" | "receive" | null>(null);
+  const [inStore, setInStore] = useState(false);
+  const [carrierCancelled, setCarrierCancelled] = useState(false);
+  const [restock, setRestock] = useState(false);
+  const [shipmentNote, setShipmentNote] = useState("");
+  const openShipmentSheet = (mode: "undo" | "cancel" | "receive") => {
+    setInStore(false);
+    setCarrierCancelled(false);
+    setRestock(false);
+    setShipmentNote("");
+    mutation.setError(null);
+    setShipmentSheet(mode);
+  };
   useEffect(() => {
     if (order) {
       setFound(order.lines.filter((l) => l.checked).map((l) => l.itemId));
@@ -1260,6 +1273,20 @@ function StaffOrder({ id }: { id: string }) {
     "CLOSED",
   ].includes(order.status);
   const canShipment = order.status === "PREPARING";
+  const shipmentStatus = order.shipment?.status || "";
+  const canReceiveShipment = ["ACCEPTED", "IN_TRANSIT", "AT_OFFICE", "RETURN_REQUESTED", "RETURN_IN_TRANSIT", "LOST_OR_DAMAGED"].includes(shipmentStatus)
+    && ["IN_FULFILLMENT", "RETURNING"].includes(order.status);
+  const canUndoAcceptance = user?.role === "OWNER" && shipmentStatus === "ACCEPTED" && order.status === "IN_FULFILLMENT";
+  const nextShipmentStatuses: Record<string, string[]> = {
+    ACCEPTED: ["IN_TRANSIT", "AT_OFFICE", "DELIVERED", "RETURN_IN_TRANSIT", "LOST_OR_DAMAGED"],
+    IN_TRANSIT: ["AT_OFFICE", "DELIVERED", "RETURN_IN_TRANSIT", "LOST_OR_DAMAGED"],
+    AT_OFFICE: ["DELIVERED", "RETURN_IN_TRANSIT", "LOST_OR_DAMAGED"],
+    RETURN_REQUESTED: ["RETURN_IN_TRANSIT", "LOST_OR_DAMAGED"],
+    RETURN_IN_TRANSIT: ["LOST_OR_DAMAGED"],
+    LOST_OR_DAMAGED: ["RETURN_IN_TRANSIT"],
+  };
+  const shipmentOptions = nextShipmentStatuses[shipmentStatus] || [];
+  const selectedShipmentState = shipmentOptions.includes(shipmentState) ? shipmentState : shipmentOptions[0] || "";
   const cancelRequest = order.cancelRequested as unknown as
     | { type?: string; lineIds?: string[]; recipient?: Record<string, string> }
     | undefined;
@@ -1615,14 +1642,29 @@ function StaffOrder({ id }: { id: string }) {
             Последняя проверка {date(order.shipment.updatedAt)} ·{" "}
             {order.shipment.source}
           </p>
-          <Field
-            label="Подтверждённый источник / документ"
-            value={source}
-            onChange={(e) => setSource(e.target.value)}
-            hint="Например, квитанция приёмки или сведения официального отслеживания с датой."
-          />
+          {canReceiveShipment && (
+            <div className="button-stack section-space">
+              <Button disabled={mutation.busy} onClick={() => openShipmentSheet("receive")}>
+                Посылка вернулась в магазин
+              </Button>
+              <p className="small-text">Если вещи уже у вас, не нужно последовательно отмечать движение возврата.</p>
+              {canUndoAcceptance && (
+                <Button secondary disabled={mutation.busy} onClick={() => openShipmentSheet("undo")}>
+                  Отправку подтвердили по ошибке
+                </Button>
+              )}
+              {canUndoAcceptance && (
+                <Button ghost disabled={mutation.busy} onClick={() => openShipmentSheet("cancel")}>
+                  Отменить заказ, если посылку не сдавали
+                </Button>
+              )}
+            </div>
+          )}
           {order.shipment.status === "REGISTERED" && (
             <div className="button-stack">
+              <Field label="Подтверждённый источник / документ" value={source}
+                onChange={(e) => setSource(e.target.value)}
+                hint="Например, квитанция приёмки или сведения официального отслеживания." />
               <Button
                 disabled={!source || mutation.busy || Boolean(cancelRequest)}
                 onClick={() => {
@@ -1656,29 +1698,27 @@ function StaffOrder({ id }: { id: string }) {
               >
                 Почта подтвердила отмену
               </Button>
+              {user?.role === "OWNER" && (
+                <Button ghost disabled={mutation.busy} onClick={() => openShipmentSheet("cancel")}>
+                  Отменить заказ и освободить вещи
+                </Button>
+              )}
             </div>
           )}
-          {![
-            "REGISTERED",
-            "CANCELLED",
-            "DELIVERED",
-            "RETURN_RECEIVED",
-          ].includes(order.shipment.status) && (
-            <div className="form-stack">
+          {shipmentOptions.length > 0 && (
+            <details className="section-space">
+              <summary>Другие статусы посылки</summary>
+              <div className="form-stack section-space">
+              <Field label="Подтверждённый источник / документ" value={source}
+                onChange={(e) => setSource(e.target.value)}
+                hint="Например, сведения официального отслеживания." />
               <Select
                 label="Подтверждённый статус"
-                value={shipmentState}
+                value={selectedShipmentState}
                 onValueChange={setShipmentState}
-                options={[
-                  "IN_TRANSIT",
-                  "AT_OFFICE",
-                  "DELIVERED",
-                  "RETURN_IN_TRANSIT",
-                  "RETURN_RECEIVED",
-                  "LOST_OR_DAMAGED",
-                ].map((value) => ({ value, label: statusNames[value] }))}
+                options={shipmentOptions.map((value) => ({ value, label: statusNames[value] }))}
               />
-              {shipmentState === "DELIVERED" && (
+              {selectedShipmentState === "DELIVERED" && (
                 <>
                   <p>
                     Отметьте фактически выданные строки. Частичная выдача
@@ -1711,9 +1751,9 @@ function StaffOrder({ id }: { id: string }) {
                 onClick={() =>
                   action(`/staff/shipments/${order.shipment?.id}/events`, {
                     version: order.version,
-                    status: shipmentState,
+                    status: selectedShipmentState,
                     source,
-                    ...(shipmentState === "DELIVERED"
+                    ...(selectedShipmentState === "DELIVERED"
                       ? { deliveredLineIds: accepted }
                       : {}),
                   })
@@ -1721,19 +1761,17 @@ function StaffOrder({ id }: { id: string }) {
               >
                 Зафиксировать подтверждённый статус
               </Button>
-              <Button
-                secondary
-                disabled={!source || mutation.busy}
-                onClick={() =>
-                  action(
-                    `/staff/shipments/${order.shipment?.id}/return-request`,
-                    { version: order.version, source },
-                  )
-                }
-              >
-                Запросить возврат у перевозчика
-              </Button>
-            </div>
+              {["ACCEPTED", "IN_TRANSIT", "AT_OFFICE", "LOST_OR_DAMAGED"].includes(shipmentStatus) && (
+                <>
+                  <Button secondary disabled={!source.trim() || mutation.busy}
+                    onClick={() => action(`/staff/shipments/${order.shipment?.id}/return-request`, { version: order.version, source })}>
+                    Зафиксировать запрос на возврат
+                  </Button>
+                  <p className="small-text">Сначала запросите возврат у перевозчика. Приложение только фиксирует его.</p>
+                </>
+              )}
+              </div>
+            </details>
           )}
         </section>
       )}
@@ -1786,24 +1824,82 @@ function StaffOrder({ id }: { id: string }) {
               Отменить по согласованному отказу
             </Button>
           )}
-          <Button
-            secondary
-            onClick={() => {
-              setReturnLines(
-                order.lines
-                  .filter((l) => ["HANDED_OVER", "SOLD"].includes(l.outcome))
-                  .map((l) => l.id),
-              );
+          {order.lines.some(l => ["HANDED_OVER", "SOLD"].includes(l.outcome)) && (
+            <Button secondary onClick={() => {
+              setReturnLines(order.lines.filter(l => ["HANDED_OVER", "SOLD"].includes(l.outcome)).map(l => l.id));
               setShowReturn(true);
-            }}
-          >
-            Зафиксировать возврат вещи
-          </Button>
+            }}>
+              Возврат товара после получения покупателем
+            </Button>
+          )}
           <Button ghost onClick={() => go("/staff/returns")}>
             Открыть очередь возвратов
           </Button>
         </div>
       </section>
+      {shipmentSheet && order.shipment && (
+        <Sheet title={shipmentSheet === "receive" ? "Получение возврата" : shipmentSheet === "undo" ? "Исправить отправку" : "Отменить заказ"}
+          onClose={() => { if (!mutation.busy) setShipmentSheet(null); }}>
+          <div className="form-stack">
+            <p>{shipmentSheet === "receive"
+              ? user?.role === "OWNER"
+                ? "Подтвердите фактическое получение всех перечисленных вещей. Можно сразу вернуть осмотренные вещи в продажу."
+                : "Подтвердите фактическое получение всех перечисленных вещей. Владелец завершит осмотр в разделе «Возвраты»."
+              : shipmentSheet === "undo"
+                ? "Вернём посылку к оформленному состоянию. Трек и бронь останутся, история исправления сохранится."
+                : "Отменим заказ и освободим товары. История обращения и посылки сохранится."}</p>
+            <div className="notice">
+              <strong>Вещи в посылке</strong>
+              {order.lines.filter(l => ["RESERVED", "RETURNING"].includes(l.outcome)).map(l => (
+                <p key={l.id}>{l.title} · {l.sku}</p>
+              ))}
+            </div>
+            <label className="check-row">
+              <input type="checkbox" checked={inStore} onChange={e => setInStore(e.target.checked)} disabled={mutation.busy} />
+              <span>{shipmentSheet === "receive" ? "Все перечисленные вещи физически получены магазином" : "Посылка не была сдана почте, все вещи в магазине"}</span>
+            </label>
+            {shipmentSheet === "cancel" && (
+              <label className="check-row">
+                <input type="checkbox" checked={carrierCancelled} onChange={e => setCarrierCancelled(e.target.checked)} disabled={mutation.busy} />
+                <span>Оформление отменено у перевозчика</span>
+              </label>
+            )}
+            {shipmentSheet !== "undo" && user?.role === "OWNER" && (
+              <label className="check-row">
+                <input type="checkbox" checked={restock} onChange={e => setRestock(e.target.checked)} disabled={mutation.busy} />
+                <span>Все вещи осмотрены, пригодны и возвращены в зал</span>
+              </label>
+            )}
+            {shipmentSheet !== "undo" && <p className="small-text">{restock
+              ? "Опубликованные вещи сразу станут доступны. Скрытые карточки останутся скрытыми."
+              : "Без подтверждения осмотра вещи останутся недоступными до проверки."}</p>}
+            <Field label="Комментарий (необязательно)" value={shipmentNote} maxLength={300}
+              disabled={mutation.busy} onChange={e => setShipmentNote(e.target.value)} />
+            <ErrorBox error={mutation.error} />
+            <Button disabled={mutation.busy || !inStore || (shipmentSheet === "cancel" && !carrierCancelled)}
+              onClick={async () => {
+                const mode = shipmentSheet;
+                const evidence = (mode === "receive" ? "Все вещи физически получены магазином" : "Посылка не сдавалась; все вещи в магазине")
+                  + (mode === "cancel" ? ". Оформление отменено у перевозчика" : "")
+                  + (restock ? ". Вещи осмотрены и возвращены в зал" : "")
+                  + (shipmentNote.trim() ? ". " + shipmentNote.trim() : "");
+                const prefix = `/staff/shipments/${order.shipment?.id}`;
+                const result = await action(mode === "receive" ? prefix + "/events" : prefix + "/correct",
+                  mode === "receive" ? { version: order.version, status: "RETURN_RECEIVED", source: evidence, confirmedReceipt: true, restoreToSale: restock }
+                    : { version: order.version, mode, inStore: true, ...(mode === "cancel" ? { carrierCancelled: true, restoreToSale: restock } : {}), source: evidence });
+                if (result) {
+                  setShipmentSheet(null);
+                  toast(mode === "undo" ? "Отправка исправлена" : restock ? "Вещи возвращены в зал" : mode === "cancel" ? "Заказ отменён. Вещи на осмотре" : "Возврат получен. Вещи на осмотре");
+                }
+              }}>
+              {mutation.busy ? "Сохраняем…" : shipmentSheet === "undo" ? "Отменить отметку об отправке" :
+                shipmentSheet === "cancel" ? (restock ? "Отменить и вернуть в продажу" : "Отменить заказ") :
+                restock ? "Получить и вернуть в продажу" : "Подтвердить получение"}
+            </Button>
+            <Button secondary disabled={mutation.busy} onClick={() => setShipmentSheet(null)}>Назад</Button>
+          </div>
+        </Sheet>
+      )}
       {propose && (
         <Sheet
           title="Предложить новый состав"
@@ -2237,23 +2333,30 @@ function Returns() {
                     secondary
                     disabled={mutation.busy}
                     onClick={async () => {
-                      const note = prompt(
-                        "Результат осмотра, основание решения и подтверждение пригодности к повторной продаже",
+                      if (!confirm("Все перечисленные вещи осмотрены, пригодны к повторной продаже и возвращены в зал? Опубликованные товары станут доступны.")) return;
+                      const result = await mutation.run(
+                        `/owner/returns/${ret.id}/resolve`,
+                        { version: ret.version, suitable: true, restoreToSale: true, note: "Все вещи физически осмотрены, пригодны и возвращены в зал" },
                       );
-                      if (!note) return;
+                      if (result) {
+                        reload();
+                        toast("Возврат закрыт, вещи возвращены в зал");
+                      }
+                    }}
+                  >
+                    Осмотрены — вернуть в продажу
+                  </Button>
+                  <Button ghost disabled={mutation.busy}
+                    onClick={async () => {
+                      const note = prompt("Осмотр завершён. Почему пока не возвращаем вещи в зал?");
+                      if (!note?.trim()) return;
                       const result = await mutation.run(
                         `/owner/returns/${ret.id}/resolve`,
                         { version: ret.version, suitable: true, note },
                       );
-                      if (result) {
-                        reload();
-                        toast(
-                          "Решение принято. Повторная публикация — отдельным действием в карточке вещи.",
-                        );
-                      }
-                    }}
-                  >
-                    Осмотрена, пригодна для повторной продажи
+                      if (result) { reload(); toast("Осмотр завершён. Вещи пока недоступны"); }
+                    }}>
+                    Пригодны, но оставить на проверке
                   </Button>
                   <Button
                     secondary
