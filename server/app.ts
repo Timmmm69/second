@@ -230,8 +230,8 @@ ${image ? `<meta property="og:image" content="${escape(image)}">` : ""}
         wildcard: true,
         setHeaders(res, filePath) {
           const relative = path.relative(root, filePath).split(path.sep).join("/");
-          if (relative === "index.html") {
-            // Revalidate entry HTML, including the SPA fallback, after deploys.
+          if (relative === "index.html" || relative === "catalog-start.js") {
+            // Revalidate unversioned entry resources after deploys.
             res.header("Cache-Control", "no-cache");
           } else if (/^assets\/[^/]+-[A-Za-z0-9_-]{8,}\.(?:js|css)$/.test(relative)) {
             // Only Vite-fingerprinted assets are safe to keep indefinitely.
